@@ -43,6 +43,41 @@ describe("waitForJob", () => {
   });
 });
 
+describe("waitForJob resilience", () => {
+  it("tolerates transient poll failures and still resolves", async () => {
+    mockFetch([
+      { status: 500, body: { detail: "boom" } },
+      { status: 500, body: { detail: "boom" } },
+      { body: { id: "abc", status: "done", stage: "export", message: "Ready", stats: { buildings: 42 } } },
+    ]);
+    const job = await waitForJob("abc", undefined, 1);
+    expect(job.status).toBe("done");
+    expect(job.stats.buildings).toBe(42);
+  });
+
+  it("rethrows once the failures exceed the tolerance", async () => {
+    mockFetch(Array.from({ length: 4 }, () => ({ status: 500, body: { detail: "boom" } })));
+    await expect(waitForJob("abc", undefined, 1)).rejects.toThrow("boom");
+  });
+
+  it("rejects promptly with the abort reason and passes the signal to fetch", async () => {
+    const seen: Array<RequestInit | undefined> = [];
+    globalThis.fetch = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      seen.push(init);
+      return new Response(JSON.stringify({ id: "abc", status: "running", stage: "fetch", message: "", stats: {} }), {
+        headers: { "content-type": "application/json" },
+      });
+    }) as typeof fetch;
+
+    const controller = new AbortController();
+    const reason = new Error("Zeitüberschreitung");
+    // Abort while the poll loop is between requests: the sleep must reject instead of waiting a minute.
+    const promise = waitForJob("abc", () => controller.abort(reason), 60_000, { signal: controller.signal });
+    await expect(promise).rejects.toThrow("Zeitüberschreitung");
+    expect(seen[0]?.signal).toBe(controller.signal);
+  });
+});
+
 describe("helpers", () => {
   it("builds file urls", () => {
     expect(jobFileUrl("abc", "model.stl")).toBe("/api/jobs/abc/model.stl");

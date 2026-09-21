@@ -1,13 +1,52 @@
 <!doctype html>
-<html lang="en">
+<html lang="de">
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>frontend</title>
+    <title>Skyline Frame Generator</title>
   </head>
   <body>
-    <div id="app"></div>
+    <div id="app">
+      <div id="map"></div>
+      <aside id="sidebar">
+        <h1>Skyline Frame</h1>
+        <label>Ort suchen
+          <input id="search" type="search" placeholder="z. B. Frankfurt am Main" autocomplete="off" />
+        </label>
+        <div id="search-results"></div>
+
+        <label>Ausschnitt <output id="side-out">1500 m</output>
+          <input id="side" type="range" min="200" max="5000" step="50" value="1500" />
+        </label>
+        <label>Drehung <output id="rotation-out">0°</output>
+          <input id="rotation" type="range" min="-180" max="180" step="1" value="0" />
+        </label>
+        <label>Platte (mm)
+          <input id="plate" type="number" min="40" max="250" step="5" value="100" />
+        </label>
+        <label>Plattendicke (mm)
+          <input id="thickness" type="number" min="1" max="10" step="0.5" value="3" />
+        </label>
+        <label>Höhenfaktor
+          <input id="zfactor" type="number" min="0.5" max="10" step="0.1" value="1.5" />
+        </label>
+        <label>Modus
+          <select id="mode">
+            <option value="simple">Simple (Gebäude + Platte)</option>
+            <option value="full">Full (+ Straßen + Wasser)</option>
+          </select>
+        </label>
+
+        <button id="generate" type="button">Generieren</button>
+        <p id="status" role="status"></p>
+        <div id="downloads" hidden>
+          <a id="dl-stl" download>STL (einfarbig)</a>
+          <a id="dl-3mf" download>3MF (mehrfarbig)</a>
+        </div>
+      </aside>
+      <div id="viewer"></div>
+    </div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

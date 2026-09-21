@@ -2,12 +2,19 @@
 import {
   Map as MapLibreMap,
   NavigationControl,
+  setWorkerUrl,
   type GeoJSONSource,
   type MapMouseEvent,
   type MapOptions,
 } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
+// maplibre derives its worker URL from its own `import.meta.url`, which points at the bundled app
+// chunk here, so the default URL 404s and every GeoJSON source hangs unparsed (the square never
+// draws). Hand it the worker Vite bundles for us instead.
+import maplibreWorkerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url";
 import { squareGeoJSON, type SquareParams } from "./square";
+
+setWorkerUrl(maplibreWorkerUrl);
 
 export interface MapController {
   setParams(p: SquareParams): void;

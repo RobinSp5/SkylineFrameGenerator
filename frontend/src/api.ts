@@ -52,16 +52,63 @@ export function createJob(spec: FrameSpecInput): Promise<{ id: string }> {
   });
 }
 
-export function getJob(id: string): Promise<JobState> {
-  return request(`/api/jobs/${encodeURIComponent(id)}`);
+export function getJob(id: string, signal?: AbortSignal): Promise<JobState> {
+  return request(`/api/jobs/${encodeURIComponent(id)}`, { signal });
 }
 
-export async function waitForJob(id: string, onUpdate?: (job: JobState) => void, intervalMs = 1000): Promise<JobState> {
+export interface WaitForJobOptions {
+  /** Cancels the polling; the returned promise rejects with the signal's reason. */
+  signal?: AbortSignal;
+  /** Consecutive poll failures tolerated before the error is rethrown. */
+  maxConsecutiveFailures?: number;
+}
+
+/** Resolves after `ms`, or rejects with the abort reason if `signal` fires first. */
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(signal.reason);
+      return;
+    }
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(signal?.reason);
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+/**
+ * Polls the job until it is done or failed. A job runs for minutes, so a single network blip must
+ * not kill the run: up to `maxConsecutiveFailures` failed polls in a row are retried, and any
+ * successful poll resets the counter. The loop is unbounded in time by design — callers bound it
+ * with `options.signal`.
+ */
+export async function waitForJob(
+  id: string,
+  onUpdate?: (job: JobState) => void,
+  intervalMs = 1000,
+  options: WaitForJobOptions = {},
+): Promise<JobState> {
+  const { signal, maxConsecutiveFailures = 3 } = options;
+  let failures = 0;
   for (;;) {
-    const job = await getJob(id);
-    onUpdate?.(job);
-    if (job.status === "done" || job.status === "error") return job;
-    await new Promise((r) => setTimeout(r, intervalMs));
+    signal?.throwIfAborted();
+    try {
+      const job = await getJob(id, signal);
+      failures = 0;
+      onUpdate?.(job);
+      if (job.status === "done" || job.status === "error") return job;
+    } catch (err) {
+      // An abort surfaces here as a fetch rejection; it is a cancellation, never a retryable blip.
+      signal?.throwIfAborted();
+      if (++failures > maxConsecutiveFailures) throw err;
+    }
+    await sleep(intervalMs, signal);
   }
 }
 
