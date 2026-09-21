@@ -11,3 +11,7 @@ class FetchError(SkylineError):
 
 class MeshError(SkylineError):
     """The geometry could not be turned into a valid solid."""
+
+
+class ExportError(SkylineError):
+    """The final mesh failed verification or could not be written."""
