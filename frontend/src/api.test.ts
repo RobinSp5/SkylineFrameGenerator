@@ -24,6 +24,12 @@ describe("createJob", () => {
     expect(calls[0].url).toBe("/api/jobs");
     expect(calls[0].init?.method).toBe("POST");
   });
+  it("passes the abort signal to fetch", async () => {
+    const calls = mockFetch([{ status: 202, body: { id: "abc" } }]);
+    const controller = new AbortController();
+    await createJob({ center_lat: 50, center_lon: 8, side_m: 1000, rotation_deg: 0, plate_size_mm: 100, plate_thickness_mm: 3, mode: "simple", z_exaggeration: 1.5 }, controller.signal);
+    expect(calls[0].init?.signal).toBe(controller.signal);
+  });
   it("throws with the server detail on error", async () => {
     mockFetch([{ status: 422, body: { detail: "bad spec" } }]);
     await expect(createJob({} as never)).rejects.toThrow(/bad spec|422/);

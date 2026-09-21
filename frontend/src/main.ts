@@ -28,11 +28,13 @@ setupSearch(controls.elements.search, controls.elements.searchResults, (hit) => 
 controls.onGenerate(async () => {
   controls.setBusy(true);
   controls.showDownloads(null);
+  // Drop the previous model up front: a failing run must not leave a stale preview beside the error.
+  viewer?.clear();
   controls.setStatus("Job wird gestartet …");
   const abort = new AbortController();
   const timeout = setTimeout(() => abort.abort(new Error("Zeitüberschreitung")), JOB_TIMEOUT_MS);
   try {
-    const { id } = await createJob(controls.read());
+    const { id } = await createJob(controls.read(), abort.signal);
     const job = await waitForJob(id, (j) => controls.setStatus(`${j.stage || j.status}: ${j.message}`), 1000, {
       signal: abort.signal,
     });

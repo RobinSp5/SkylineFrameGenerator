@@ -45,8 +45,21 @@ export function createViewer(container: HTMLElement): Viewer {
   let model: THREE.Object3D | null = null;
   const loader = new GLTFLoader();
 
+  const materialsOf = (mesh: THREE.Mesh): THREE.Material[] =>
+    Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+
+  // three.js does not free GPU buffers when an object leaves the scene graph, so every generation
+  // would leak a model's worth of geometries and materials.
   const clear = () => {
-    if (model) scene.remove(model);
+    if (model) {
+      scene.remove(model);
+      model.traverse((obj) => {
+        if (obj instanceof THREE.Mesh) {
+          obj.geometry.dispose();
+          for (const material of materialsOf(obj)) material.dispose();
+        }
+      });
+    }
     model = null;
   };
 
@@ -59,6 +72,8 @@ export function createViewer(container: HTMLElement): Viewer {
       model.rotation.x = -Math.PI / 2; // model is z-up, three.js is y-up
       model.traverse((obj) => {
         if (obj instanceof THREE.Mesh) {
+          // The GLTF's own material is replaced and never used again; drop it before it is orphaned.
+          for (const material of materialsOf(obj)) material.dispose();
           obj.material = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85 });
         }
       });

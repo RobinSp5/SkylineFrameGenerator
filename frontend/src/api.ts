@@ -44,11 +44,12 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
   return (await res.json()) as T;
 }
 
-export function createJob(spec: FrameSpecInput): Promise<{ id: string }> {
+export function createJob(spec: FrameSpecInput, signal?: AbortSignal): Promise<{ id: string }> {
   return request("/api/jobs", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(spec),
+    signal,
   });
 }
 
