@@ -65,6 +65,23 @@ def test_multipolygon_building_is_split():
     assert {b.height_m for b in out.buildings} == {7.0}
 
 
+def test_simplified_footprint_is_revalidated():
+    # Simplification runs after the repair step, so its own output must be re-checked:
+    # courtyard rings that nearly touch the shell, a hole ring thinner than the tolerance,
+    # and a near-degenerate spike are the shapes where simplify can return junk.
+    courtyard = Polygon([(0, 0), (60, 0), (60, 60), (0, 60)], [[(5, 5), (55, 5), (55, 59.6), (5, 59.6)]])
+    thin_slot = Polygon([(100, 0), (160, 0), (160, 60), (100, 60)], [[(110, 10), (150, 10), (150, 10.2), (110, 10.2)]])
+    spike = Polygon([(200, 0), (300, 0.3), (300, 20), (200, 20)])
+    feats = Features(buildings=[bld(courtyard), bld(thin_slot), bld(spike)])
+    out = prepare(feats, spec())
+    assert out.buildings
+    for b in out.buildings:
+        assert isinstance(b.geom, Polygon)
+        assert b.geom.is_valid
+        assert not b.geom.is_empty
+        assert b.geom.area > 0
+
+
 def test_simple_mode_ignores_roads_and_water():
     feats = Features(
         buildings=[bld(box(0, 0, 20, 20))],

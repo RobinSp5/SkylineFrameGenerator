@@ -51,9 +51,11 @@ def _clip_buildings(
     out: list[Building] = []
     for b in buildings:
         for poly in polygons_of(b.geom.intersection(square)):
-            poly = poly.simplify(tol_m, preserve_topology=True)
-            if _is_printable(poly, min_area_m2, half_feature_m):
-                out.append(Building(poly, b.height_m))
+            # Simplification is not guaranteed to preserve validity (notably for rings with holes),
+            # so its result goes back through the same repair/flatten choke point.
+            for part in polygons_of(poly.simplify(tol_m, preserve_topology=True)):
+                if _is_printable(part, min_area_m2, half_feature_m):
+                    out.append(Building(part, b.height_m))
     return out
 
 
