@@ -44,15 +44,17 @@ def export_all(meshset: MeshSet, spec: FrameSpec, out_dir: Path) -> ExportPaths:
     out_dir.mkdir(parents=True, exist_ok=True)
     paths = ExportPaths(stl=out_dir / "model.stl", threemf=out_dir / "model.3mf", glb=out_dir / "preview.glb")
 
+    # Verify everything first, so a failure never leaves a half-written set of files behind.
     single = to_trimesh(meshset.single)
     verify_single(single, spec)
-    single.export(str(paths.stl), file_type="stl")
-
     parts = {name: to_trimesh(man) for name, man in meshset.parts().items()}
     for name, tm in parts.items():
         verify_part(tm, name)
+
+    single.export(str(paths.stl), file_type="stl")
     trimesh.Scene(parts).export(str(paths.threemf), file_type="3mf")
 
+    # Colours are for the preview only — the 3MF is already written at this point.
     for name, tm in parts.items():
         tm.visual.face_colors = PART_COLORS[name]
     trimesh.Scene(parts).export(str(paths.glb), file_type="glb")

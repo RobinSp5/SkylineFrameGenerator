@@ -55,6 +55,17 @@ def test_glb_contains_all_parts(tmp_path, meshset):
     assert len(scene.geometry) == 4
 
 
+def test_nothing_is_written_when_a_part_fails_verification(tmp_path, meshset, monkeypatch):
+    def boom(tm, name):
+        raise ExportError("boom")
+
+    monkeypatch.setattr("skylineframe.export.verify_part", boom)
+    out_dir = tmp_path / "job"
+    with pytest.raises(ExportError, match="boom"):
+        export_all(meshset, spec(), out_dir)
+    assert list(out_dir.iterdir()) == []
+
+
 def test_verify_rejects_wrong_plate_size(meshset):
     tm = to_trimesh(meshset.single)
     with pytest.raises(ExportError, match="plate"):
