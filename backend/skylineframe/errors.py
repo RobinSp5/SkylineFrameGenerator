@@ -15,3 +15,7 @@ class MeshError(SkylineError):
 
 class ExportError(SkylineError):
     """The final mesh failed verification or could not be written."""
+
+
+class PipelineError(SkylineError):
+    """The selected area cannot produce a model (e.g. no buildings)."""
