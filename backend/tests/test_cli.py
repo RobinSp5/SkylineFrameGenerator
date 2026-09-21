@@ -35,3 +35,21 @@ def test_generate_reports_errors(monkeypatch, tmp_path):
     result = runner.invoke(cli.app, ["--lat", "50.1", "--lon", "8.6", "--out", str(tmp_path)])
     assert result.exit_code == 1
     assert "Overpass down" in result.output
+
+
+def test_generate_reports_invalid_spec(tmp_path):
+    result = runner.invoke(cli.app, ["--lat", "50.1", "--lon", "8.6", "--side", "100", "--out", str(tmp_path)])
+    assert result.exit_code == 1
+    assert "Error:" in result.output
+    assert "side_m" in result.output
+    assert "Traceback" not in result.output
+
+
+def test_generate_reports_value_error(monkeypatch, tmp_path):
+    def failing_run(spec, out_dir, cache_dir, progress=None):
+        raise ValueError("Areas crossing the antimeridian (±180° longitude) are not supported.")
+
+    monkeypatch.setattr(cli, "run", failing_run)
+    result = runner.invoke(cli.app, ["--lat", "50.1", "--lon", "8.6", "--out", str(tmp_path)])
+    assert result.exit_code == 1
+    assert "antimeridian" in result.output

@@ -4,12 +4,20 @@ from pathlib import Path
 from typing import Annotated
 
 import typer
+from pydantic import ValidationError
 
 from .errors import SkylineError
 from .pipeline import run
 from .spec import FrameSpec, Mode
 
 app = typer.Typer(add_completion=False)
+
+
+def _message(exc: Exception) -> str:
+    """One readable line per problem; pydantic's full repr is too noisy for a terminal."""
+    if isinstance(exc, ValidationError):
+        return "; ".join(f"{'.'.join(map(str, e['loc']))}: {e['msg']}" for e in exc.errors())
+    return str(exc)
 
 
 @app.command()
@@ -25,20 +33,23 @@ def generate(
     out: Annotated[Path, typer.Option(help="Output directory")] = Path("out"),
     cache: Annotated[Path, typer.Option(help="Overpass cache directory")] = Path(".cache/overpass"),
 ) -> None:
-    spec = FrameSpec(
-        center_lat=lat,
-        center_lon=lon,
-        side_m=side,
-        plate_size_mm=plate,
-        plate_thickness_mm=thickness,
-        mode=mode,
-        rotation_deg=rotation,
-        z_exaggeration=z,
-    )
+    # Spec construction is inside the try: out-of-range options must read as an error line,
+    # not as a pydantic traceback. ValidationError and ValueError (e.g. the antimeridian guard
+    # in query_bbox) are named explicitly so the boundary does not depend on their hierarchy.
     try:
+        spec = FrameSpec(
+            center_lat=lat,
+            center_lon=lon,
+            side_m=side,
+            plate_size_mm=plate,
+            plate_thickness_mm=thickness,
+            mode=mode,
+            rotation_deg=rotation,
+            z_exaggeration=z,
+        )
         result = run(spec, out, cache, progress=lambda stage, msg: typer.echo(f"[{stage}] {msg}"))
-    except SkylineError as exc:
-        typer.echo(f"Error: {exc}", err=True)
+    except (SkylineError, ValidationError, ValueError) as exc:
+        typer.echo(f"Error: {_message(exc)}", err=True)
         raise typer.Exit(code=1)
     typer.echo(f"Buildings: {result.stats.get('buildings', 0)}")
     typer.echo(f"STL: {result.paths.stl}")
