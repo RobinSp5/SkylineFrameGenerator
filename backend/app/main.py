@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+import httpx
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
@@ -10,6 +11,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from skylineframe.spec import FrameSpec
 
+from .geocode import Geocoder
 from .jobs import JobQueueFull, JobStore
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
@@ -34,6 +36,7 @@ def create_app(
     allowed_hosts: list[str] | None = None,
 ) -> FastAPI:
     store = store or JobStore(DEFAULT_JOBS_DIR, DEFAULT_CACHE_DIR)
+    geocoder = geocoder or Geocoder()
     store.cleanup()
     app = FastAPI(title="Skyline Frame Generator")
     app.add_middleware(
@@ -66,11 +69,15 @@ def create_app(
             raise HTTPException(404, "file not available")
         return FileResponse(path, media_type=MEDIA_TYPES.get(filename, "application/octet-stream"), filename=filename)
 
-    if geocoder is not None:
-
-        @app.get("/api/geocode")
-        def geocode(q: str = Query(min_length=2, max_length=200)) -> list[dict]:
-            return [r.__dict__ for r in geocoder.search(q)]
+    @app.get("/api/geocode")
+    def geocode(q: str = Query(min_length=2, max_length=200)) -> list[dict]:
+        try:
+            results = geocoder.search(q)
+        except httpx.HTTPError:
+            # Nominatim is a third-party service: a timeout or a 5xx there is not our bug,
+            # and its traceback has no business reaching the browser.
+            raise HTTPException(502, "Place search is temporarily unavailable.") from None
+        return [{"name": r.name, "lat": r.lat, "lon": r.lon} for r in results]
 
     dist = frontend_dist or DEFAULT_FRONTEND_DIST
     if dist.is_dir():
