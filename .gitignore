@@ -1,0 +1,10 @@
+.cache/
+.jobs/
+__pycache__/
+.venv/
+node_modules/
+dist/
+*.stl
+*.3mf
+*.glb
+.DS_Store
