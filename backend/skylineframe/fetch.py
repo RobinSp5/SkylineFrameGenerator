@@ -94,6 +94,25 @@ def _cache_path(cache_dir: Path, query: str) -> Path:
     return cache_dir / (hashlib.sha256(query.encode()).hexdigest() + ".json")
 
 
+def _read_cache(path: Path) -> dict | None:
+    """Cached response, or None when there is no usable entry.
+
+    A crash or a full disk mid-write can leave a truncated file; treating that as a miss keeps
+    one bad write from poisoning a query forever.
+    """
+    try:
+        return json.loads(path.read_text())
+    except (ValueError, OSError):
+        return None
+
+
+def _write_cache(path: Path, data: dict) -> None:
+    """Write atomically: a reader either sees the previous entry or the complete new one."""
+    tmp = path.with_name(path.name + f".{os.getpid()}.tmp")
+    tmp.write_text(json.dumps(data))
+    os.replace(tmp, path)
+
+
 def fetch_overpass(
     query: str,
     cache_dir: Path,
@@ -105,8 +124,9 @@ def fetch_overpass(
 ) -> dict:
     cache_dir.mkdir(parents=True, exist_ok=True)
     path = _cache_path(cache_dir, query)
-    if path.exists():
-        return json.loads(path.read_text())
+    cached = _read_cache(path)
+    if cached is not None:
+        return cached
 
     owns_client = client is None
     client = client or httpx.Client(timeout=120)
@@ -127,7 +147,7 @@ def fetch_overpass(
                     if "runtime error" in remark.lower():
                         last_error = f"Overpass remark: {remark}"
                     else:
-                        path.write_text(json.dumps(data))
+                        _write_cache(path, data)
                         return data
                 else:
                     last_error = f"HTTP {response.status_code}"

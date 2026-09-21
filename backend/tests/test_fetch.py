@@ -4,7 +4,16 @@ import httpx
 import pytest
 
 from skylineframe.errors import FetchError
-from skylineframe.fetch import DEFAULT_OVERPASS_URL, build_query, fetch_overpass, overpass_url, parse_height, parse_overpass
+from skylineframe.fetch import (
+    DEFAULT_OVERPASS_URL,
+    USER_AGENT,
+    _cache_path,
+    build_query,
+    fetch_overpass,
+    overpass_url,
+    parse_height,
+    parse_overpass,
+)
 from skylineframe.spec import FrameSpec, Mode
 
 SAMPLE = {
@@ -94,9 +103,12 @@ def test_parse_overpass_keeps_building_that_is_also_relation_member():
 # --- http + cache ------------------------------------------------------
 
 
-def make_client(responses: list[int | dict], calls: list[str]) -> httpx.Client:
+def make_client(responses: list[int | dict], calls: list[tuple[str, str | None]]) -> httpx.Client:
+    """Records (request body, User-Agent) per call; MockTransport ignores headers, so the
+    User-Agent must be asserted explicitly or the header could be dropped unnoticed."""
+
     def handler(request: httpx.Request) -> httpx.Response:
-        calls.append(request.content.decode())
+        calls.append((request.content.decode(), request.headers.get("user-agent")))
         r = responses.pop(0)
         if isinstance(r, int):
             return httpx.Response(r, text="error")
@@ -106,17 +118,29 @@ def make_client(responses: list[int | dict], calls: list[str]) -> httpx.Client:
 
 
 def test_fetch_overpass_uses_cache(tmp_path):
-    calls: list[str] = []
+    calls: list[tuple[str, str | None]] = []
     client = make_client([SAMPLE], calls)
     first = fetch_overpass("q1", tmp_path, client=client)
     second = fetch_overpass("q1", tmp_path, client=client)
     assert first == second == SAMPLE
     assert len(calls) == 1
+    assert calls[0][1] == USER_AGENT  # overpass-api.de answers 406 to unidentified clients
     assert len(list(tmp_path.glob("*.json"))) == 1
 
 
+def test_fetch_overpass_refetches_when_cache_is_corrupt(tmp_path):
+    # A crash mid-write can leave a truncated cache entry; it must not poison the query forever.
+    calls: list[tuple[str, str | None]] = []
+    client = make_client([SAMPLE], calls)
+    path = _cache_path(tmp_path, "q7")
+    path.write_text("{not json")
+    assert fetch_overpass("q7", tmp_path, client=client) == SAMPLE
+    assert len(calls) == 1
+    assert json.loads(path.read_text()) == SAMPLE
+
+
 def test_fetch_overpass_retries_on_429(tmp_path):
-    calls: list[str] = []
+    calls: list[tuple[str, str | None]] = []
     sleeps: list[float] = []
     client = make_client([429, SAMPLE], calls)
     data = fetch_overpass("q2", tmp_path, client=client, sleep=sleeps.append)
@@ -140,7 +164,7 @@ def test_fetch_overpass_retries_on_runtime_error_remark(tmp_path):
         "elements": [],
         "remark": 'runtime error: Query timed out in "query" at line 3 after 90 seconds.',
     }
-    calls: list[str] = []
+    calls: list[tuple[str, str | None]] = []
     sleeps: list[float] = []
     client = make_client([timed_out, SAMPLE], calls)
     data = fetch_overpass("q6", tmp_path, client=client, sleep=sleeps.append)
