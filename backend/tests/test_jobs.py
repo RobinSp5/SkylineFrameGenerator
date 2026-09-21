@@ -1,9 +1,11 @@
+import os
+import threading
 import time
 from pathlib import Path
 
 import pytest
 
-from app.jobs import JOB_FILES, JobStore
+from app.jobs import JOB_FILES, MAX_ACTIVE_JOBS, Job, JobQueueFull, JobStore
 from skylineframe.errors import FetchError
 from skylineframe.export import ExportPaths
 from skylineframe.pipeline import RunResult
@@ -91,8 +93,6 @@ def test_cleanup_removes_old_dirs(tmp_path):
     old = root / "old123"
     old.mkdir(parents=True)
     (old / "model.stl").write_bytes(b"x")
-    import os
-
     stamp = time.time() - 2 * 86400
     os.utime(old, (stamp, stamp))
     store = JobStore(root, tmp_path / "cache", runner=fake_runner)
@@ -105,3 +105,43 @@ def test_to_dict_shape(tmp_path):
     job = wait_done(store, store.create(spec()).id)
     d = job.to_dict()
     assert set(d) == {"id", "status", "stage", "message", "stats"}
+
+
+def test_queue_is_bounded(tmp_path):
+    gate = threading.Event()
+
+    def blocking_runner(spec, out_dir, cache_dir, progress):
+        assert gate.wait(10), "gate was never released"
+        return fake_runner(spec, out_dir, cache_dir, progress)
+
+    store = JobStore(tmp_path / "jobs", tmp_path / "cache", runner=blocking_runner)
+    try:
+        ids = [store.create(spec()).id for _ in range(MAX_ACTIVE_JOBS)]
+        for _ in range(2):
+            with pytest.raises(JobQueueFull):
+                store.create(spec())
+    finally:
+        gate.set()
+    for job_id in ids:
+        assert wait_done(store, job_id, timeout_s=10).status == "done"
+    assert store.create(spec()).id not in ids  # slots are free again
+
+
+def test_cleanup_keeps_running_jobs_and_forgets_removed_ones(tmp_path):
+    root = tmp_path / "jobs"
+    store = JobStore(root, tmp_path / "cache", runner=fake_runner)
+    stamp = time.time() - 2 * 86400
+
+    busy = root / "busy00000000"
+    busy.mkdir(parents=True)
+    os.utime(busy, (stamp, stamp))
+    store._jobs[busy.name] = Job(id=busy.name, spec=spec(), dir=busy, status="running")
+
+    finished = wait_done(store, store.create(spec()).id)
+    os.utime(finished.dir, (stamp, stamp))
+
+    assert store.cleanup(max_age_s=86400) == 1
+    assert busy.is_dir()
+    assert store.get(busy.name) is not None
+    assert not finished.dir.exists()
+    assert store.get(finished.id) is None

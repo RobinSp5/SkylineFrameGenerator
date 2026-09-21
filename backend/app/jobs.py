@@ -18,8 +18,14 @@ from skylineframe.spec import FrameSpec
 log = logging.getLogger(__name__)
 
 JOB_FILES: tuple[str, ...] = ("model.stl", "model.3mf", "preview.glb")
+MAX_ACTIVE_JOBS = 8  # queued + running; one browser must not be able to fill the machine
+ACTIVE_STATUSES: tuple[str, ...] = ("queued", "running")
 JobStatus = Literal["queued", "running", "done", "error"]
 Runner = Callable[[FrameSpec, Path, Path, ProgressCallback], RunResult]
+
+
+class JobQueueFull(RuntimeError):
+    """More jobs are already queued or running than this server accepts."""
 
 
 @dataclass
@@ -55,6 +61,9 @@ class JobStore:
         job_id = uuid.uuid4().hex[:12]
         job = Job(id=job_id, spec=spec, dir=self._root / job_id)
         with self._lock:
+            active = sum(1 for other in self._jobs.values() if other.status in ACTIVE_STATUSES)
+            if active >= MAX_ACTIVE_JOBS:
+                raise JobQueueFull(f"{active} jobs already queued or running")
             self._jobs[job_id] = job
         self._pool.submit(self._execute, job)
         return job
@@ -71,11 +80,21 @@ class JobStore:
         return path if path.is_file() else None
 
     def cleanup(self, max_age_s: float = 86400) -> int:
+        """Drop job directories older than max_age_s, never one of a job still queued or running."""
         removed = 0
         cutoff = time.time() - max_age_s
-        for child in self._root.iterdir():
-            if child.is_dir() and child.stat().st_mtime < cutoff:
+        with self._lock:
+            active = {job_id for job_id, job in self._jobs.items() if job.status in ACTIVE_STATUSES}
+            for child in self._root.iterdir():
+                if child.name in active:
+                    continue
+                try:
+                    if not child.is_dir() or child.stat().st_mtime >= cutoff:
+                        continue
+                except OSError:  # vanished or unreadable between iterdir() and stat()
+                    continue
                 shutil.rmtree(child, ignore_errors=True)
+                self._jobs.pop(child.name, None)
                 removed += 1
         return removed
 
@@ -84,14 +103,18 @@ class JobStore:
             job.stage, job.message = stage, message
 
         job.status = "running"
+        # Every branch assigns message (and stats) before status: a poller that sees a terminal
+        # status must never read the message of the previous one.
         try:
             result = self._runner(job.spec, job.dir, self._cache_dir, progress)
         except (SkylineError, ValueError) as exc:
-            # Both carry a message written for the user (ValueError e.g. from the projection stage).
-            job.status, job.message = "error", str(exc)
+            # Both carry a message written for the user (ValueError e.g. from the projection stage),
+            # but only the bare ValueError is unexpected enough to be worth a traceback.
+            log.warning("job %s failed: %s", job.id, exc, exc_info=isinstance(exc, ValueError))
+            job.message, job.status = str(exc), "error"
         except Exception:
             log.exception("job %s crashed", job.id)
-            job.status, job.message = "error", "Unexpected error during generation. See server log."
+            job.message, job.status = "Unexpected error during generation. See server log.", "error"
         else:
             job.stats = result.stats
-            job.status, job.message = "done", "Ready"
+            job.message, job.status = "Ready", "done"
