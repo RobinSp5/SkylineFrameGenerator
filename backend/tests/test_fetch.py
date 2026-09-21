@@ -133,6 +133,24 @@ def test_fetch_overpass_gives_up_after_retries(tmp_path):
     assert list(tmp_path.glob("*.json")) == []
 
 
+def test_fetch_overpass_retries_on_runtime_error_remark(tmp_path):
+    # Overpass reports query timeouts as HTTP 200 with a "remark" and an empty element list.
+    timed_out = {
+        "version": 0.6,
+        "elements": [],
+        "remark": 'runtime error: Query timed out in "query" at line 3 after 90 seconds.',
+    }
+    calls: list[str] = []
+    sleeps: list[float] = []
+    client = make_client([timed_out, SAMPLE], calls)
+    data = fetch_overpass("q6", tmp_path, client=client, sleep=sleeps.append)
+    assert data == SAMPLE
+    assert sleeps == [2.0]
+    cached = list(tmp_path.glob("*.json"))
+    assert len(cached) == 1
+    assert json.loads(cached[0].read_text()) == SAMPLE  # the remark payload was never cached
+
+
 def test_fetch_overpass_does_not_retry_client_errors(tmp_path):
     sleeps: list[float] = []
     client = make_client([400], [])

@@ -120,11 +120,19 @@ def fetch_overpass(
             else:
                 if response.status_code == 200:
                     data = response.json()
-                    path.write_text(json.dumps(data))
-                    return data
-                last_error = f"HTTP {response.status_code}"
-                if response.status_code not in RETRY_STATUSES:
-                    break
+                    # Overpass reports query timeouts and out-of-memory as HTTP 200 with a "remark"
+                    # and an empty element list. Caching that would make a transient failure
+                    # permanent, so treat it exactly like a retryable server error.
+                    remark = data.get("remark", "")
+                    if "runtime error" in remark.lower():
+                        last_error = f"Overpass remark: {remark}"
+                    else:
+                        path.write_text(json.dumps(data))
+                        return data
+                else:
+                    last_error = f"HTTP {response.status_code}"
+                    if response.status_code not in RETRY_STATUSES:
+                        break
             if attempt < retries - 1:
                 sleep(backoff_s * 2**attempt)
     finally:
