@@ -96,7 +96,7 @@ Transformiert WGS84 in ein lokales metrisches System (Azimuthal Equidistant um d
 `prepare(local, spec) -> PreparedFeatures`
 - Clip aller Geometrien auf das Quadrat (`shapely.intersection`).
 - `make_valid` auf allen Polygonen; leere oder nicht-polygonale Reste verwerfen.
-- Gebäude: Polygone, Fläche ≥ `min_footprint_area_mm2 / scale²`, Vereinfachung mit Toleranz `0.05 mm / scale`. Überlappende Grundrisse werden nicht in 2D zusammengeführt; die 3D-Vereinigung in der Mesh-Stufe löst Überlappungen (der höhere Körper gewinnt).
+- Gebäude: Polygone, Fläche ≥ `min_footprint_area_mm2 / scale²`, zusätzlich muss eine Erosion um 0,4 mm (halbes Mindest-Feature) eine nichtleere Fläche übrig lassen (filtert Sliver). Vereinfachung mit Toleranz `0.05 mm / scale`. Überlappende Grundrisse werden nicht in 2D zusammengeführt; die 3D-Vereinigung in der Mesh-Stufe löst Überlappungen (der höhere Körper gewinnt).
 - Straßen (full): Linien werden mit `road_width_mm / scale / 2` gepuffert (flache Enden, runde Verbindungen), alle Klassen vereinigt, dann erneut auf das Quadrat geclippt.
 - Wasser (full): Polygone vereinigt.
 - Vorrangregel: Gebäude > Straßen > Wasser. Straßenflächen werden um Gebäudegrundrisse reduziert, Wasserflächen um Gebäude und Straßen (Brücken erscheinen so als Straße). Damit liegt keine Vertiefung unter einem Gebäude und Straßen- und Wasserflächen überlappen nie.
@@ -112,7 +112,7 @@ Koordinatensystem: Plattenoberseite bei z = 0, Platte von z = −thickness bis 0
 - `base`: Quader. Im full-Modus werden Straßen- und Wasserflächen als Extrusionen (Tiefe road_depth/water_depth, von −depth bis +0,01 mm) per Boolean-Differenz abgezogen.
 - `buildings`: Jede Grundrissfläche als `manifold3d.CrossSection` (Außenring + Löcher, FillRule EvenOdd) extrudiert, alle per `Manifold.batch_boolean(..., OpType.Add)` vereinigt. trimesh dient nur für Export und Verifikation.
 - `water`, `roads` (full): Einleger, identische Grundfläche wie die Vertiefungen, Höhe = Tiefe, sitzen bündig in `base`.
-- `single`: Boolean-Vereinigung von base (mit Vertiefungen) + buildings. Die Einleger werden bewusst nicht vereinigt, damit Straßen und Wasser im einfarbigen Druck als Relief sichtbar bleiben. Gebäude werden 0,2 mm in die Platte versenkt, damit die Vereinigung keine reinen Flächenkontakte hat.
+- `single`: Boolean-Vereinigung von base (mit Vertiefungen) + buildings. Die Einleger werden bewusst nicht vereinigt, damit Straßen und Wasser im einfarbigen Druck als Relief sichtbar bleiben. Nur für diese Vereinigung werden die Gebäude 0,2 mm in die Platte versenkt, damit der Boolean nicht auf reinen Flächenkontakt angewiesen ist; das exportierte Teil `buildings` sitzt bündig auf z = 0 und überlappt `base` nicht.
 
 Boolean-Engine: manifold3d direkt (Manifold-Objekte werden erst im Export in trimesh konvertiert). Nach jeder Boolean-Operation wird `is_watertight` und `is_volume` geprüft. Bei Verletzung bricht die Pipeline mit `MeshError` ab.
 
@@ -126,7 +126,7 @@ Vor dem Schreiben: Bounding-Box von `single` muss in x/y exakt `plate_size_mm` s
 
 ### 5.7 `pipeline.py` und `cli.py`
 `run(spec, out_dir, progress_cb) -> ExportPaths` verkettet 5.1–5.6 und meldet Fortschritt (`fetch`, `prepare`, `mesh`, `export`).
-CLI: `skylineframe generate --lat 50.11 --lon 8.68 --side 1500 --mode full --out ./out`.
+CLI: `skylineframe --lat 50.11 --lon 8.68 --side 1500 --mode full --out ./out` (ein einziges Kommando, kein Unterbefehl). Overpass-Endpoint per Umgebungsvariable `SKYLINE_OVERPASS_URL` überschreibbar.
 
 ## 6. Backend (`backend/app/`, FastAPI)
 
@@ -147,7 +147,7 @@ Fehlerbild: Jeder Pipeline-Fehler landet als `status: error` mit lesbarer `messa
 
 Module:
 
-- `map.ts`: MapLibre GL mit OSM-Raster-Tiles. Zeichnet das Zielquadrat als GeoJSON-Polygon. Interaktion: Ziehen verschiebt den Mittelpunkt, Slider für `side_m` und `rotation_deg`. Das Quadrat wird aus Mittelpunkt, Seite und Rotation über eine lokale Projektion berechnet (gleiche Formel wie im Backend).
+- `map.ts`: MapLibre GL mit OSM-Raster-Tiles. Zeichnet das Zielquadrat als GeoJSON-Polygon. Interaktion: Ziehen verschiebt den Mittelpunkt, Slider für `side_m` und `rotation_deg`. Das Quadrat wird aus Mittelpunkt, Seite und Rotation über eine äquirektanguläre Näherung berechnet (Backend: azimutal-äquidistant). Die Abweichung liegt bei ≤ 5 km Kantenlänge im Bereich weniger Meter und ist für die Kartenanzeige akzeptiert; maßgeblich ist das Backend.
 - `search.ts`: Suchfeld → `/api/geocode`, Klick auf Treffer zentriert Karte und Quadrat.
 - `controls.ts`: Seitenleiste mit Modus, Plattengröße, Höhenfaktor, Plattendicke, Button „Generieren“, Fortschritt und Fehlermeldung.
 - `viewer.ts`: three.js mit OrbitControls, lädt `preview.glb`, Licht und Grundraster.
@@ -161,7 +161,7 @@ Layout: Karte links (60 %), rechts Seitenleiste oben und 3D-Vorschau darunter. D
 - Alle Features ≥ 0,8 mm (zwei Düsenbreiten): Rillenbreiten, Gebäudemindesthöhe, Mindestgrundriss.
 - Keine Überhänge: reine Extrusionen nach oben, Vertiefungen nach unten.
 - Platte 100 mm × 100 mm × 3 mm passt auf jede Bambu-Druckplatte; Maximum 250 mm.
-- 3MF-Objekte teilen ein Koordinatensystem; in Bambu Studio „Als ein Objekt mit mehreren Teilen importieren“ wählen und je Teil ein Filament zuweisen.
+- 3MF-Objekte teilen ein Koordinatensystem. In Bambu Studio nach dem Import alle Objekte markieren → „Assemble“, damit ein Objekt mit mehreren Teilen entsteht und die Einleger in den Vertiefungen bleiben; dann je Teil ein Filament zuweisen. Wird in der manuellen Abnahme verifiziert.
 
 ## 9. Tests
 

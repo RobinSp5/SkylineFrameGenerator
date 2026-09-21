@@ -553,7 +553,7 @@ import httpx
 import pytest
 
 from skylineframe.errors import FetchError
-from skylineframe.fetch import build_query, fetch_overpass, parse_height, parse_overpass
+from skylineframe.fetch import DEFAULT_OVERPASS_URL, build_query, fetch_overpass, overpass_url, parse_height, parse_overpass
 from skylineframe.spec import FrameSpec, Mode
 
 SAMPLE = {
@@ -593,7 +593,7 @@ def test_build_query_simple_only_buildings():
     assert 'way["building"](49.900000,7.900000,50.100000,8.100000);' in q
     assert 'relation["building"]["type"="multipolygon"]' in q
     assert "highway" not in q and "water" not in q
-    assert q.strip().endswith("out skel qt;")
+    assert q.strip().endswith("(._;>;);\nout body qt;")
 
 
 def test_build_query_full_adds_roads_and_water():
@@ -678,7 +678,7 @@ def test_fetch_overpass_gives_up_after_retries(tmp_path):
     client = make_client([504, 504, 504], [])
     with pytest.raises(FetchError, match="Overpass"):
         fetch_overpass("q3", tmp_path, client=client, sleep=sleeps.append)
-    assert sleeps == [2.0, 4.0, 8.0]
+    assert sleeps == [2.0, 4.0]  # no sleep after the final attempt
     assert list(tmp_path.glob("*.json")) == []
 
 
@@ -701,6 +701,13 @@ def test_fetch_overpass_retries_on_network_error(tmp_path):
 
     client = httpx.Client(transport=httpx.MockTransport(handler))
     assert fetch_overpass("q5", tmp_path, client=client, sleep=lambda s: None) == SAMPLE
+
+
+def test_overpass_url_from_env(monkeypatch):
+    monkeypatch.delenv("SKYLINE_OVERPASS_URL", raising=False)
+    assert overpass_url() == DEFAULT_OVERPASS_URL
+    monkeypatch.setenv("SKYLINE_OVERPASS_URL", "http://localhost:12345/api/interpreter")
+    assert overpass_url() == "http://localhost:12345/api/interpreter"
 
 
 # --- recorded fixture --------------------------------------------------
@@ -753,6 +760,7 @@ Expected: FAIL mit `ModuleNotFoundError: No module named 'skylineframe.fetch'`
 
 import hashlib
 import json
+import os
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -787,7 +795,10 @@ def build_query(bbox: tuple[float, float, float, float], mode: Mode) -> str:
             parts.append(f"way{selector}{bb};")
             parts.append(f"relation{selector}{bb};")
     body = "\n  ".join(parts)
-    return f"[out:json][timeout:90];\n(\n  {body}\n);\nout body;\n>;\nout skel qt;\n"
+    # (._;>;) unions the matched elements with everything they reference, so every way and node
+    # is emitted exactly once *with* tags. The classic "out body; >; out skel qt;" would emit member
+    # ways twice (once tagged, once as tagless skeleton) and osm2geojson could shadow the tagged copy.
+    return f"[out:json][timeout:90];\n(\n  {body}\n);\n(._;>;);\nout body qt;\n"
 
 
 def parse_height(tags: dict, default_m: float) -> float:
@@ -869,21 +880,27 @@ def fetch_overpass(
                 last_error = f"HTTP {response.status_code}"
                 if response.status_code not in RETRY_STATUSES:
                     break
-            sleep(backoff_s * 2**attempt)
+            if attempt < retries - 1:
+                sleep(backoff_s * 2**attempt)
     finally:
         if owns_client:
             client.close()
     raise FetchError(f"Overpass request failed ({last_error}). Please try again in a minute.")
 
 
+def overpass_url() -> str:
+    """Endpoint override via SKYLINE_OVERPASS_URL (e.g. a self-hosted Overpass instance)."""
+    return os.environ.get("SKYLINE_OVERPASS_URL", DEFAULT_OVERPASS_URL)
+
+
 def fetch_features(
     spec: FrameSpec,
     cache_dir: Path,
-    url: str = DEFAULT_OVERPASS_URL,
+    url: str | None = None,
     client: httpx.Client | None = None,
 ) -> Features:
     query = build_query(query_bbox(spec), spec.mode)
-    return parse_overpass(fetch_overpass(query, cache_dir, url=url, client=client), spec)
+    return parse_overpass(fetch_overpass(query, cache_dir, url=url or overpass_url(), client=client), spec)
 ```
 
 - [ ] **Step 6: Fixture-Recorder anlegen und einmalig ausführen (Netz nötig)**
@@ -921,7 +938,7 @@ Expected: `recorded <n> elements` mit n > 500, Datei `tests/fixtures/frankfurt_r
 - [ ] **Step 7: Tests grün**
 
 Run: `cd backend && uv run pytest tests/test_fetch.py -q`
-Expected: alle Tests bestehen (17 Tests).
+Expected: alle Tests bestehen (18 Tests).
 
 - [ ] **Step 8: Commit**
 
@@ -999,6 +1016,14 @@ def test_tiny_footprint_is_dropped():
     out = prepare(feats, spec())
     assert len(out.buildings) == 1
     assert out.buildings[0].geom.area == pytest.approx(400)
+
+
+def test_sliver_footprint_is_dropped():
+    # 2 m x 300 m wall: area 600 m² passes the area filter but is 0.2 mm wide at scale 0.1 => unprintable
+    feats = Features(buildings=[bld(box(0, 0, 2, 300)), bld(box(20, 20, 40, 40))])
+    out = prepare(feats, spec())
+    assert len(out.buildings) == 1
+    assert out.buildings[0].geom.bounds == pytest.approx((20, 20, 40, 40))
 
 
 def test_multipolygon_building_is_split():
@@ -1109,12 +1134,19 @@ def polygons_of(geom: BaseGeometry | None) -> list[Polygon]:
     return [p for p in parts if not p.is_empty and p.area > 0]
 
 
-def _clip_buildings(buildings: list[Building], square: Polygon, min_area_m2: float, tol_m: float) -> list[Building]:
+def _is_printable(poly: Polygon, min_area_m2: float, half_feature_m: float) -> bool:
+    """Large enough, and thick enough somewhere: eroding by half the minimum feature must leave something."""
+    return poly.area >= min_area_m2 and not poly.buffer(-half_feature_m).is_empty
+
+
+def _clip_buildings(
+    buildings: list[Building], square: Polygon, min_area_m2: float, tol_m: float, half_feature_m: float
+) -> list[Building]:
     out: list[Building] = []
     for b in buildings:
         for poly in polygons_of(b.geom.intersection(square)):
             poly = poly.simplify(tol_m, preserve_topology=True)
-            if poly.area >= min_area_m2:
+            if _is_printable(poly, min_area_m2, half_feature_m):
                 out.append(Building(poly, b.height_m))
     return out
 
@@ -1145,6 +1177,7 @@ def prepare(features: Features, spec: FrameSpec) -> Prepared:
         square,
         min_area_m2=spec.min_footprint_area_mm2 / scale**2,
         tol_m=SIMPLIFY_TOLERANCE_MM / scale,
+        half_feature_m=MIN_FEATURE_MM / 2 / scale,
     )
     if spec.mode != Mode.full:
         return Prepared(buildings=buildings)
@@ -1160,7 +1193,7 @@ def prepare(features: Features, spec: FrameSpec) -> Prepared:
 - [ ] **Step 4: Tests grün**
 
 Run: `cd backend && uv run pytest tests/test_prepare.py -q`
-Expected: `12 passed`
+Expected: `13 passed`
 
 - [ ] **Step 5: Commit**
 
@@ -1303,7 +1336,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 
 **Interfaces:**
 - Consumes: `FrameSpec` (Task 1); `Scaled`, `Prism` (Task 5); `SkylineError` (Task 3).
-- Produces: `MeshError(SkylineError)`; `MeshSet(base, buildings, single, water=None, roads=None)` mit `manifold3d.Manifold`-Werten und Methode `parts() -> dict[str, Manifold]` (Reihenfolge base, buildings, water, roads; None-Einträge fehlen); `build_meshes(scaled, spec) -> MeshSet`; `to_trimesh(manifold) -> trimesh.Trimesh`; Konstanten `EPS = 0.01`, `BUILDING_SINK_MM = 0.2`.
+- Produces: `MeshError(SkylineError)`; `MeshSet(base, buildings, single, water=None, roads=None)` mit `manifold3d.Manifold`-Werten und Methode `parts() -> dict[str, Manifold]` (Reihenfolge base, buildings, water, roads; None-Einträge fehlen). `buildings` sitzt bündig auf z = 0 (für 3MF/GLB); nur `single` verwendet die um `BUILDING_SINK_MM` versenkte Variante. `build_meshes(scaled, spec) -> MeshSet`; `to_trimesh(manifold) -> trimesh.Trimesh`; Konstanten `EPS = 0.01`, `BUILDING_SINK_MM = 0.2`.
 
 - [ ] **Step 1: `MeshError` in `errors.py` ergänzen**
 
@@ -1325,7 +1358,7 @@ import pytest
 from shapely.geometry import Polygon, box
 
 from skylineframe.errors import MeshError
-from skylineframe.mesh import BUILDING_SINK_MM, build_meshes, to_trimesh
+from skylineframe.mesh import build_meshes, to_trimesh
 from skylineframe.scale import Prism, Scaled
 from skylineframe.spec import FrameSpec, Mode
 
@@ -1339,9 +1372,31 @@ def spec(**kw) -> FrameSpec:
 def test_single_building_adds_its_volume_to_plate():
     ms = build_meshes(Scaled(buildings=[Prism(box(-5, -5, 5, 5), 10.0)]), spec())
     assert ms.single.volume() == pytest.approx(PLATE_VOLUME + 100 * 10, rel=1e-6)
-    assert ms.buildings.volume() == pytest.approx(100 * (10 + BUILDING_SINK_MM), rel=1e-6)
+    # the exported part sits flush on the plate (no overlap with `base` in the 3MF)
+    assert ms.buildings.volume() == pytest.approx(100 * 10, rel=1e-6)
+    assert ms.buildings.bounding_box()[2] == pytest.approx(0.0)
     assert ms.water is None and ms.roads is None
     assert list(ms.parts()) == ["base", "buildings"]
+
+
+def test_l_shaped_building():
+    l_shape = Polygon([(0, 0), (10, 0), (10, 4), (4, 4), (4, 10), (0, 10)])  # area 64
+    ms = build_meshes(Scaled(buildings=[Prism(l_shape, 3.0)]), spec())
+    assert ms.single.volume() == pytest.approx(PLATE_VOLUME + 64 * 3, rel=1e-6)
+
+
+def test_building_flush_with_plate_edge():
+    ms = build_meshes(Scaled(buildings=[Prism(box(40, -50, 50, -40), 5.0)]), spec())
+    assert ms.single.volume() == pytest.approx(PLATE_VOLUME + 100 * 5, rel=1e-6)
+    tm = to_trimesh(ms.single)
+    assert tm.is_watertight and tm.is_volume
+    assert tm.extents[0] == pytest.approx(100, abs=1e-6)
+
+
+def test_zero_area_footprints_are_skipped():
+    degenerate = Polygon([(0, 0), (10, 0), (10, 0), (0, 0)])
+    ms = build_meshes(Scaled(buildings=[Prism(degenerate, 3.0), Prism(box(0, 0, 5, 5), 2.0)]), spec())
+    assert ms.single.volume() == pytest.approx(PLATE_VOLUME + 25 * 2, rel=1e-6)
 
 
 def test_building_with_hole():
@@ -1438,6 +1493,7 @@ class MeshSet:
 
 def cross_section(poly: Polygon) -> m3d.CrossSection:
     rings = [list(poly.exterior.coords)[:-1]] + [list(ring.coords)[:-1] for ring in poly.interiors]
+    rings = [ring for ring in rings if len(set(ring)) >= 3]  # drop degenerate rings
     return m3d.CrossSection(rings, m3d.FillRule.EvenOdd)
 
 
@@ -1475,11 +1531,16 @@ def build_meshes(scaled: Scaled, spec: FrameSpec) -> MeshSet:
     if not scaled.buildings:
         raise MeshError("No buildings in the selected area.")
 
+    footprints = [b for b in scaled.buildings if b.geom.area > 0]
+    if not footprints:
+        raise MeshError("No printable building footprints in the selected area.")
+
     base = plate(spec)
-    buildings = _check(
-        union([prism(b.geom, b.height_mm + BUILDING_SINK_MM, z0=-BUILDING_SINK_MM) for b in scaled.buildings]),
-        "buildings",
-    )
+    # Exported part: flush on the plate top, so 3MF parts never overlap.
+    buildings = _check(union([prism(b.geom, b.height_mm) for b in footprints]), "buildings")
+    # For the single-colour union we sink the buildings slightly so the boolean never relies on
+    # a pure face contact at z = 0.
+    buildings_sunk = union([prism(b.geom, b.height_mm + BUILDING_SINK_MM, z0=-BUILDING_SINK_MM) for b in footprints])
 
     water = roads = None
     if scaled.water:
@@ -1492,7 +1553,7 @@ def build_meshes(scaled: Scaled, spec: FrameSpec) -> MeshSet:
         _check(roads, "roads")
     _check(base, "base")
 
-    single = _check(base + buildings, "single")
+    single = _check(base + buildings_sunk, "single")
     return MeshSet(base=base, buildings=buildings, single=single, water=water, roads=roads)
 
 
@@ -1506,7 +1567,7 @@ def to_trimesh(man: m3d.Manifold) -> trimesh.Trimesh:
 - [ ] **Step 5: Tests grün**
 
 Run: `cd backend && uv run pytest tests/test_mesh.py -q`
-Expected: `8 passed`
+Expected: `11 passed`
 
 - [ ] **Step 6: Commit**
 
@@ -1528,7 +1589,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 
 **Interfaces:**
 - Consumes: `MeshSet`, `to_trimesh` (Task 6); `FrameSpec` (Task 1); `SkylineError` (Task 3).
-- Produces: `ExportError(SkylineError)`; `ExportPaths(stl: Path, threemf: Path, glb: Path)`; `PART_COLORS: dict[str, tuple[int,int,int,int]]`; `verify_single(tm, spec) -> None`; `export_all(meshset, spec, out_dir: Path) -> ExportPaths`. Dateinamen: `model.stl`, `model.3mf`, `preview.glb`.
+- Produces: `ExportError(SkylineError)`; `ExportPaths(stl: Path, threemf: Path, glb: Path)`; `PART_COLORS: dict[str, tuple[int,int,int,int]]`; `verify_single(tm, spec) -> None`; `verify_part(tm, name) -> None`; `export_all(meshset, spec, out_dir: Path) -> ExportPaths`. Dateinamen: `model.stl`, `model.3mf`, `preview.glb`.
 
 - [ ] **Step 1: `ExportError` in `errors.py` ergänzen**
 
@@ -1549,7 +1610,7 @@ import trimesh
 from shapely.geometry import box
 
 from skylineframe.errors import ExportError
-from skylineframe.export import export_all, verify_single
+from skylineframe.export import export_all, verify_part, verify_single
 from skylineframe.mesh import build_meshes, to_trimesh
 from skylineframe.scale import Prism, Scaled
 from skylineframe.spec import FrameSpec, Mode
@@ -1605,6 +1666,13 @@ def test_verify_rejects_wrong_plate_size(meshset):
         verify_single(tm, spec(plate_size_mm=120))
 
 
+def test_verify_part_rejects_non_watertight(meshset):
+    tm = to_trimesh(meshset.base)
+    broken = trimesh.Trimesh(vertices=tm.vertices, faces=tm.faces[:-1], process=False)
+    with pytest.raises(ExportError, match="base"):
+        verify_part(broken, "base")
+
+
 def test_verify_rejects_non_watertight(meshset):
     tm = to_trimesh(meshset.single)
     broken = trimesh.Trimesh(vertices=tm.vertices, faces=tm.faces[:-1], process=False)
@@ -1657,6 +1725,11 @@ def verify_single(tm: trimesh.Trimesh, spec: FrameSpec) -> None:
         raise ExportError("Model has no volume above the plate.")
 
 
+def verify_part(tm: trimesh.Trimesh, name: str) -> None:
+    if not tm.is_watertight or not tm.is_volume:
+        raise ExportError(f"Part '{name}' is not watertight; please try a slightly different area.")
+
+
 def export_all(meshset: MeshSet, spec: FrameSpec, out_dir: Path) -> ExportPaths:
     out_dir.mkdir(parents=True, exist_ok=True)
     paths = ExportPaths(stl=out_dir / "model.stl", threemf=out_dir / "model.3mf", glb=out_dir / "preview.glb")
@@ -1666,6 +1739,8 @@ def export_all(meshset: MeshSet, spec: FrameSpec, out_dir: Path) -> ExportPaths:
     single.export(str(paths.stl), file_type="stl")
 
     parts = {name: to_trimesh(man) for name, man in meshset.parts().items()}
+    for name, tm in parts.items():
+        verify_part(tm, name)
     trimesh.Scene(parts).export(str(paths.threemf), file_type="3mf")
 
     for name, tm in parts.items():
@@ -1677,7 +1752,7 @@ def export_all(meshset: MeshSet, spec: FrameSpec, out_dir: Path) -> ExportPaths:
 - [ ] **Step 5: Tests grün**
 
 Run: `cd backend && uv run pytest tests/test_export.py -q`
-Expected: `6 passed`
+Expected: `7 passed`
 
 Hinweis: Das Volumen-Kriterium ist bewusst „mehr als die halbe Platte“, weil Vertiefungen das Plattenvolumen leicht reduzieren; ein Modell ohne Gebäude wird schon in `build_meshes` abgefangen.
 
@@ -1956,7 +2031,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 
 **Interfaces:**
 - Consumes: `FrameSpec` (Task 1), `SkylineError` (Task 3), `run`, `RunResult`, `ProgressCallback` (Task 8), `ExportPaths` (Task 7).
-- Produces: `jobs.py`: `JOB_FILES = ("model.stl", "model.3mf", "preview.glb")`, `Job` (id, spec, dir, status, stage, message, stats, created_at, `to_dict()`), `Runner`-Typ `Callable[[FrameSpec, Path, Path, ProgressCallback], RunResult]`, `JobStore(root: Path, cache_dir: Path, runner=..., workers=2)` mit `create(spec) -> Job`, `get(id) -> Job | None`, `file(id, name) -> Path | None`, `cleanup(max_age_s=86400) -> int`. `main.py`: `create_app(store: JobStore | None = None, geocoder=None, frontend_dist: Path | None = None) -> FastAPI`, Modulvariable `app`. Endpoints: `POST /api/jobs` (202, `{"id"}`), `GET /api/jobs/{id}`, `GET /api/jobs/{id}/{filename}`.
+- Produces: `jobs.py`: `JOB_FILES = ("model.stl", "model.3mf", "preview.glb")`, `Job` (id, spec, dir, status, stage, message, stats, created_at, `to_dict()`), `Runner`-Typ `Callable[[FrameSpec, Path, Path, ProgressCallback], RunResult]`, `JobStore(root: Path, cache_dir: Path, runner=..., workers=2)` mit `create(spec) -> Job`, `get(id) -> Job | None`, `file(id, name) -> Path | None`, `cleanup(max_age_s=86400) -> int`. `main.py`: `create_app(store: JobStore | None = None, geocoder=None, frontend_dist: Path | None = None) -> FastAPI` (Factory, keine Modulvariable; Start mit `uvicorn --factory app.main:create_app`). Endpoints: `POST /api/jobs` (202, `{"id"}`), `GET /api/jobs/{id}`, `GET /api/jobs/{id}/{filename}`.
 
 - [ ] **Step 1: Failing Tests für JobStore**
 
@@ -2302,10 +2377,9 @@ def create_app(store: JobStore | None = None, geocoder=None, frontend_dist: Path
     if dist.is_dir():
         app.mount("/", StaticFiles(directory=dist, html=True), name="frontend")
     return app
-
-
-app = create_app()
 ```
+
+Es gibt bewusst keine Modulvariable `app`: Der Import von `app.main` darf keine Verzeichnisse anlegen, keinen Cleanup fahren und keinen Thread-Pool starten (Tests importieren das Modul). Uvicorn startet über den Factory-Modus: `uvicorn --factory app.main:create_app`.
 
 Hinweis: `geocoder` wird in Task 10 mit einem echten `Geocoder` belegt; bis dahin ist der Endpoint nur vorhanden, wenn einer übergeben wird.
 
@@ -2316,7 +2390,7 @@ Expected: `11 passed`
 
 - [ ] **Step 7: Server manuell starten**
 
-Run: `cd backend && uv run uvicorn app.main:app --port 8000` (in zweitem Terminal: `curl -s localhost:8000/api/jobs/x` → `{"detail":"job not found"}`), dann mit Ctrl+C beenden.
+Run: `cd backend && uv run uvicorn --factory app.main:create_app --port 8000` (in zweitem Terminal: `curl -s localhost:8000/api/jobs/x` → `{"detail":"job not found"}`), dann mit Ctrl+C beenden.
 
 - [ ] **Step 8: Commit**
 
@@ -2415,6 +2489,7 @@ Expected: FAIL mit `ModuleNotFoundError: No module named 'app.geocode'`
 ```python
 """Nominatim place search with in-memory cache and polite rate limiting."""
 
+import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -2448,8 +2523,13 @@ class Geocoder:
         self._sleep = sleep
         self._cache: dict[str, tuple[float, list[GeocodeResult]]] = {}
         self._last_request: float | None = None
+        self._lock = threading.Lock()  # FastAPI runs sync handlers in a thread pool
 
     def search(self, q: str, limit: int = 5) -> list[GeocodeResult]:
+        with self._lock:
+            return self._search(q, limit)
+
+    def _search(self, q: str, limit: int) -> list[GeocodeResult]:
         key = q.strip().lower()
         cached = self._cache.get(key)
         if cached and self._now() - cached[0] < self._ttl_s:
@@ -2895,7 +2975,8 @@ export function createMap(container: HTMLElement, initial: SquareParams): MapCon
         emit();
       };
       map.on("mousemove", onMove);
-      map.once("mouseup", onUp);
+      // window, not map: releasing the button outside the canvas must still end the drag
+      window.addEventListener("mouseup", onUp, { once: true });
     });
   });
 
@@ -3276,7 +3357,12 @@ import { createViewer } from "./viewer";
 const root = document.getElementById("app")!;
 const controls = setupControls(root);
 const map = createMap(document.getElementById("map")!, { lat: 50.1106, lon: 8.6821, sideM: 1500, rotationDeg: 0 });
-const viewer = createViewer(document.getElementById("viewer")!);
+let viewer: ReturnType<typeof createViewer> | null = null;
+try {
+  viewer = createViewer(document.getElementById("viewer")!);
+} catch (err) {
+  console.error("3D preview unavailable (no WebGL?)", err);
+}
 
 controls.writeSquare(map.getParams());
 map.onChange((p) => controls.writeSquare(p));
@@ -3294,13 +3380,14 @@ controls.onGenerate(async () => {
       controls.setStatus(job.message || "Generierung fehlgeschlagen", true);
       return;
     }
-    controls.setStatus(`Fertig: ${job.stats.buildings ?? 0} Gebäude`);
+    const summary = `Fertig: ${job.stats.buildings ?? 0} Gebäude`;
+    controls.setStatus(summary);
     controls.showDownloads(id);
     try {
-      await viewer.load(jobFileUrl(id, "preview.glb"));
+      await viewer?.load(jobFileUrl(id, "preview.glb"));
     } catch (err) {
       console.error(err);
-      controls.setStatus("Fertig, aber Vorschau konnte nicht geladen werden.");
+      controls.setStatus(`${summary} (Vorschau nicht verfügbar)`);
     }
   } catch (err) {
     controls.setStatus(err instanceof Error ? err.message : String(err), true);
@@ -3317,7 +3404,7 @@ Expected: keine Typfehler, `dist/` wird erzeugt. (Vite warnt ggf. über Chunk-Gr
 
 - [ ] **Step 7: Manuell im Browser prüfen**
 
-Terminal 1: `cd backend && uv run uvicorn app.main:app --port 8000`
+Terminal 1: `cd backend && uv run uvicorn --factory app.main:create_app --port 8000`
 Terminal 2: `cd frontend && npm run dev`
 Browser: `http://localhost:5173` → Karte mit orangem Quadrat sichtbar, Quadrat lässt sich ziehen, Slider ändern Größe/Drehung, Suche „Frankfurt" liefert Treffer. Klick auf „Generieren" (Netz nötig) zeigt Fortschritt, danach Vorschau und Download-Links.
 
@@ -3352,13 +3439,13 @@ setup:
 	cd frontend && npm install && npx playwright install chromium
 
 backend:
-	cd backend && uv run uvicorn app.main:app --reload --port 8000
+	cd backend && uv run uvicorn --factory app.main:create_app --reload --port 8000
 
 frontend:
 	cd frontend && npm run dev
 
 dev:
-	cd frontend && npx concurrently -k -n api,web "cd ../backend && uv run uvicorn app.main:app --reload --port 8000" "npm run dev"
+	cd frontend && npx concurrently -k -n api,web "cd ../backend && uv run uvicorn --factory app.main:create_app --reload --port 8000" "npm run dev"
 
 test:
 	cd backend && uv run pytest -q
@@ -3385,7 +3472,12 @@ import { defineConfig } from "@playwright/test";
 export default defineConfig({
   testDir: "./e2e",
   timeout: 30_000,
-  use: { baseURL: "http://localhost:5173", headless: true },
+  use: {
+    baseURL: "http://localhost:5173",
+    headless: true,
+    // software WebGL so maplibre and three.js initialise in headless Chromium
+    launchOptions: { args: ["--use-gl=angle", "--use-angle=swiftshader", "--enable-unsafe-swiftshader"] },
+  },
   webServer: { command: "npm run dev", url: "http://localhost:5173", reuseExistingServer: true },
 });
 ```
@@ -3449,7 +3541,7 @@ test("backend error is shown to the user", async ({ page }) => {
 - [ ] **Step 4: Smoke-Test ausführen**
 
 Run: `cd frontend && npx playwright test`
-Expected: `2 passed`. Falls die Karten-Canvas in Headless-Chromium nicht sichtbar wird, `use.launchOptions = { args: ["--use-gl=swiftshader", "--enable-unsafe-swiftshader"] }` in der Playwright-Config ergänzen.
+Expected: `2 passed`.
 
 - [ ] **Step 5: README schreiben**
 
@@ -3480,8 +3572,10 @@ Ort suchen, Quadrat auf der Karte verschieben, Größe/Drehung einstellen, „Ge
 ## Drucken (Bambu Studio)
 
 - STL: direkt importieren, weiß drucken, 0,2 mm Layer, keine Stützen nötig.
-- 3MF: importieren, die Objekte `base`, `buildings`, `water`, `roads` erhalten je ein Filament.
-  Wer Straßen als Rille statt als Farbe will, löscht das Objekt `roads`.
+- 3MF: importieren, dann **alle vier Objekte markieren → Rechtsklick → „Assemble“** (Zusammenbauen), damit sie ein
+  Objekt mit mehreren Teilen bilden und die Einleger in den Vertiefungen bleiben statt einzeln auf die Druckplatte
+  zu fallen. Danach `base`, `buildings`, `water`, `roads` je ein Filament zuweisen.
+  Wer Straßen als Rille statt als Farbe will, löscht das Teil `roads`.
 
 ## Tests
 
@@ -3540,7 +3634,7 @@ Expected: erfolgreich, ohne `roads`/`water` im 3MF (in Bambu Studio nur `base` u
 - [ ] **Step 3: In Bambu Studio prüfen**
 
 1. `out/frankfurt/model.stl` importieren. Erwartung: ein Objekt, 100 × 100 mm Grundfläche, Slicing ohne Warnungen zu nicht-mannigfaltigen Kanten.
-2. `out/frankfurt/model.3mf` importieren. Erwartung: vier Objekte `base`, `buildings`, `water`, `roads`, bündig übereinander; je ein Filament zuweisen (weiß, weiß, blau, grau); Slicing ohne Fehler.
+2. `out/frankfurt/model.3mf` importieren. Erwartung: vier Objekte `base`, `buildings`, `water`, `roads`. Alle markieren → Rechtsklick → „Assemble“; Erwartung: ein Objekt mit vier Teilen, Einleger bündig in den Vertiefungen (nicht auf der Druckplatte). Je Teil ein Filament zuweisen (weiß, weiß, blau, grau); Slicing ohne Fehler. Falls Bambu Studio die Teile beim Assemble verschiebt: Ergebnis dokumentieren, dann als Alternative pro Teil ein STL exportieren und gemeinsam als „ein Objekt mit mehreren Teilen“ importieren (Phase-2-Kandidat).
 3. Sichtprüfung im Slicer: Straßen als Rillen erkennbar, Main als Vertiefung, Gebäude am Plattenrand sauber abgeschnitten.
 
 - [ ] **Step 4: Ergebnis dokumentieren**
@@ -3563,5 +3657,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 **Spec-Abdeckung:** Modi (Task 4/6/8), Farbausgabe single/multi (Task 6/7), Geodaten inkl. Straßenklassen, Wasser-Selektoren, Höhenlogik, Cache und Retry (Task 3), Geocoding mit User-Agent/Rate-Limit/Cache (Task 10), FrameSpec-Parameter und Validierung (Task 1), Projektion mit Rotation (Task 2), Clip/Repair/Vorrangregel (Task 4), Skalierung mit Mindesthöhe (Task 5), Mesh mit Vertiefungen, Einlegern und Versenkung (Task 6), Export mit Verifikation von Wasserdichtigkeit und Plattenmaß (Task 7), Pipeline/CLI (Task 8), API-Endpoints, Job-Store, Cleanup, Fehlerbild ohne Stacktrace, statisches Frontend (Task 9), Frontend-Module (Task 11–13), Tests inkl. Fixture und Playwright (Task 3/14), manuelle Abnahme (Task 15). Nicht im Scope laut Spec: Küstenlinien, Gravur, Rahmen, Parts, Terrain.
 
 **Platzhalter:** keine „TBD“/„TODO“; jeder Code-Schritt enthält vollständigen Code.
+
+**Architektur-Review (everything-claude-code:architect, 2026-09-21) eingearbeitet:** Overpass-Query emittiert jedes Element genau einmal mit Tags; kein Sleep nach dem letzten Retry; Overpass-URL per `SKYLINE_OVERPASS_URL`; Sliver-Filter über negativen Buffer; 3MF-Teil `buildings` bündig (Versenkung nur im Single-Union); degenerierte Ringe gefiltert; L-Form-, Kanten- und Null-Flächen-Tests; alle Teile vor dem Export auf Wasserdichtigkeit geprüft; App-Factory statt Import-Seiteneffekten; Geocoder mit Lock; Drag-Ende auf `window`; Viewer optional bei fehlendem WebGL; Playwright mit Software-GL; README mit „Assemble“-Schritt.
 
 **Typkonsistenz:** `run(spec, out_dir, cache_dir, progress=None, fetch=...)` wird in Task 8, 9 (über `_default_runner`) und im CLI identisch benutzt. `RunResult(paths, stats)` und `ExportPaths(stl, threemf, glb)` sind in Task 7/8/9 gleich. `JOB_FILES` deckt genau `MEDIA_TYPES` ab. Frontend `FrameSpecInput` entspricht den Pflichtfeldern von `FrameSpec`; `road_width_mm` und die Mindest-Parameter bleiben Backend-Defaults. `MapController.setParams/getParams/onChange/flyTo` werden in `main.ts` genau so verwendet.
