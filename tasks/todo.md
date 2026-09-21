@@ -4,15 +4,15 @@ Plan: docs/superpowers/plans/2026-09-21-skyline-frame-generator.md
 Spec: docs/superpowers/specs/2026-09-21-skyline-frame-generator-design.md
 
 ## Backend
-- [ ] Task 1: Backend-Grundgerüst und FrameSpec
-- [ ] Task 2: Feature-Container und lokale Projektion
-- [ ] Task 3: Overpass-Fetch, Parsing, Cache und Fixture (einmalig Netz)
-- [ ] Task 4: Clipping, Reparatur, Straßen-/Wasserflächen
-- [ ] Task 5: Skalierung Meter → Millimeter
-- [ ] Task 6: Mesh-Erzeugung mit manifold3d
-- [ ] Task 7: Export STL/3MF/GLB mit Verifikation
-- [ ] Task 8: Pipeline, CLI, Offline-E2E-Test
-- [ ] Task 9: FastAPI mit Hintergrund-Jobs
+- [x] Task 1: Backend-Grundgerüst und FrameSpec
+- [x] Task 2: Feature-Container und lokale Projektion
+- [x] Task 3: Overpass-Fetch, Parsing, Cache und Fixture (einmalig Netz)
+- [x] Task 4: Clipping, Reparatur, Straßen-/Wasserflächen
+- [x] Task 5: Skalierung Meter → Millimeter
+- [x] Task 6: Mesh-Erzeugung mit manifold3d
+- [x] Task 7: Export STL/3MF/GLB mit Verifikation
+- [x] Task 8: Pipeline, CLI, Offline-E2E-Test
+- [x] Task 9: FastAPI mit Hintergrund-Jobs
 - [ ] Task 10: Geocoding über Nominatim
 
 ## Frontend
