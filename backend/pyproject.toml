@@ -35,3 +35,9 @@ packages = ["skylineframe", "app"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Two warnings raised inside starlette/anyio when `fastapi.testclient` is imported;
+# nothing we call triggers them. Matched by exact message, never by bare category.
+filterwarnings = [
+    "ignore:Using `httpx` with `starlette\\.testclient` is deprecated:starlette.exceptions.StarletteDeprecationWarning",
+    "ignore:The anyio\\.abc\\.BlockingPortal alias is deprecated:DeprecationWarning",
+]
