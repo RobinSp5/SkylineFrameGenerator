@@ -110,11 +110,11 @@ Meter → Millimeter über `scale`. Gebäudehöhe: `max(h_m × scale × z_exagge
 Koordinatensystem: Plattenoberseite bei z = 0, Platte von z = −thickness bis 0, Gebäude von 0 bis h.
 
 - `base`: Quader. Im full-Modus werden Straßen- und Wasserflächen als Extrusionen (Tiefe road_depth/water_depth, von −depth bis +0,01 mm) per Boolean-Differenz abgezogen.
-- `buildings`: Jede Grundrissfläche mit `trimesh.creation.extrude_polygon` extrudiert (Löcher werden unterstützt), alle vereinigt.
+- `buildings`: Jede Grundrissfläche als `manifold3d.CrossSection` (Außenring + Löcher, FillRule EvenOdd) extrudiert, alle per `Manifold.batch_boolean(..., OpType.Add)` vereinigt. trimesh dient nur für Export und Verifikation.
 - `water`, `roads` (full): Einleger, identische Grundfläche wie die Vertiefungen, Höhe = Tiefe, sitzen bündig in `base`.
 - `single`: Boolean-Vereinigung von base (mit Vertiefungen) + buildings. Die Einleger werden bewusst nicht vereinigt, damit Straßen und Wasser im einfarbigen Druck als Relief sichtbar bleiben. Gebäude werden 0,2 mm in die Platte versenkt, damit die Vereinigung keine reinen Flächenkontakte hat.
 
-Boolean-Engine: manifold3d über trimesh. Nach jeder Boolean-Operation wird `is_watertight` und `is_volume` geprüft. Bei Verletzung bricht die Pipeline mit `MeshError` ab.
+Boolean-Engine: manifold3d direkt (Manifold-Objekte werden erst im Export in trimesh konvertiert). Nach jeder Boolean-Operation wird `is_watertight` und `is_volume` geprüft. Bei Verletzung bricht die Pipeline mit `MeshError` ab.
 
 ### 5.6 `export.py`
 `export(meshset, out_dir) -> ExportPaths`
