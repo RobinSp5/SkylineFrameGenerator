@@ -921,7 +921,7 @@ Expected: `recorded <n> elements` mit n > 500, Datei `tests/fixtures/frankfurt_r
 - [ ] **Step 7: Tests grün**
 
 Run: `cd backend && uv run pytest tests/test_fetch.py -q`
-Expected: alle Tests bestehen (`18 passed`).
+Expected: alle Tests bestehen (17 Tests).
 
 - [ ] **Step 8: Commit**
 
@@ -1358,10 +1358,10 @@ def test_overlapping_buildings_do_not_double_count():
 
 def test_single_bounding_box_matches_plate():
     ms = build_meshes(Scaled(buildings=[Prism(box(40, 40, 50, 50), 3.0)]), spec())
-    lo, hi = ms.single.bounding_box()
-    assert lo[0] == pytest.approx(-50) and hi[0] == pytest.approx(50)
-    assert lo[1] == pytest.approx(-50) and hi[1] == pytest.approx(50)
-    assert lo[2] == pytest.approx(-3.0) and hi[2] == pytest.approx(3.0)
+    xmin, ymin, zmin, xmax, ymax, zmax = ms.single.bounding_box()  # flat 6-tuple
+    assert (xmin, xmax) == pytest.approx((-50, 50))
+    assert (ymin, ymax) == pytest.approx((-50, 50))
+    assert (zmin, zmax) == pytest.approx((-3.0, 3.0))
 
 
 def test_road_recess_is_cut_and_inlay_fills_it():
@@ -2346,6 +2346,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 
 ```python
 import httpx
+import pytest
 from fastapi.testclient import TestClient
 
 from app.geocode import USER_AGENT, Geocoder
@@ -2392,7 +2393,7 @@ def test_search_rate_limits():
     g.search("Berlin")
     clock["t"] += 0.3
     g.search("Hamburg")
-    assert len(sleeps) == 1 and sleeps[0] == 0.7
+    assert len(sleeps) == 1 and sleeps[0] == pytest.approx(0.7)
 
 
 def test_geocode_endpoint(tmp_path):
@@ -2528,7 +2529,7 @@ rm -f src/counter.ts src/typescript.svg public/vite.svg
 `frontend/vite.config.ts`:
 
 ```ts
-import { defineConfig } from "vite";
+import { defineConfig } from "vitest/config";
 
 export default defineConfig({
   server: {
@@ -2798,7 +2799,7 @@ export function geocode(q: string): Promise<GeocodeHit[]> {
 - [ ] **Step 8: Tests grün**
 
 Run: `cd frontend && npx vitest --run`
-Expected: alle Tests bestehen (`9 passed`).
+Expected: alle Tests bestehen (`10 passed`).
 
 - [ ] **Step 9: Commit**
 
