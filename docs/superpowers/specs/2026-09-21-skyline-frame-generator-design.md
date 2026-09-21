@@ -30,7 +30,7 @@ Farbausgabe unabhängig vom Modus:
 | Ausgabe     | Datei | Inhalt                                                        |
 |-------------|-------|---------------------------------------------------------------|
 | single      | .stl  | Ein vereinigtes, wasserdichtes Mesh                           |
-| multi       | .3mf  | Getrennte Objekte `base`, `buildings`, `water`, `roads`; Wasser und Straßen sind Einleger, die exakt die Vertiefungen in `base` füllen |
+| multi       | .3mf  | Getrennte Objekte `base`, `buildings`, `water`, `roads`; Wasser und Straßen sind Einleger, die exakt die Vertiefungen in `base` füllen. Wer Straßen lieber als Rille statt als Farbe will, löscht das Objekt `roads` im Slicer |
 
 Beide Dateien werden pro Job immer erzeugt; die Vorschau nutzt ein zusätzliches GLB.
 
@@ -86,7 +86,7 @@ Jede Stufe ist eine reine Funktion mit klar definierten Ein- und Ausgabetypen un
 
 ### 5.1 `fetch.py`
 `fetch_features(spec) -> RawFeatures`
-Baut die Overpass-Query aus der Bounding-Box, nutzt den Cache, parst die Antwort zu Shapely-Geometrien in WGS84. Multipolygon-Relationen werden über `osm2geojson` zusammengesetzt. Ergebnis: Listen von `Building(geom, height_m)`, `Road(geom, cls)`, `Water(geom)`.
+Baut die Overpass-Query aus der Bounding-Box, nutzt den Cache, parst die Antwort zu Shapely-Geometrien in WGS84. Multipolygon-Relationen werden über `osm2geojson` zusammengesetzt (`filter_used_refs=False`, sonst verschwinden getaggte Gebäude, die zugleich Relationsmitglied sind). Ergebnis: Listen von `Building(geom, height_m)`, `Road(geom, cls)`, `Water(geom)`.
 
 ### 5.2 `project.py`
 `project(features, spec) -> LocalFeatures`
@@ -96,10 +96,10 @@ Transformiert WGS84 in ein lokales metrisches System (Azimuthal Equidistant um d
 `prepare(local, spec) -> PreparedFeatures`
 - Clip aller Geometrien auf das Quadrat (`shapely.intersection`).
 - `make_valid` auf allen Polygonen; leere oder nicht-polygonale Reste verwerfen.
-- Gebäude: Polygone, Fläche ≥ `min_footprint_area_mm2 / scale²`, Vereinfachung mit Toleranz `0.05 mm / scale`. Überlappende Gebäude werden vereinigt (Höhe = Maximum).
+- Gebäude: Polygone, Fläche ≥ `min_footprint_area_mm2 / scale²`, Vereinfachung mit Toleranz `0.05 mm / scale`. Überlappende Grundrisse werden nicht in 2D zusammengeführt; die 3D-Vereinigung in der Mesh-Stufe löst Überlappungen (der höhere Körper gewinnt).
 - Straßen (full): Linien werden mit `road_width_mm / scale / 2` gepuffert (flache Enden, runde Verbindungen), alle Klassen vereinigt, dann erneut auf das Quadrat geclippt.
 - Wasser (full): Polygone vereinigt.
-- Vorrangregel: Gebäude gewinnen. Straßen- und Wasserflächen werden um die Gebäudegrundrisse reduziert (Differenz), damit keine Rille oder Vertiefung unter einem Gebäude liegt.
+- Vorrangregel: Gebäude > Straßen > Wasser. Straßenflächen werden um Gebäudegrundrisse reduziert, Wasserflächen um Gebäude und Straßen (Brücken erscheinen so als Straße). Damit liegt keine Vertiefung unter einem Gebäude und Straßen- und Wasserflächen überlappen nie.
 
 ### 5.4 `scale.py`
 `scale_features(prepared, spec) -> ScaledFeatures`
@@ -112,7 +112,7 @@ Koordinatensystem: Plattenoberseite bei z = 0, Platte von z = −thickness bis 0
 - `base`: Quader. Im full-Modus werden Straßen- und Wasserflächen als Extrusionen (Tiefe road_depth/water_depth, von −depth bis +0,01 mm) per Boolean-Differenz abgezogen.
 - `buildings`: Jede Grundrissfläche mit `trimesh.creation.extrude_polygon` extrudiert (Löcher werden unterstützt), alle vereinigt.
 - `water`, `roads` (full): Einleger, identische Grundfläche wie die Vertiefungen, Höhe = Tiefe, sitzen bündig in `base`.
-- `single`: Boolean-Vereinigung von base + buildings (+ water + roads), sodass ein Körper entsteht.
+- `single`: Boolean-Vereinigung von base (mit Vertiefungen) + buildings. Die Einleger werden bewusst nicht vereinigt, damit Straßen und Wasser im einfarbigen Druck als Relief sichtbar bleiben. Gebäude werden 0,2 mm in die Platte versenkt, damit die Vereinigung keine reinen Flächenkontakte hat.
 
 Boolean-Engine: manifold3d über trimesh. Nach jeder Boolean-Operation wird `is_watertight` und `is_volume` geprüft. Bei Verletzung bricht die Pipeline mit `MeshError` ab.
 
