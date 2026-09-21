@@ -44,9 +44,14 @@ def square_wgs84(spec: FrameSpec) -> Polygon:
 
 
 def query_bbox(spec: FrameSpec, margin_m: float = 100.0) -> tuple[float, float, float, float]:
-    """(south, west, north, east) in WGS84 enclosing the rotated square plus a margin."""
+    """(south, west, north, east) in WGS84 enclosing the rotated square plus a margin.
+
+    Areas crossing the antimeridian are rejected rather than wrapped.
+    """
     grown = _rotated_square_metric(spec).buffer(margin_m, join_style="mitre")
     minx, miny, maxx, maxy = _to_wgs84(grown, spec).bounds
+    if maxx - minx > 180:
+        raise ValueError("Areas crossing the antimeridian (±180° longitude) are not supported.")
     return (miny, minx, maxy, maxx)
 
 

@@ -71,3 +71,9 @@ def test_project_features_keeps_attributes():
     assert local.buildings[0].height_m == 12.0
     assert local.roads[0].cls == "primary"
     assert local.buildings[0].geom.bounds[2] == pytest.approx(71.7, abs=1.0)
+
+
+def test_query_bbox_rejects_antimeridian_crossing():
+    s = FrameSpec(center_lat=0.0, center_lon=179.999, side_m=1000)
+    with pytest.raises(ValueError, match="antimeridian"):
+        query_bbox(s)
