@@ -11,7 +11,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from skylineframe.spec import FrameSpec
 
-from .geocode import Geocoder
+from .geocode import Geocoder, GeocodeError
 from .jobs import JobQueueFull, JobStore
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
@@ -73,9 +73,9 @@ def create_app(
     def geocode(q: str = Query(min_length=2, max_length=200)) -> list[dict]:
         try:
             results = geocoder.search(q)
-        except httpx.HTTPError:
-            # Nominatim is a third-party service: a timeout or a 5xx there is not our bug,
-            # and its traceback has no business reaching the browser.
+        except (httpx.HTTPError, GeocodeError):
+            # Nominatim is a third-party service: a timeout, a 5xx or a body we cannot read
+            # is not our bug, and its traceback has no business reaching the browser.
             raise HTTPException(502, "Place search is temporarily unavailable.") from None
         return [{"name": r.name, "lat": r.lat, "lon": r.lon} for r in results]
 
