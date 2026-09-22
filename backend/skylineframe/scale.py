@@ -23,8 +23,13 @@ class Scaled:
 
 
 def building_height_mm(height_m: float, spec: FrameSpec) -> float:
+    """Print height of one building, never below the printable minimum and never above the plate.
+
+    The upper cap is the last line of defence against a mistagged height: a tower taller than
+    the plate is wide turns the model into an unprintable spike.
+    """
     raw = round(height_m * spec.scale * spec.z_exaggeration, 2)
-    return max(raw, spec.min_building_height_mm)
+    return min(max(raw, spec.min_building_height_mm), spec.plate_size_mm)
 
 
 def _scale_geom(geom: Polygon, factor: float) -> Polygon:

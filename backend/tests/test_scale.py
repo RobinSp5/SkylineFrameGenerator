@@ -19,6 +19,12 @@ def test_height_enforces_minimum():
     assert building_height_mm(2.0, spec(min_building_height_mm=0.8)) == pytest.approx(0.8)
 
 
+def test_height_is_capped_at_the_plate_size():
+    # A mistagged 5000 m tower would be 750 mm tall on a 100 mm plate; the cap keeps the model
+    # printable even when one building survives the fetch-side sanity check.
+    assert building_height_mm(5000.0, spec(z_exaggeration=1.5)) == pytest.approx(100.0)
+
+
 def test_height_rounds_to_hundredth():
     assert building_height_mm(3.333, spec(z_exaggeration=1.0)) == pytest.approx(0.8)  # 0.3333 -> min
     assert building_height_mm(12.345, spec(z_exaggeration=1.0)) == pytest.approx(1.23)

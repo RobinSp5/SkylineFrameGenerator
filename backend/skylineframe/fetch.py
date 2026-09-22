@@ -21,6 +21,8 @@ DEFAULT_OVERPASS_URL = "https://overpass-api.de/api/interpreter"
 # browser UA strings), so identify the application as the Overpass usage policy asks.
 USER_AGENT = "skylineframe/0.1.0 (Skyline Frame Generator; 3D-printable OSM city squares)"
 RETRY_STATUSES = {429, 502, 503, 504}
+MAX_HEIGHT_M = 1000.0  # the tallest building on earth is ~830 m; anything above is mistagged
+MAX_LEVELS = 300.0
 WATER_SELECTORS = (
     '["natural"="water"]',
     '["waterway"="riverbank"]',
@@ -47,18 +49,30 @@ def build_query(bbox: tuple[float, float, float, float], mode: Mode) -> str:
 
 
 def parse_height(tags: dict, default_m: float) -> float:
+    """Height in metres, falling back to building:levels and then to the spec default.
+
+    A value outside MAX_HEIGHT_M / MAX_LEVELS is a tagging mistake (millimetres, a stray zero),
+    and a single one of them would stretch the z scale of the whole model, so it is treated
+    exactly like an unparsable one.
+    """
     raw = tags.get("height")
     if raw:
         try:
-            return float(raw.strip().removesuffix("m").strip())
+            height = float(raw.strip().removesuffix("m").strip())
         except ValueError:
             pass
+        else:
+            if 0 < height <= MAX_HEIGHT_M:
+                return height
     levels = tags.get("building:levels")
     if levels:
         try:
-            return float(levels) * LEVEL_HEIGHT_M
+            count = float(levels)
         except ValueError:
             pass
+        else:
+            if 0 < count <= MAX_LEVELS:
+                return count * LEVEL_HEIGHT_M
     return default_m
 
 

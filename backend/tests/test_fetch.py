@@ -75,6 +75,14 @@ def test_build_query_full_adds_roads_and_water():
         ({"height": "tall", "building:levels": "2"}, 6.4),
         ({"height": "abc", "building:levels": "x"}, 8.0),
         ({}, 8.0),
+        # Mistagged heights (millimetres, centimetres, a typo) are worse than no height at all:
+        # one of them alone decides the z scale of the whole model.
+        ({"height": "200000"}, 8.0),
+        ({"height": "0"}, 8.0),
+        ({"height": "-5"}, 8.0),
+        ({"height": "200000", "building:levels": "3"}, 9.6),
+        ({"building:levels": "999"}, 8.0),
+        ({"building:levels": "0"}, 8.0),
     ],
 )
 def test_parse_height(tags, expected):
