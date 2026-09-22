@@ -21,7 +21,7 @@ FetchFn = Callable[[FrameSpec, Path], Features]
 @dataclass
 class RunResult:
     paths: ExportPaths
-    stats: dict[str, int]
+    stats: dict[str, float]  # counts are ints, footprint_coverage is a ratio
 
 
 def run(
@@ -40,19 +40,32 @@ def run(
 
     report("prepare", "Clipping and cleaning geometry")
     prepared = prepare(project_features(raw, spec), spec)
-    if not prepared.buildings:
+    # A square of nothing but small sheds has no individual buildings but still has blocks,
+    # and a block alone is a perfectly good model.
+    if not prepared.buildings and not prepared.blocks:
         raise PipelineError("No buildings found in the selected area. Try a denser part of the city.")
     scaled = scale_features(prepared, spec)
 
-    report("mesh", f"Building solids for {len(prepared.buildings)} buildings")
+    report("mesh", f"Building solids for {len(prepared.buildings)} buildings in {len(prepared.blocks)} blocks")
     meshes = build_meshes(scaled, spec)
 
     report("export", "Writing STL, 3MF and preview")
     paths = export_all(meshes, spec, out_dir)
 
-    stats = {
-        "buildings": len(prepared.buildings),
+    individual = len(prepared.buildings)
+    stats: dict[str, float] = {
+        # `buildings` stays the headline number the API, the frontend and the Playwright test
+        # already read; buildings_individual is the same count under the spec's name.
+        "buildings": individual,
+        "buildings_individual": individual,
+        "blocks": len(prepared.blocks),
+        "parts": sum(1 for b in prepared.buildings if b.is_part),
+        "roofs": sum(1 for b in prepared.buildings if b.roof is not None),
+        "footprint_coverage": round(prepared.footprint_coverage, 4),
         "roads": len(prepared.roads),
+        # Groove area on the plate: the number that shows whether the blocks left the streets
+        # intact (spec §6.4). prepared.roads is in metres, so it is scaled here.
+        "road_area_mm2": round(sum(p.area for p in prepared.roads) * spec.scale**2, 1),
         "water": len(prepared.water),
         "stl_bytes": paths.stl.stat().st_size,
         "threemf_bytes": paths.threemf.stat().st_size,

@@ -96,3 +96,14 @@ def test_too_many_jobs_is_429(tmp_path):
     assert codes[-1] == 429
     for r in responses[:MAX_ACTIVE_JOBS]:  # drain, so no worker outlives the test
         assert poll(client, r.json()["id"])["status"] == "done"
+
+
+def test_create_job_accepts_the_detail_flags(client):
+    r = client.post("/api/jobs", json={**SPEC, "roofs": False, "parts": False})
+    assert r.status_code == 202
+
+
+def test_create_job_still_rejects_unknown_fields(client):
+    # FrameSpec forbids extras, so the frontend may only send fields the backend knows.
+    r = client.post("/api/jobs", json={**SPEC, "preset": "detail"})
+    assert r.status_code == 422

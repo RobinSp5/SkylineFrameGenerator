@@ -36,7 +36,7 @@ class Job:
     status: JobStatus = "queued"
     stage: str = ""
     message: str = ""
-    stats: dict[str, int] = field(default_factory=dict)
+    stats: dict[str, float] = field(default_factory=dict)  # counts plus footprint_coverage
     created_at: float = field(default_factory=time.time)
 
     def to_dict(self) -> dict:

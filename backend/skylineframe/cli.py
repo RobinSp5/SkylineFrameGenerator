@@ -8,9 +8,10 @@ from pydantic import ValidationError
 
 from .errors import SkylineError
 from .pipeline import run
-from .spec import FrameSpec, Mode
+from .spec import PRESETS, FrameSpec, Mode, Preset
 
 app = typer.Typer(add_completion=False)
+DEFAULT_SIDE_M, DEFAULT_PLATE_MM = PRESETS[Preset.skyline]
 
 
 def _message(exc: Exception) -> str:
@@ -24,15 +25,22 @@ def _message(exc: Exception) -> str:
 def generate(
     lat: Annotated[float, typer.Option(help="Centre latitude (WGS84)")],
     lon: Annotated[float, typer.Option(help="Centre longitude (WGS84)")],
-    side: Annotated[float, typer.Option(help="Edge length of the city square in metres")] = 1500,
-    plate: Annotated[float, typer.Option(help="Plate edge length in mm")] = 100,
+    preset: Annotated[
+        Preset | None,
+        typer.Option(help="skyline = 1500 m on 100 mm, detail = 800/100, gross = 1500/200"),
+    ] = None,
+    side: Annotated[float | None, typer.Option(help="Edge length of the city square in metres (wins over --preset)")] = None,
+    plate: Annotated[float | None, typer.Option(help="Plate edge length in mm (wins over --preset)")] = None,
     thickness: Annotated[float, typer.Option(help="Plate thickness in mm")] = 3.0,
     mode: Annotated[Mode, typer.Option(help="simple = buildings only, full = roads and water too")] = Mode.simple,
     rotation: Annotated[float, typer.Option(help="Clockwise rotation of the square in degrees")] = 0,
     z: Annotated[float, typer.Option(help="Height exaggeration factor")] = 1.5,
+    roofs: Annotated[bool, typer.Option("--roofs/--no-roofs", help="Build roof bodies from roof:shape")] = True,
+    parts: Annotated[bool, typer.Option("--parts/--no-parts", help="Render building:part instead of one box per outline")] = True,
     out: Annotated[Path, typer.Option(help="Output directory")] = Path("out"),
     cache: Annotated[Path, typer.Option(help="Overpass cache directory")] = Path(".cache/overpass"),
 ) -> None:
+    preset_side, preset_plate = PRESETS.get(preset, (DEFAULT_SIDE_M, DEFAULT_PLATE_MM))
     # Spec construction is inside the try: out-of-range options must read as an error line,
     # not as a pydantic traceback. Pydantic's ValidationError is named next to SkylineError
     # because it is the one expected failure that is not part of our own hierarchy.
@@ -40,20 +48,28 @@ def generate(
         spec = FrameSpec(
             center_lat=lat,
             center_lon=lon,
-            side_m=side,
-            plate_size_mm=plate,
+            side_m=side if side is not None else preset_side,
+            plate_size_mm=plate if plate is not None else preset_plate,
             plate_thickness_mm=thickness,
             mode=mode,
             rotation_deg=rotation,
             z_exaggeration=z,
+            roofs=roofs,
+            parts=parts,
         )
         result = run(spec, out, cache, progress=lambda stage, msg: typer.echo(f"[{stage}] {msg}"))
     except (SkylineError, ValidationError) as exc:
         typer.echo(f"Error: {_message(exc)}", err=True)
         raise typer.Exit(code=1)
-    typer.echo(f"Buildings: {result.stats.get('buildings', 0)}")
-    typer.echo(f"Non-manifold edges after vertex merge: {result.stats.get('nonmanifold_edges', 0)}")
-    typer.echo(f"Degenerate faces after vertex merge: {result.stats.get('degenerate_faces', 0)}")
+    stats = result.stats
+    typer.echo(f"Buildings: {int(stats.get('buildings', 0))}")
+    typer.echo(f"Blocks: {int(stats.get('blocks', 0))}")
+    typer.echo(f"Parts: {int(stats.get('parts', 0))}")
+    typer.echo(f"Roofs: {int(stats.get('roofs', 0))}")
+    typer.echo(f"Roads: {int(stats.get('roads', 0))} ({stats.get('road_area_mm2', 0.0):.0f} mm²)")
+    typer.echo(f"Footprint coverage: {stats.get('footprint_coverage', 0.0):.1%}")
+    typer.echo(f"Non-manifold edges after vertex merge: {int(stats.get('nonmanifold_edges', 0))}")
+    typer.echo(f"Degenerate faces after vertex merge: {int(stats.get('degenerate_faces', 0))}")
     typer.echo(f"STL: {result.paths.stl}")
     typer.echo(f"3MF: {result.paths.threemf}")
 
