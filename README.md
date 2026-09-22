@@ -28,9 +28,20 @@ Danach genügt http://localhost:8000 — kein Vite-Server nötig. Für die Entwi
 
 ## CLI
 
-    cd backend && uv run skylineframe --lat 50.1106 --lon 8.6821 --side 1500 --mode full --out ../out
+    cd backend && uv run skylineframe --lat 50.1106 --lon 8.6821 --preset skyline --mode full --out ../out
 
 (Ein Unterkommando gibt es nicht — die Optionen stehen direkt hinter `skylineframe`.)
+
+| Preset | Ausschnitt | Platte | Maßstab |
+|---|---|---|---|
+| `skyline` (Default) | 1500 m | 100 mm | 1:15.000 |
+| `detail` | 800 m | 100 mm | 1:8.000 |
+| `gross` | 1500 m | 200 mm | 1:7.500 |
+
+`--side` und `--plate` schlagen das Preset. Zum Vergleichen: `--no-roofs` lässt alle Dächer flach,
+`--no-parts` rendert je Umriss einen Kasten statt der `building:part`-Rücksprünge (beides ist per
+Default an). Die Ausgabe nennt Gebäude, Blöcke, Teile, Dächer, Straßen (Anzahl und Rillenfläche
+in mm²) und die Flächenabdeckung (Gebäudefläche im Modell / Gebäudefläche im Quadrat).
 
 ## Drucken (Bambu Studio)
 
@@ -42,6 +53,10 @@ Danach genügt http://localhost:8000 — kein Vite-Server nötig. Für die Entwi
 - Bambu Studio meldet beim Import u. U. gemeinsame Kanten dort, wo sich Gebäude an einer Ecke berühren.
   Die automatische Reparatur beim 3MF bitte **ablehnen** — sie füllt die Vertiefungen für Straßen und
   Wasser auf.
+- Sichtprüfung nach dem Import: Dächer sitzen auf den Häusern statt als Nadeln darüber, `building:part`-
+  Rücksprünge hängen nicht frei über dem Modell (freischwebende Teile werden bis zur Platte verlängert),
+  und die Straßenrillen laufen durch — die verschmolzenen Blöcke enden an den Straßen, statt sie zu
+  überbrücken.
 
 ## Tests
 
@@ -57,3 +72,14 @@ Ortssuche über Nominatim. Bitte die Nutzungsbedingungen beider Dienste beachten
 
 Weiche Obergrenze: Antworten mit mehr als 250 000 OSM-Elementen werden abgelehnt — dann ein kleineres
 Quadrat oder den einfachen Modus wählen.
+
+## Lizenz der Daten
+
+Die Geometrie stammt aus OpenStreetMap und steht unter der [Open Database License (ODbL)](https://opendatacommons.org/licenses/odbl/).
+Ein gedrucktes Modell ist ein „Produced Work“ im Sinne der ODbL: Es darf verkauft werden, und die
+Datenbank selbst muss dafür nicht offengelegt werden. Pflicht ist die Namensnennung —
+
+> Enthält Daten von © OpenStreetMap-Mitwirkende (ODbL)
+
+— sichtbar auf der Produktseite, in einer Beilage oder auf der Bodenplatte. Der Generator schreibt
+diesen Hinweis **nicht** selbst in das Modell; wer Drucke verkauft, muss ihn selbst anbringen.

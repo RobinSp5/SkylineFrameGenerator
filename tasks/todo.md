@@ -99,5 +99,81 @@ Spec: docs/superpowers/specs/2026-09-22-building-detail-design.md
 - [x] Task 4: Dachkörper (roofs.py)
 - [x] Task 5: Skalierung und Mesh — Blöcke, Teile, Dächer
 - [x] Task 6: Pipeline, Statistik, CLI-Flags und API-Durchreichung
-- [ ] Task 7: Frontend — Presets und neue Statuszeile
-- [ ] Task 8: README und Abnahme (Frankfurt Skyline/Detail, Manhattan; Bambu Studio manuell)
+- [x] Task 7: Frontend — Presets und neue Statuszeile
+- [~] Task 8: README und Abnahme (CLI-Läufe und Kennzahlen erledigt, Bambu-Studio-Prüfung offen)
+
+## Review Building Detail Upgrade
+
+**Datum:** 2026-09-22 — Task 8, Schritte 1–6 (README, vier Abnahmeläufe, Verifikation). Schritt 7 (Bambu Studio) steht noch aus.
+
+### Echte Läufe
+
+```
+cd backend && uv run skylineframe --lat 50.1106 --lon 8.6821 --preset skyline --mode full --out ../out/frankfurt-skyline
+cd backend && uv run skylineframe --lat 50.1106 --lon 8.6821 --preset detail  --mode full --out ../out/frankfurt-detail
+cd backend && uv run skylineframe --lat 40.7580 --lon -73.9855 --side 1500 --plate 100 --mode full --out ../out/manhattan
+cd backend && uv run skylineframe --lat 50.1106 --lon 8.6821 --preset skyline --mode full --no-roofs --no-parts --out ../out/frankfurt-flat
+```
+
+| Lauf | Gebäude | Blöcke | Teile | Dächer | Straßen (mm²) | Coverage | STL | 3MF | Laufzeit |
+|---|---|---|---|---|---|---|---|---|---|
+| Frankfurt Skyline (1500 m / 100 mm, full) | 851 | 164 | 152 | 23 | 23 Stück / 2 649 mm² | 97,0 % | 5 028 184 B (4,8 MiB) | 2 082 438 B (2,0 MiB) | 9,09 s (kalt) |
+| Frankfurt Detail (800 m / 100 mm, full) | 678 | 73 | 76 | 51 | 17 Stück / 1 598 mm² | 99,4 % | 2 512 384 B (2,4 MiB) | 973 530 B (0,93 MiB) | 18,81 s (kalt) |
+| Manhattan Midtown (1500 m / 100 mm, full) | 1 144 | 165 | 504 | 13 | 6 Stück / 2 745 mm² | 99,4 % | 2 998 384 B (2,9 MiB) | 1 144 143 B (1,1 MiB) | 26,82 s (kalt) |
+| Frankfurt ohne Dächer/Teile (1500 m / 100 mm, full) | 760 | 166 | 0 | 0 | 19 Stück / 2 698 mm² | 97,1 % | 4 854 184 B (4,6 MiB) | 2 021 202 B (1,9 MiB) | 4,66 s (warm) |
+
+„Kalt“ = mit Overpass-Abruf, „warm“ = aus `backend/.cache/overpass` (der Vergleichslauf trifft denselben Cache-Eintrag wie der Skyline-Lauf).
+„Gebäude“ sind die einzeln stehenden Körper; die übrigen Grundrisse stecken in den Blöcken.
+
+**Diagnose je Lauf (aus der CLI-Ausgabe)**
+
+| Lauf | Nicht-mannigfaltige Kanten nach Vertex-Merge | Degenerierte Dreiecke |
+|---|---|---|
+| Frankfurt Skyline | 143 | 134 |
+| Frankfurt Detail | 236 | 273 |
+| Manhattan Midtown | 81 | 86 |
+| Frankfurt ohne Dächer/Teile | 21 | 1 |
+
+### Verifikation der Dateien (trimesh, `process=False`)
+
+| Lauf | STL-Extents (mm) | Plattenmaß ±0,01 mm | STL-Volumen (mm³) | 3MF-Teile |
+|---|---|---|---|---|
+| Frankfurt Skyline | 100,0000 × 100,0000 × 28,900 | ja | 35 213,8 | `base`, `buildings`, `water`, `roads` |
+| Frankfurt Detail | 100,0000 × 100,0000 × 16,500 | ja | 37 771,6 | `base`, `buildings`, `water`, `roads` |
+| Manhattan Midtown | 100,0000 × 100,0000 × 42,700 | ja | 64 602,6 | `base`, `buildings`, `water`, `roads` |
+| Frankfurt ohne Dächer/Teile | 100,0000 × 100,0000 × 28,900 | ja | 35 163,1 | `base`, `buildings`, `water`, `roads` |
+
+Alle 3MF-Teile sind einzeln geladen `watertight = True`. Das vereinigte STL meldet nach `merge_vertices()`
+wie in Phase 1 `is_watertight = False`, aber **keine** Kante mit ungerader Flächenzahl (Skyline
+150 538 × 2, 127 × 4, 13 × 6, 3 × 8) — also kein Loch, sondern nur geteilte Kanten an sich berührenden
+Körpern. Die Zahlen decken sich exakt mit der CLI-Diagnose (127 + 13 + 3 = 143).
+
+### Beobachtungen
+
+- **Flächenabdeckung statt Gebäudezahl.** Der MVP hatte am Frankfurter Default 609 von 2 534 Grundrissen
+  im Modell (24 %); jetzt sind es 97,0 % der Gebäudefläche im Quadrat (851 Einzelkörper plus 164 Blöcke
+  über den restlichen der 2 515 Grundrisse) — die Blockverschmelzung ersetzt das Aussortieren kleiner
+  Häuser.
+- **Straßenrillen bleiben offen.** 2 649 mm² Rillenfläche auf der 100 × 100 mm-Platte (Erwartung > 1 000 mm²);
+  die Blöcke überbrücken die Straßen also nicht (Spec §6.4). Detail 1 598 mm², Manhattan 2 745 mm².
+- **Dächer: 23 statt der im Task erwarteten > 100.** Nachgerechnet für Frankfurt Skyline: 211 Grundrisse
+  mit nicht-flachem `roof:shape` im Abruf, 158 davon im Quadrat, 114 davon gehen in einen Block auf
+  (ein Block hat per Spec §2.1 kein Dach), von den 44 verbleibenden Einzelgebäuden fallen 21 durch die
+  Rechteck-Regel aus §7 (L- und Kammformen). Bleiben 23. Das ist die Folge der beiden Design-Regeln,
+  kein Fehler — im `detail`-Preset (kleinerer Ausschnitt, weniger Verschmelzung) sind es 51 Dächer bei
+  weniger Gebäuden, also deutlich mehr Dächer pro Fläche, wie erwartet.
+- **Manhattan ist der Teile-Fall.** 504 `building:part`-Körper (Erwartung > 0), 99,4 % Abdeckung,
+  Modellhöhe 42,7 mm — die Türme mit Rücksprüngen sind da.
+- **`--no-roofs --no-parts` spart weniger als gedacht.** Das STL schrumpft nur von 5 028 184 B auf
+  4 854 184 B (−3,5 %): bei 152 Teilen und 23 Dächern gegenüber 851 Gebäuden und 164 Blöcken fällt die
+  Detailgeometrie kaum ins Gewicht. Auffällig ist eher die saubere Diagnose des flachen Laufs
+  (21 geteilte Kanten, 1 degeneriertes Dreieck) — Teile und Dachkörper erzeugen die meisten Berührkanten.
+- **Laufzeiten.** Alle vier Läufe unter 30 s, weit unter der Drei-Minuten-Grenze; der Löwenanteil ist der
+  Overpass-Abruf (CPU-Anteil 20–25 % bei den kalten Läufen).
+
+### Bambu Studio (manuell, offen)
+
+- [ ] `out/frankfurt-skyline/model.stl` importieren: ein Objekt, 100 × 100 mm, Slicing ohne Warnungen zu nicht-mannigfaltigen Kanten; Dächer als Sattel-/Walmdächer erkennbar, Blöcke als zusammenhängende Sockel statt einzelner Kästen.
+- [ ] `out/frankfurt-skyline/model.3mf` importieren, alle Objekte markieren → Rechtsklick → „Assemble“, je Teil ein Filament. Erwartung: `base`, `buildings`, `water`, `roads` wie bisher.
+- [ ] Sichtprüfung: keine schwebenden Teile über dem Modell, keine Nadeln auf Dächern, Türme des Bankenviertels mit Rücksprüngen, Straßenrillen laufen durch (Blöcke enden an den Straßen).
+- [ ] Die automatische Reparatur beim 3MF **ablehnen** — sie füllt die Vertiefungen auf.
