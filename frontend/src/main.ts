@@ -42,7 +42,8 @@ controls.onGenerate(async () => {
       controls.setStatus(job.message || "Generierung fehlgeschlagen", true);
       return;
     }
-    const summary = `Fertig: ${job.stats.buildings ?? 0} Gebäude`;
+    const stats = job.stats ?? {};
+    const summary = `Fertig: ${stats.buildings ?? 0} Gebäude, ${stats.blocks ?? 0} Blöcke, ${stats.roofs ?? 0} Dächer`;
     controls.setStatus(summary);
     controls.showDownloads(id);
     try {

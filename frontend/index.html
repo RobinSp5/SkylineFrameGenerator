@@ -16,6 +16,14 @@
         </label>
         <div id="search-results"></div>
 
+        <label>Maßstab
+          <select id="preset">
+            <option value="skyline">Skyline — 1500 m auf 100 mm (1:15.000)</option>
+            <option value="detail">Detail — 800 m auf 100 mm (1:8.000)</option>
+            <option value="gross">Groß — 1500 m auf 200 mm (1:7.500)</option>
+            <option value="custom">Eigene</option>
+          </select>
+        </label>
         <label>Ausschnitt <output id="side-out">1500 m</output>
           <input id="side" type="range" min="200" max="5000" step="50" value="1500" />
         </label>

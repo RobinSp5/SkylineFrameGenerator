@@ -1,6 +1,7 @@
 // Sidebar wiring: reads the form into a FrameSpecInput and reflects map state back into the inputs.
 import type { FrameSpecInput } from "./api";
 import { jobFileUrl } from "./api";
+import { PRESETS, presetFor, type Preset, type PresetName } from "./presets";
 import type { SquareParams } from "./square";
 
 export interface Controls {
@@ -21,6 +22,7 @@ function el<T extends HTMLElement>(root: HTMLElement, id: string): T {
 }
 
 export function setupControls(root: HTMLElement): Controls {
+  const preset = el<HTMLSelectElement>(root, "preset");
   const side = el<HTMLInputElement>(root, "side");
   const sideOut = el<HTMLOutputElement>(root, "side-out");
   const rotation = el<HTMLInputElement>(root, "rotation");
@@ -37,12 +39,38 @@ export function setupControls(root: HTMLElement): Controls {
 
   // The centre lives on the map, not in a form field; writeSquare keeps this copy in sync.
   let square: SquareParams = { lat: 50.1106, lon: 8.6821, sideM: Number(side.value), rotationDeg: Number(rotation.value) };
+  // Set by onSquareInput; the preset needs to reach the map too, so every listener is
+  // registered here and goes through this one callback.
+  let squareListener: ((p: Partial<SquareParams>) => void) | null = null;
 
   const syncOutputs = () => {
     sideOut.value = `${side.value} m`;
     rotationOut.value = `${rotation.value}°`;
   };
   syncOutputs();
+  preset.value = presetFor(Number(side.value), Number(plate.value));
+
+  side.addEventListener("input", () => {
+    syncOutputs();
+    preset.value = "custom";
+    squareListener?.({ sideM: Number(side.value) });
+  });
+  rotation.addEventListener("input", () => {
+    syncOutputs();
+    squareListener?.({ rotationDeg: Number(rotation.value) });
+  });
+  // Editing a preset field by hand means the scale is no longer one of the presets (spec §9).
+  plate.addEventListener("input", () => {
+    preset.value = "custom";
+  });
+  preset.addEventListener("change", () => {
+    const chosen = PRESETS[preset.value as PresetName] as Preset | undefined;
+    if (!chosen) return; // "Eigene" keeps whatever the fields say
+    side.value = String(chosen.sideM);
+    plate.value = String(chosen.plateMm);
+    syncOutputs();
+    squareListener?.({ sideM: chosen.sideM });
+  });
 
   return {
     read: () => ({
@@ -60,6 +88,7 @@ export function setupControls(root: HTMLElement): Controls {
       side.value = String(p.sideM);
       rotation.value = String(p.rotationDeg);
       syncOutputs();
+      preset.value = presetFor(Number(side.value), Number(plate.value));
     },
     setBusy(busy) {
       generate.disabled = busy;
@@ -79,14 +108,7 @@ export function setupControls(root: HTMLElement): Controls {
       generate.addEventListener("click", cb);
     },
     onSquareInput(cb) {
-      side.addEventListener("input", () => {
-        syncOutputs();
-        cb({ sideM: Number(side.value) });
-      });
-      rotation.addEventListener("input", () => {
-        syncOutputs();
-        cb({ rotationDeg: Number(rotation.value) });
-      });
+      squareListener = cb;
     },
     elements: { search: el<HTMLInputElement>(root, "search"), searchResults: el<HTMLElement>(root, "search-results") },
   };
