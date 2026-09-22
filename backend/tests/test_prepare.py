@@ -12,6 +12,7 @@ from skylineframe.prepare import (
     prepare,
     weighted_percentile,
 )
+from skylineframe.scale import building_height_mm
 from skylineframe.spec import FrameSpec, Mode
 
 
@@ -325,10 +326,12 @@ def test_three_row_houses_form_one_block():
     assert len(out.buildings) == 3  # each house is printable on its own as well
 
 
-def test_block_height_has_a_floor():
-    # min_building_height_mm / scale = 0.8 / 0.1 = 8 m
-    out = prepare(Features(buildings=[bld(box(0, 0, 20, 20), 3.0)]), spec())
-    assert out.blocks[0].height_m == pytest.approx(8.0)
+def test_block_height_is_floored_in_print_space_not_in_metres():
+    # prepare reports the plain percentile in metres; the printable minimum is applied once,
+    # by scale.building_height_mm, so z_exaggeration cannot act on it twice (spec §6.4).
+    out = prepare(Features(buildings=[bld(box(0, 0, 20, 20), 1.0)]), spec())
+    assert out.blocks[0].height_m == pytest.approx(1.0)
+    assert building_height_mm(out.blocks[0].height_m, spec()) == pytest.approx(spec().min_building_height_mm)
 
 
 def test_weighted_percentile_uses_the_areas():

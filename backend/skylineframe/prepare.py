@@ -281,6 +281,11 @@ def build_blocks(
     A block that is itself unprintable (a single shed in the middle of a field) is dropped —
     it would be a sliver in the mesh, and footprint_coverage reports what that costs.
 
+    The height stays the plain percentile in metres. The printable minimum is a print-space
+    number and is applied once, by scale.building_height_mm, exactly as for a building: a
+    metre floor of min_building_height_mm / scale here would be scaled again afterwards and
+    would therefore carry z_exaggeration twice (spec §6.4).
+
     The result is clipped to the square: the block hair widens a block that reaches the edge of
     the model past the plate, and the plate is exactly plate_size_mm wide.
     """
@@ -304,7 +309,6 @@ def build_blocks(
         if len(found):
             members.setdefault(int(found[0]), []).append(b)
 
-    floor_m = spec.min_building_height_mm / spec.scale
     blocks: list[Block] = []
     for i, poly in enumerate(polys):
         inside = members.get(i, [])
@@ -313,7 +317,7 @@ def build_blocks(
         height = weighted_percentile(
             [b.eaves_m for b in inside], [b.geom.area for b in inside], BLOCK_PERCENTILE
         )
-        blocks.append(Block(geom=poly, height_m=max(height, floor_m)))
+        blocks.append(Block(geom=poly, height_m=height))
     return blocks
 
 
