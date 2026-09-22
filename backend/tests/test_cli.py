@@ -110,4 +110,4 @@ def test_generate_prints_the_detail_stats(monkeypatch, tmp_path):
     assert "Parts: 1" in result.output
     assert "Roofs: 4" in result.output
     assert "Roads: 5 (1234 mm²)" in result.output  # .0f rounds 1234.5 to even
-    assert "Footprint coverage: 97.0%" in result.output
+    assert "Footprint coverage: 97.00%" in result.output

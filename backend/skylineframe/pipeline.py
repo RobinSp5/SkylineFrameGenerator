@@ -60,7 +60,10 @@ def run(
         "buildings_individual": individual,
         "blocks": len(prepared.blocks),
         "parts": sum(1 for b in prepared.buildings if b.is_part),
-        "roofs": sum(1 for b in prepared.buildings if b.roof is not None),
+        # Counted on the scaled prisms, not on the prepared footprints: prepare only decides
+        # which footprints are eligible for a roof, and scale drops every roof whose ridge
+        # stays below MIN_ROOF_MM. The number reported is the number of roofs actually built.
+        "roofs": sum(1 for p in scaled.buildings if p.roof is not None),
         "footprint_coverage": round(prepared.footprint_coverage, 4),
         "roads": len(prepared.roads),
         # Groove area on the plate: the number that shows whether the blocks left the streets

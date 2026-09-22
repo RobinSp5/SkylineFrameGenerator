@@ -67,7 +67,7 @@ def generate(
     typer.echo(f"Parts: {int(stats.get('parts', 0))}")
     typer.echo(f"Roofs: {int(stats.get('roofs', 0))}")
     typer.echo(f"Roads: {int(stats.get('roads', 0))} ({stats.get('road_area_mm2', 0.0):.0f} mm²)")
-    typer.echo(f"Footprint coverage: {stats.get('footprint_coverage', 0.0):.1%}")
+    typer.echo(f"Footprint coverage: {stats.get('footprint_coverage', 0.0):.2%}")
     typer.echo(f"Non-manifold edges after vertex merge: {int(stats.get('nonmanifold_edges', 0))}")
     typer.echo(f"Degenerate faces after vertex merge: {int(stats.get('degenerate_faces', 0))}")
     typer.echo(f"STL: {result.paths.stl}")
