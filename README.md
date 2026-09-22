@@ -1,85 +1,83 @@
 # Skyline Frame Generator
 
-Erzeugt 3D-druckbare Stadtausschnitte (Gebäude, optional Straßen und Wasser auf einer quadratischen Platte)
-aus OpenStreetMap-Daten. Ausgabe: STL (einfarbig) und 3MF (mehrfarbig, ein Objekt pro Farbe).
+Generates 3D-printable city cut-outs (buildings, optionally streets and water, on a square base plate)
+from OpenStreetMap data. Output: STL (single colour) and 3MF (multi-colour, one object per colour).
 
-## Voraussetzungen
+## Requirements
 
-- Python ≥ 3.13 und [uv](https://docs.astral.sh/uv/)
+- Python ≥ 3.13 and [uv](https://docs.astral.sh/uv/)
 - Node ≥ 20
 
-## Start
+## Getting started
 
-    make setup   # einmalig
-    make dev     # Backend auf :8000, Frontend auf http://localhost:5173
+    make setup   # once
+    make dev     # backend on :8000, frontend on http://localhost:5173
 
-Ort suchen, Quadrat auf der Karte verschieben, Größe/Drehung einstellen, „Generieren“ klicken, STL oder 3MF laden.
+Search for a place, drag the square on the map, set size and rotation, click "Generieren", download the STL or 3MF.
 
-Der Server läuft bewusst mit einem einzigen uvicorn-Worker: der Rate-Limiter für die Ortssuche (Nominatim,
-max. 1 Anfrage/Sekunde) gilt pro Prozess und würde mit mehreren Workern vervielfacht.
+The server deliberately runs with a single uvicorn worker: the rate limiter for the place search (Nominatim,
+max. 1 request per second) is per process and would be multiplied by additional workers.
 
-## Produktionsmodus
+## Production mode
 
-    make build     # baut das Frontend nach frontend/dist
-    make backend   # uvicorn auf :8000, liefert frontend/dist unter / aus
+    make build     # builds the frontend into frontend/dist
+    make backend   # uvicorn on :8000, serves frontend/dist at /
 
-Danach genügt http://localhost:8000 — kein Vite-Server nötig. Für die Entwicklung getrennt:
-`make frontend` (Vite auf :5173) und `make backend`.
+After that http://localhost:8000 is all you need; no Vite server required. For development run them separately:
+`make frontend` (Vite on :5173) and `make backend`.
 
 ## CLI
 
     cd backend && uv run skylineframe --lat 50.1106 --lon 8.6821 --preset skyline --mode full --out ../out
 
-(Ein Unterkommando gibt es nicht — die Optionen stehen direkt hinter `skylineframe`.)
+(There is no subcommand; the options follow `skylineframe` directly.)
 
-| Preset | Ausschnitt | Platte | Maßstab |
+| Preset | Square | Plate | Scale |
 |---|---|---|---|
-| `skyline` (Default) | 1500 m | 100 mm | 1:15.000 |
-| `detail` | 800 m | 100 mm | 1:8.000 |
-| `gross` | 1500 m | 200 mm | 1:7.500 |
+| `skyline` (default) | 1500 m | 100 mm | 1:15,000 |
+| `detail` | 800 m | 100 mm | 1:8,000 |
+| `gross` | 1500 m | 200 mm | 1:7,500 |
 
-`--side` und `--plate` schlagen das Preset. Zum Vergleichen: `--no-roofs` lässt alle Dächer flach,
-`--no-parts` rendert je Umriss einen Kasten statt der `building:part`-Rücksprünge (beides ist per
-Default an). Die Ausgabe nennt Gebäude, Blöcke, Teile, Dächer, Straßen (Anzahl und Rillenfläche
-in mm²) und die Flächenabdeckung (Gebäudefläche im Modell / Gebäudefläche im Quadrat).
+`--side` and `--plate` override the preset. For comparisons, `--no-roofs` keeps every roof flat and
+`--no-parts` renders one box per outline instead of the `building:part` setbacks (both are on by
+default). The output reports buildings, blocks, parts, roofs, roads (count and groove area in mm²)
+and the footprint coverage (building area in the model divided by building area in the square).
 
-## Drucken (Bambu Studio)
+## Printing (Bambu Studio)
 
-- STL: direkt importieren, weiß drucken, 0,2 mm Layer, keine Stützen nötig.
-- 3MF: importieren, dann **alle vier Objekte markieren → Rechtsklick → „Assemble“** (Zusammenbauen), damit sie ein
-  Objekt mit mehreren Teilen bilden und die Einleger in den Vertiefungen bleiben statt einzeln auf die Druckplatte
-  zu fallen. Danach `base`, `buildings`, `water`, `roads` je ein Filament zuweisen.
-  Wer Straßen als Rille statt als Farbe will, löscht das Teil `roads`.
-- Bambu Studio meldet beim Import u. U. gemeinsame Kanten dort, wo sich Gebäude an einer Ecke berühren.
-  Die automatische Reparatur beim 3MF bitte **ablehnen** — sie füllt die Vertiefungen für Straßen und
-  Wasser auf.
-- Sichtprüfung nach dem Import: Dächer sitzen auf den Häusern statt als Nadeln darüber, `building:part`-
-  Rücksprünge hängen nicht frei über dem Modell (freischwebende Teile werden bis zur Platte verlängert),
-  und die Straßenrillen laufen durch — die verschmolzenen Blöcke enden an den Straßen, statt sie zu
-  überbrücken.
+- STL: import directly, print in white, 0.2 mm layers, no supports needed.
+- 3MF: import, then **select all four objects → right-click → "Assemble"**, so they form one object with
+  several parts and the inlays stay in their recesses instead of dropping onto the build plate individually.
+  Then assign one filament each to `base`, `buildings`, `water` and `roads`.
+  If you prefer streets as grooves instead of a colour, delete the `roads` part.
+- Bambu Studio may report shared edges on import where buildings touch at a corner.
+  **Decline** the automatic repair for the 3MF; it fills in the recesses for streets and water.
+- Visual check after import: roofs sit on the houses rather than as needles above them, `building:part`
+  setbacks do not hang freely above the model (floating parts are extended down to the plate), and the
+  street grooves run through: the merged blocks end at the streets instead of bridging them.
 
 ## Tests
 
     make test    # pytest + vitest (offline)
-    make e2e     # Playwright-Smoke-Test (Backend gemockt)
+    make e2e     # Playwright smoke test (backend mocked)
 
-## Datenquellen
+## Data sources
 
-OpenStreetMap über die Overpass-API (Antworten werden unter `backend/.cache/overpass` gecacht),
-Ortssuche über Nominatim. Bitte die Nutzungsbedingungen beider Dienste beachten.
+OpenStreetMap via the Overpass API (responses are cached under `backend/.cache/overpass`),
+place search via Nominatim. Please respect the usage policies of both services.
 
-`SKYLINE_OVERPASS_URL` setzt einen anderen Overpass-Endpunkt (z. B. eine eigene Instanz).
+`SKYLINE_OVERPASS_URL` points the generator at a different Overpass endpoint (for example your own instance).
 
-Weiche Obergrenze: Antworten mit mehr als 250 000 OSM-Elementen werden abgelehnt — dann ein kleineres
-Quadrat oder den einfachen Modus wählen.
+Soft limit: responses with more than 250,000 OSM elements are rejected; choose a smaller square or the
+simple mode in that case.
 
-## Lizenz der Daten
+## Data licence
 
-Die Geometrie stammt aus OpenStreetMap und steht unter der [Open Database License (ODbL)](https://opendatacommons.org/licenses/odbl/).
-Ein gedrucktes Modell ist ein „Produced Work“ im Sinne der ODbL: Es darf verkauft werden, und die
-Datenbank selbst muss dafür nicht offengelegt werden. Pflicht ist die Namensnennung —
+The geometry comes from OpenStreetMap and is licensed under the [Open Database License (ODbL)](https://opendatacommons.org/licenses/odbl/).
+A printed model is a "Produced Work" in the sense of the ODbL: it may be sold, and the database itself
+does not have to be published for that. Attribution is mandatory:
 
-> Enthält Daten von © OpenStreetMap-Mitwirkende (ODbL)
+> Contains data from © OpenStreetMap contributors (ODbL)
 
-— sichtbar auf der Produktseite, in einer Beilage oder auf der Bodenplatte. Der Generator schreibt
-diesen Hinweis **nicht** selbst in das Modell; wer Drucke verkauft, muss ihn selbst anbringen.
+visibly on the product page, on an insert, or on the base plate. The generator does **not** write this
+notice into the model itself; anyone selling prints has to add it.
