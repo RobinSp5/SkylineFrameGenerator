@@ -40,6 +40,20 @@ MIN_FEATURE_MM = 0.8  # two nozzle widths on a 0.4 mm nozzle
 LEVEL_HEIGHT_M = 3.2  # metres per building level when only building:levels is tagged
 
 
+class Preset(StrEnum):
+    skyline = "skyline"
+    detail = "detail"
+    gross = "gross"
+
+
+# Preset name -> (side_m, plate_size_mm); mirrored by frontend/src/presets.ts (spec §9).
+PRESETS: dict[str, tuple[float, float]] = {
+    Preset.skyline: (1500.0, 100.0),
+    Preset.detail: (800.0, 100.0),
+    Preset.gross: (1500.0, 200.0),
+}
+
+
 class FrameSpec(BaseModel):
     # The spec is parsed straight from the request body: an unknown key is a client-side typo
     # or a stale field name, and silently dropping it would generate the wrong model.
@@ -55,7 +69,11 @@ class FrameSpec(BaseModel):
     z_exaggeration: float = Field(default=1.5, gt=0, le=10)
     default_building_height_m: float = Field(default=8.0, gt=0)
     min_building_height_mm: float = Field(default=0.8, ge=0)
-    min_footprint_area_mm2: float = Field(default=1.0, ge=0)
+    # 0.25 mm² instead of the MVP's 1.0: everything below still reaches the model through its
+    # block, so the threshold only decides "own solid" vs "part of the block" (spec §6.5).
+    min_footprint_area_mm2: float = Field(default=0.25, ge=0)
+    roofs: bool = True  # build roof solids from roof:shape (spec §7)
+    parts: bool = True  # render building:part instead of one box per outline (spec §6.3)
     road_depth_mm: float = Field(default=0.4, gt=0)
     water_depth_mm: float = Field(default=0.6, gt=0)
     road_width_mm: dict[str, float] = Field(default_factory=lambda: dict(DEFAULT_ROAD_WIDTH_MM))

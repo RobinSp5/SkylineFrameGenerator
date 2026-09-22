@@ -59,3 +59,24 @@ def test_rejects_unknown_field():
 def test_mode_accepts_string():
     s = FrameSpec(center_lat=50, center_lon=8, mode="full")
     assert s.mode is Mode.full
+
+
+def test_detail_defaults():
+    s = FrameSpec(center_lat=50, center_lon=8)
+    assert s.roofs is True
+    assert s.parts is True
+    assert s.min_footprint_area_mm2 == 0.25
+
+
+def test_detail_flags_can_be_switched_off():
+    s = FrameSpec(center_lat=50, center_lon=8, roofs=False, parts=False)
+    assert s.roofs is False and s.parts is False
+
+
+def test_presets_match_the_spec_table():
+    from skylineframe.spec import PRESETS, Preset
+
+    assert PRESETS[Preset.skyline] == (1500.0, 100.0)
+    assert PRESETS[Preset.detail] == (800.0, 100.0)
+    assert PRESETS[Preset.gross] == (1500.0, 200.0)
+    assert set(PRESETS) == {"skyline", "detail", "gross"}

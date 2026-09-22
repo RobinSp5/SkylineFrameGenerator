@@ -1,5 +1,7 @@
 """WGS84 -> local metric frame centred on the spec centre, rotated so the target square is axis-aligned."""
 
+from dataclasses import replace
+
 import shapely.affinity
 import shapely.ops
 from pyproj import CRS, Transformer
@@ -7,7 +9,7 @@ from shapely.geometry import Polygon, box
 from shapely.geometry.base import BaseGeometry
 
 from .errors import AreaError
-from .features import Building, Features, Road, Water
+from .features import Features, Road, Water
 from .spec import FrameSpec
 
 
@@ -58,8 +60,10 @@ def query_bbox(spec: FrameSpec, margin_m: float = 100.0) -> tuple[float, float, 
 
 def project_features(features: Features, spec: FrameSpec) -> Features:
     tr = local_transformer(spec)
+    # replace() instead of a positional rebuild: Building carries a dozen fields now, and a
+    # forgotten one would silently drop roofs or part heights on the way to prepare.
     return Features(
-        buildings=[Building(to_local(b.geom, spec, tr), b.height_m) for b in features.buildings],
+        buildings=[replace(b, geom=to_local(b.geom, spec, tr)) for b in features.buildings],
         roads=[Road(to_local(r.geom, spec, tr), r.cls) for r in features.roads],
         water=[Water(to_local(w.geom, spec, tr)) for w in features.water],
     )

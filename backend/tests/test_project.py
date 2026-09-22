@@ -78,3 +78,31 @@ def test_query_bbox_rejects_antimeridian_crossing():
     s = FrameSpec(center_lat=0.0, center_lon=179.999, side_m=1000)
     with pytest.raises(AreaError, match="antimeridian"):
         query_bbox(s)
+
+
+def test_project_features_keeps_building_detail_fields():
+    from shapely.geometry import box
+
+    from skylineframe.features import Building, Features, RoofSpec
+
+    spec = FrameSpec(center_lat=50.0, center_lon=8.0, side_m=1000)
+    building = Building(
+        geom=box(8.0, 50.0, 8.001, 50.001),
+        height_m=42.0,
+        height_is_top=True,
+        min_height_m=12.0,
+        roof=RoofSpec(shape="gabled", height_m=3.0, direction_deg=45.0),
+        osm_id="way/123",
+        is_part=True,
+        outline_id="relation/456",
+        kind="office",
+    )
+    out = project_features(Features(buildings=[building]), spec)
+    got = out.buildings[0]
+    assert got.height_m == 42.0
+    assert got.height_is_top is True
+    assert got.min_height_m == 12.0
+    assert got.roof == RoofSpec(shape="gabled", height_m=3.0, direction_deg=45.0)
+    assert (got.osm_id, got.is_part, got.outline_id, got.kind) == ("way/123", True, "relation/456", "office")
+    assert got.geom.geom_type == "Polygon"
+    assert got.geom is not building.geom  # projected, not the original
