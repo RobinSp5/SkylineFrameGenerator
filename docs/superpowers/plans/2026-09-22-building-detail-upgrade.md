@@ -18,11 +18,13 @@ Die folgenden Werte stammen wörtlich aus der Spec; sie gelten für **jeden** Ta
 - Bestehende API bleibt; `FrameSpec` erhält `roofs: bool = True`, `parts: bool = True`, `min_footprint_area_mm2` Default 0,25. 3MF-Teile und Dateinamen unverändert (`base`, `buildings`, `water`, `roads`, `model.stl`, `model.3mf`, `preview.glb`).
 - `FrameSpec` hat `model_config = ConfigDict(extra="forbid")`: das Frontend darf ausschließlich bekannte Felder senden.
 - Einheiten: `prepare` rechnet in Metern, `scale`/`mesh`/`roofs` in Millimetern. `scale = plate_size_mm / side_m`. `MIN_FEATURE_MM = 0.8`, `LEVEL_HEIGHT_M = 3.2`, `BUILDING_SINK_MM = 0.2` (nur für `single`), Plattenoberseite bei z = 0.
-- Höhen laufen durch die `building_height_mm`-Logik (`scale × z_exaggeration`, gerundet auf 1/100 mm, Mindesthöhe `min_building_height_mm`, Deckel `plate_size_mm`). Dachhöhen werden mit demselben Faktor skaliert.
+- Höhen laufen durch `scale × z_exaggeration`, gerundet auf 1/100 mm. Der Deckel `plate_size_mm` gilt für **alle** Höhen.
+- `min_height` und Firsthöhe werden **nicht** auf `min_building_height_mm` angehoben (nur Oberkanten: Blockhöhe, Trauf-/Gesamthöhe); sonst würden Teile am Boden abheben (Spec §8).
 - Höhensemantik (Spec §4): Mit `height`-Tag gilt `height_m = height` und die Traufhöhe ist `height − roof.height_m`, nie unter `0.5 × height`. Ohne `height`-Tag ist `height_m` die Traufhöhe und das Dach kommt obendrauf.
-- Höhenschätzung (Spec §5), Reihenfolge `height` → `building:levels × 3.2` → Typtabelle → Flächenregel. Typtabelle: cathedral 35; church, chapel, mosque, synagogue, temple 18; office, hotel, hospital, university 20; apartments, dormitory, civic, public, government 15; commercial, retail, school, industrial, warehouse, supermarket 10; house, detached, semidetached_house, terrace, residential, bungalow 7; garage, garages, shed, hut, carport, kiosk, service 3. Flächenregel: < 100 m² → 5 m; < 400 m² → 8 m; < 1500 m² → 12 m; sonst 15 m.
+- Höhenschätzung (Spec §5) liegt in einem eigenen Modul `heights.py` (`estimate_height_m(kind, area_m2)`), damit `prepare` nicht von `fetch` (httpx, osm2geojson) abhängt. Reihenfolge `height` → `building:levels × 3.2` → Typtabelle → Flächenregel. Typtabelle: cathedral 35; church, chapel, mosque, synagogue, temple 18; office, hotel, hospital, university 20; apartments, dormitory, civic, public, government 15; commercial, retail, school, industrial, warehouse, supermarket 10; house, detached, semidetached_house, terrace, residential, bungalow 7; garage, garages, shed, hut, carport, kiosk, service 3. Flächenregel: < 100 m² → 5 m; < 400 m² → 8 m; < 1500 m² → 12 m; sonst 15 m.
 - Verworfen werden `building=roof`, `building=no`, `building:part=no`.
-- Blockbildung (Spec §6.4): Close um `MIN_FEATURE_MM / 2 / scale` (dilate → erode, runde Verbindungen); Blockhöhe = 25. Perzentil der Traufhöhen der enthaltenen Grundrisse (flächengewichtet), mindestens `min_building_height_mm / scale`.
+- Blockbildung (Spec §6.4): Close um `MIN_FEATURE_MM / 2 / scale` (dilate → erode, runde Verbindungen, danach Bogen-Sehnen mit `simplify(radius × 0.1)` einsammeln); Blockhöhe = 25. Perzentil der Traufhöhen der enthaltenen Grundrisse (flächengewichtet), mindestens `min_building_height_mm / scale`.
+- Blöcke überbrücken keine Straßen (Spec §6.4): im Full-Modus werden die gepufferten Straßenkorridore vor dem Close aus der Grundrissvereinigung abgezogen. Einzeln druckbare Gebäude behalten Vorrang vor Straßen — „blocked" für die Straßen-Vertiefungen ist `Vereinigung(Blöcke) ∪ Vereinigung(einzeln druckbare Gebäude)`.
 - Druckbarkeit (Spec §6.5): `area ≥ min_footprint_area_mm2 / scale²` **und** `buffer(−MIN_FEATURE_MM/2/scale)` nicht leer. Nicht einzeln druckbare Grundrisse gehen nur in den Block ein.
 - Dach-Eignung (Spec §6.6): nur wenn `area / minimum_rotated_rectangle.area ≥ 0.85`, sonst flach.
 - Dachhöhe ohne Tag (Spec §7): `0.29 × kurze Seite`, begrenzt auf 2 … 6 m; für `dome`/`round` `0.5 × kurze Seite`. Unter `0.3 mm` Druckhöhe wird kein Dach erzeugt.
@@ -49,19 +51,22 @@ backend/skylineframe/
                    is_part, outline_id, kind, eaves_m, ridge_m, rect erweitert
   spec.py        + roofs, parts, min_footprint_area_mm2 = 0.25, Preset, PRESETS
   project.py     project_features über dataclasses.replace (alle Felder überleben)
+  heights.py     NEU: TYPE_HEIGHT_M, AREA_HEIGHT_M, estimate_height_m (keine Abhängigkeiten
+                   außer der Standardbibliothek, damit prepare nicht auf fetch zeigt)
   fetch.py       + building:part-Query, parse_min_height, parse_roof, parse_direction,
-                   estimate_height_m, ROOF_SHAPE_MAP
-  prepare.py     + estimate_missing_heights, assign_parts, resolve_roof, minimum_rect,
-                   default_roof_height_m, weighted_percentile, build_blocks, Prepared.blocks,
-                   Prepared.footprint_coverage
+                   ROOF_SHAPE_MAP, osm_id als "way/123"
+  prepare.py     + estimate_missing_heights (aus .heights), assign_parts, resolve_roof,
+                   minimum_rect, default_roof_height_m, weighted_percentile, road_corridors,
+                   build_blocks, Prepared.blocks, Prepared.footprint_coverage
   roofs.py       NEU: roof_hull, roof_solid, SHAPES, MIN_ROOF_MM
   scale.py       + ScaledRoof, Prism.z0_mm, Prism.roof, Scaled.blocks, raw_height_mm
   mesh.py        + Blöcke, Teile ab z0, Dachkörper
   pipeline.py    + neue stats-Schlüssel
   cli.py         + --preset, --roofs/--no-roofs, --parts/--no-parts, neue Ausgaben
 backend/app/jobs.py    stats-Typ dict[str, float]
-backend/tests/         conftest (+ bankenviertel), test_fetch, test_prepare, test_roofs (neu),
-                       test_scale, test_mesh, test_pipeline, test_cli, test_spec, test_project
+backend/tests/         conftest (+ bankenviertel), test_fetch, test_heights (neu), test_prepare,
+                       test_roofs (neu), test_scale, test_mesh, test_pipeline, test_cli,
+                       test_spec, test_project
 backend/tests/fixtures/record_frankfurt.py, frankfurt_roemer.json (neu aufgezeichnet),
                        frankfurt_bankenviertel.json (neu)
 frontend/src/presets.ts (neu), controls.ts, main.ts, controls.test.ts (neu)
@@ -83,7 +88,7 @@ README.md
 **Interfaces:**
 - Produces:
   - `features.RoofSpec(shape: str, height_m: float = 0.0, direction_deg: float | None = None)` — `height_m == 0.0` heißt „nicht getaggt, `prepare` füllt".
-  - `features.Building(geom: BaseGeometry, height_m: float, height_is_top: bool = False, min_height_m: float = 0.0, roof: RoofSpec | None = None, osm_id: int = 0, is_part: bool = False, outline_id: int | None = None, kind: str = "", eaves_m: float = 0.0, ridge_m: float = 0.0, rect: tuple[tuple[float, float], ...] = ())`
+  - `features.Building(geom: BaseGeometry, height_m: float, height_is_top: bool = False, min_height_m: float = 0.0, roof: RoofSpec | None = None, osm_id: str = "", is_part: bool = False, outline_id: str | None = None, kind: str = "", eaves_m: float = 0.0, ridge_m: float = 0.0, rect: tuple[tuple[float, float], ...] = ())` — `osm_id` ist `f"{type}/{id}"` (Spec §3), weil Way- und Relation-IDs kollidieren können.
   - `features.Block(geom: BaseGeometry, height_m: float)`
   - `spec.Preset` (StrEnum: `skyline`, `detail`, `gross`), `spec.PRESETS: dict[str, tuple[float, float]]` (Name → `(side_m, plate_size_mm)`)
   - `FrameSpec.roofs: bool = True`, `FrameSpec.parts: bool = True`, `FrameSpec.min_footprint_area_mm2: float = 0.25`
@@ -130,9 +135,9 @@ def test_project_features_keeps_building_detail_fields():
         height_is_top=True,
         min_height_m=12.0,
         roof=RoofSpec(shape="gabled", height_m=3.0, direction_deg=45.0),
-        osm_id=123,
+        osm_id="way/123",
         is_part=True,
-        outline_id=456,
+        outline_id="relation/456",
         kind="office",
     )
     out = project_features(Features(buildings=[building]), spec)
@@ -141,7 +146,7 @@ def test_project_features_keeps_building_detail_fields():
     assert got.height_is_top is True
     assert got.min_height_m == 12.0
     assert got.roof == RoofSpec(shape="gabled", height_m=3.0, direction_deg=45.0)
-    assert (got.osm_id, got.is_part, got.outline_id, got.kind) == (123, True, 456, "office")
+    assert (got.osm_id, got.is_part, got.outline_id, got.kind) == ("way/123", True, "relation/456", "office")
     assert got.geom.geom_type == "Polygon"
     assert got.geom is not building.geom  # projected, not the original
 ```
@@ -184,9 +189,11 @@ class Building:
 
     min_height_m: float = 0.0
     roof: RoofSpec | None = None  # None = flat
-    osm_id: int = 0
+    # "way/123" / "relation/456": way and relation ids are separate number spaces and do
+    # collide, so the element type is part of the id (spec §3).
+    osm_id: str = ""
     is_part: bool = False
-    outline_id: int | None = None  # OSM id of the outline this footprint belongs to
+    outline_id: str | None = None  # osm_id of the outline this footprint belongs to
     kind: str = ""  # value of the building / building:part tag, input of estimate_height_m
 
     # Filled by prepare, in local metres.
@@ -301,28 +308,69 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ### Task 2: Fetch — `building:part`, Dach-Tags, Höhenschätzung, neue Fixtures
 
 **Files:**
+- Create: `backend/skylineframe/heights.py`
 - Modify: `backend/skylineframe/fetch.py:37-51` (`build_query`), `:82-109` (Parsing), Ende (neue Helfer)
 - Modify: `backend/tests/fixtures/record_frankfurt.py` (komplett ersetzen)
 - Modify: `backend/tests/conftest.py` (komplett ersetzen)
 - Test: `backend/tests/test_fetch.py` (anhängen)
+- Test: `backend/tests/test_heights.py` (neu)
 - Create: `backend/tests/fixtures/frankfurt_bankenviertel.json` (aufgezeichnet)
 - Modify: `backend/tests/fixtures/frankfurt_roemer.json` (neu aufgezeichnet)
 
 **Interfaces:**
 - Consumes: `features.Building`, `features.RoofSpec` (Task 1).
 - Produces:
+  - `heights.estimate_height_m(kind: str, area_m2: float) -> float`, `heights.TYPE_HEIGHT_M: dict[str, float]`, `heights.AREA_HEIGHT_M: tuple[tuple[float, float], ...]`, `heights.AREA_HEIGHT_FALLBACK_M = 15.0` — `heights.py` importiert nichts aus dem Paket, damit `prepare` es benutzen kann, ohne `fetch` (httpx, osm2geojson) zu ziehen (Spec §5).
   - `fetch.parse_min_height(tags: dict) -> float`
   - `fetch.parse_roof(tags: dict) -> RoofSpec | None`
   - `fetch.parse_direction(raw: str | None) -> float | None`
-  - `fetch.estimate_height_m(kind: str, area_m2: float) -> float`
-  - `fetch.ROOF_SHAPE_MAP: dict[str, str]`, `fetch.TYPE_HEIGHT_M: dict[str, float]`, `fetch.MAX_ROOF_HEIGHT_M = 100.0`
+  - `fetch.ROOF_SHAPE_MAP: dict[str, str]`, `fetch.MAX_ROOF_HEIGHT_M = 100.0`
   - `build_query` fragt zusätzlich `way["building:part"]` und `relation["building:part"]["type"="multipolygon"]` ab.
-  - `parse_overpass` setzt `height_m = 0.0`, wenn weder `height` noch `building:levels` getaggt sind (Marker für „schätzen").
+  - `parse_overpass` setzt `height_m = 0.0`, wenn weder `height` noch `building:levels` getaggt sind (Marker für „schätzen"), und `osm_id = f"{type}/{id}"` (z. B. `"way/200"`).
   - conftest-Fixtures `frankfurt_spec`, `frankfurt_data`, `bankenviertel_spec`, `bankenviertel_data`.
 
 - [ ] **Step 1: Failing Tests schreiben**
 
-An `backend/tests/test_fetch.py` anhängen (und den Import-Block oben um `estimate_height_m, parse_direction, parse_min_height, parse_roof` erweitern sowie `from skylineframe.features import RoofSpec` ergänzen):
+`backend/tests/test_heights.py` (neu):
+
+```python
+import pytest
+
+from skylineframe.heights import estimate_height_m
+
+
+@pytest.mark.parametrize(
+    "kind,area,expected",
+    [
+        ("cathedral", 5000.0, 35.0),
+        ("church", 800.0, 18.0),
+        ("office", 5000.0, 20.0),
+        ("apartments", 300.0, 15.0),
+        ("retail", 2000.0, 10.0),
+        ("house", 90.0, 7.0),
+        ("garage", 30.0, 3.0),
+        ("yes", 50.0, 5.0),
+        ("yes", 100.0, 8.0),
+        ("yes", 399.0, 8.0),
+        ("yes", 400.0, 12.0),
+        ("yes", 1499.0, 12.0),
+        ("yes", 1500.0, 15.0),
+        ("", 20000.0, 15.0),
+    ],
+)
+def test_estimate_height_m(kind, area, expected):
+    assert estimate_height_m(kind, area) == pytest.approx(expected)
+
+
+def test_heights_module_has_no_package_dependencies():
+    # prepare imports this module; pulling fetch (httpx, osm2geojson) in through the back door
+    # would make the geometry stage depend on the network stack.
+    import skylineframe.heights as heights
+
+    assert not any(line.startswith("from .") for line in open(heights.__file__).read().splitlines())
+```
+
+An `backend/tests/test_fetch.py` anhängen (und den Import-Block oben um `parse_direction, parse_min_height, parse_roof` erweitern sowie `from skylineframe.features import RoofSpec` ergänzen):
 
 ```python
 # --- building parts, roofs, estimates ----------------------------------
@@ -387,7 +435,7 @@ PARTS_SAMPLE = {
 }
 
 
-def by_id(feats) -> dict[int, object]:
+def by_id(feats) -> dict[str, object]:
     return {b.osm_id: b for b in feats.buildings}
 
 
@@ -400,14 +448,15 @@ def test_build_query_asks_for_building_parts():
 def test_parse_overpass_reads_outline_and_part():
     feats = parse_overpass(PARTS_SAMPLE, spec())
     buildings = by_id(feats)
-    assert set(buildings) == {200, 201, 204, 205}  # building=roof and building:part=no dropped
+    # ids carry the element type: way and relation ids are separate number spaces (spec §3).
+    assert set(buildings) == {"way/200", "way/201", "way/204", "way/205"}
 
-    outline = buildings[200]
+    outline = buildings["way/200"]
     assert outline.is_part is False
     assert outline.height_m == 20.0 and outline.height_is_top is True
     assert outline.kind == "yes" and outline.min_height_m == 0.0 and outline.roof is None
 
-    part = buildings[201]
+    part = buildings["way/201"]
     assert part.is_part is True and part.kind == "yes"
     assert part.height_m == 40.0 and part.height_is_top is True
     assert part.min_height_m == 10.0
@@ -416,7 +465,7 @@ def test_parse_overpass_reads_outline_and_part():
 
 def test_parse_overpass_reads_min_level_and_maps_roof_aliases():
     buildings = by_id(parse_overpass(PARTS_SAMPLE, spec()))
-    part = buildings[204]
+    part = buildings["way/204"]
     assert part.min_height_m == pytest.approx(16.0)  # 5 levels x 3.2 m
     assert part.height_m == 0.0  # unknown; prepare fills it from the outline or the default
     assert part.roof is not None and part.roof.shape == "dome"  # onion -> dome
@@ -424,7 +473,7 @@ def test_parse_overpass_reads_min_level_and_maps_roof_aliases():
 
 
 def test_parse_overpass_leaves_unknown_roof_and_height_flat():
-    house = by_id(parse_overpass(PARTS_SAMPLE, spec()))[205]
+    house = by_id(parse_overpass(PARTS_SAMPLE, spec()))["way/205"]
     assert house.roof is None  # "brezel" is not a supported shape -> flat
     assert house.height_m == 0.0 and house.height_is_top is False
     assert house.kind == "house"
@@ -475,29 +524,6 @@ def test_parse_roof(tags, shape, height):
 @pytest.mark.parametrize("tags", [{}, {"roof:shape": "flat"}, {"roof:shape": "something"}])
 def test_parse_roof_returns_none_for_flat_and_unknown(tags):
     assert parse_roof(tags) is None
-
-
-@pytest.mark.parametrize(
-    "kind,area,expected",
-    [
-        ("cathedral", 5000.0, 35.0),
-        ("church", 800.0, 18.0),
-        ("office", 5000.0, 20.0),
-        ("apartments", 300.0, 15.0),
-        ("retail", 2000.0, 10.0),
-        ("house", 90.0, 7.0),
-        ("garage", 30.0, 3.0),
-        ("yes", 50.0, 5.0),
-        ("yes", 100.0, 8.0),
-        ("yes", 399.0, 8.0),
-        ("yes", 400.0, 12.0),
-        ("yes", 1499.0, 12.0),
-        ("yes", 1500.0, 15.0),
-        ("", 20000.0, 15.0),
-    ],
-)
-def test_estimate_height_m(kind, area, expected):
-    assert estimate_height_m(kind, area) == pytest.approx(expected)
 ```
 
 Außerdem den bestehenden Fixture-Test in `test_fetch.py` ersetzen (`test_frankfurt_fixture_parses`):
@@ -514,15 +540,55 @@ def test_frankfurt_fixture_parses(frankfurt_spec, frankfurt_data):
 def test_bankenviertel_fixture_has_building_parts(bankenviertel_spec, bankenviertel_data):
     feats = parse_overpass(bankenviertel_data, bankenviertel_spec)
     assert sum(1 for b in feats.buildings if b.is_part) > 0
-    assert all(b.osm_id != 0 for b in feats.buildings)
+    assert all(b.osm_id.startswith(("way/", "relation/")) for b in feats.buildings)
 ```
 
 - [ ] **Step 2: Fehlschlag bestätigen**
 
-Run: `cd backend && uv run pytest tests/test_fetch.py -q`
-Expected: FAIL — `ImportError: cannot import name 'estimate_height_m' from 'skylineframe.fetch'`.
+Run: `cd backend && uv run pytest tests/test_fetch.py tests/test_heights.py -q`
+Expected: FAIL — `ModuleNotFoundError: No module named 'skylineframe.heights'` und `ImportError: cannot import name 'parse_roof' from 'skylineframe.fetch'`.
 
-- [ ] **Step 3: `fetch.py` erweitern**
+- [ ] **Step 3: `heights.py` anlegen**
+
+`backend/skylineframe/heights.py`:
+
+```python
+"""Height estimate for buildings without height tags (spec §5).
+
+Deliberately free of package imports: prepare needs the estimate, and pulling it out of fetch
+would drag httpx and osm2geojson into the geometry stage.
+"""
+
+# Height by building type, then by footprint area. Buildings without any height tag are ~70 %
+# of the data, and a flat 8 m for all of them is what flattened the MVP models.
+TYPE_HEIGHT_M: dict[str, float] = {
+    "cathedral": 35.0,
+    "church": 18.0, "chapel": 18.0, "mosque": 18.0, "synagogue": 18.0, "temple": 18.0,
+    "office": 20.0, "hotel": 20.0, "hospital": 20.0, "university": 20.0,
+    "apartments": 15.0, "dormitory": 15.0, "civic": 15.0, "public": 15.0, "government": 15.0,
+    "commercial": 10.0, "retail": 10.0, "school": 10.0, "industrial": 10.0,
+    "warehouse": 10.0, "supermarket": 10.0,
+    "house": 7.0, "detached": 7.0, "semidetached_house": 7.0, "terrace": 7.0,
+    "residential": 7.0, "bungalow": 7.0,
+    "garage": 3.0, "garages": 3.0, "shed": 3.0, "hut": 3.0, "carport": 3.0,
+    "kiosk": 3.0, "service": 3.0,
+}
+AREA_HEIGHT_M: tuple[tuple[float, float], ...] = ((100.0, 5.0), (400.0, 8.0), (1500.0, 12.0))
+AREA_HEIGHT_FALLBACK_M = 15.0
+
+
+def estimate_height_m(kind: str, area_m2: float) -> float:
+    """Height of a building without height tags, by type and then by footprint area (spec §5)."""
+    by_type = TYPE_HEIGHT_M.get(kind)
+    if by_type is not None:
+        return by_type
+    for limit, height in AREA_HEIGHT_M:
+        if area_m2 < limit:
+            return height
+    return AREA_HEIGHT_FALLBACK_M
+```
+
+- [ ] **Step 4: `fetch.py` erweitern**
 
 In `backend/skylineframe/fetch.py` den Import
 
@@ -564,24 +630,9 @@ COMPASS_DEG: dict[str, float] = {
     "S": 180.0, "SSW": 202.5, "SW": 225.0, "WSW": 247.5,
     "W": 270.0, "WNW": 292.5, "NW": 315.0, "NNW": 337.5,
 }
-
-# Height by building type, then by footprint area (spec §5). Buildings without any height tag
-# are ~70 % of the data, and a flat 8 m for all of them is what flattened the MVP models.
-TYPE_HEIGHT_M: dict[str, float] = {
-    "cathedral": 35.0,
-    "church": 18.0, "chapel": 18.0, "mosque": 18.0, "synagogue": 18.0, "temple": 18.0,
-    "office": 20.0, "hotel": 20.0, "hospital": 20.0, "university": 20.0,
-    "apartments": 15.0, "dormitory": 15.0, "civic": 15.0, "public": 15.0, "government": 15.0,
-    "commercial": 10.0, "retail": 10.0, "school": 10.0, "industrial": 10.0,
-    "warehouse": 10.0, "supermarket": 10.0,
-    "house": 7.0, "detached": 7.0, "semidetached_house": 7.0, "terrace": 7.0,
-    "residential": 7.0, "bungalow": 7.0,
-    "garage": 3.0, "garages": 3.0, "shed": 3.0, "hut": 3.0, "carport": 3.0,
-    "kiosk": 3.0, "service": 3.0,
-}
-AREA_HEIGHT_M: tuple[tuple[float, float], ...] = ((100.0, 5.0), (400.0, 8.0), (1500.0, 12.0))
-AREA_HEIGHT_FALLBACK_M = 15.0
 ```
+
+(Die Höhentabellen stehen in `heights.py` aus Step 3; `fetch.py` importiert sie nicht — die Schätzung läuft erst in `prepare`, wenn die Fläche in Metern bekannt ist.)
 
 `build_query` ersetzen:
 
@@ -673,15 +724,9 @@ def parse_roof(tags: dict) -> RoofSpec | None:
     return RoofSpec(shape=shape, height_m=height or 0.0, direction_deg=parse_direction(tags.get("roof:direction")))
 
 
-def estimate_height_m(kind: str, area_m2: float) -> float:
-    """Height of a building without height tags, by type and then by footprint area (spec §5)."""
-    by_type = TYPE_HEIGHT_M.get(kind)
-    if by_type is not None:
-        return by_type
-    for limit, height in AREA_HEIGHT_M:
-        if area_m2 < limit:
-            return height
-    return AREA_HEIGHT_FALLBACK_M
+def osm_id(properties: dict) -> str:
+    """Stable id of one element: way and relation ids are separate number spaces (spec §3)."""
+    return f"{properties.get('type', 'way')}/{properties.get('id', 0)}"
 
 
 def _building_tags(tags: dict) -> tuple[str, bool] | None:
@@ -715,7 +760,7 @@ In `parse_overpass` den Gebäude-Zweig ersetzen:
                     height_is_top=bool(tagged_height),
                     min_height_m=parse_min_height(tags) if is_part else 0.0,
                     roof=parse_roof(tags),
-                    osm_id=int(feature["properties"].get("id", 0)),
+                    osm_id=osm_id(feature["properties"]),
                     is_part=is_part,
                     kind=building_kind,
                 )
@@ -725,12 +770,12 @@ In `parse_overpass` den Gebäude-Zweig ersetzen:
 
 (Die Wasser-Zeile darunter bleibt unverändert; die Variable `kind` aus `geom.geom_type` behält ihren Namen.)
 
-- [ ] **Step 4: Unit-Tests grün (ohne Fixtures)**
+- [ ] **Step 5: Unit-Tests grün (ohne Fixtures)**
 
-Run: `cd backend && uv run pytest tests/test_fetch.py -q -k "not fixture and not bankenviertel"`
+Run: `cd backend && uv run pytest tests/test_heights.py tests/test_fetch.py -q -k "not fixture and not bankenviertel"`
 Expected: PASS.
 
-- [ ] **Step 5: conftest und Aufzeichnungsskript ersetzen**
+- [ ] **Step 6: conftest und Aufzeichnungsskript ersetzen**
 
 `backend/tests/fixtures/record_frankfurt.py`:
 
@@ -741,6 +786,7 @@ Expected: PASS.
 """
 
 import json
+import os
 import shutil
 from pathlib import Path
 
@@ -762,7 +808,11 @@ def main() -> None:
     tmp = here / "_tmp_cache"
     for name, spec in SPECS.items():
         data = fetch_overpass(build_query(query_bbox(spec), spec.mode), cache_dir=tmp)
-        (here / name).write_text(json.dumps(data))
+        # Write beside the target and move it into place only once the download succeeded:
+        # a failed second query must never leave the first fixture truncated.
+        staged = here / f"{name}.{os.getpid()}.tmp"
+        staged.write_text(json.dumps(data))
+        os.replace(staged, here / name)
         print(f"recorded {name}: {len(data['elements'])} elements")
     shutil.rmtree(tmp)
 
@@ -808,14 +858,14 @@ def bankenviertel_data() -> dict:
     return json.loads((FIXTURES / "frankfurt_bankenviertel.json").read_text())
 ```
 
-- [ ] **Step 6: Fixtures aufzeichnen (einzige Netz-Aktion)**
+- [ ] **Step 7: Fixtures aufzeichnen (einzige Netz-Aktion)**
 
 Run: `cd backend && uv run python tests/fixtures/record_frankfurt.py`
 Expected: zwei Zeilen, z. B. `recorded frankfurt_roemer.json: 12000 elements` und `recorded frankfurt_bankenviertel.json: 6000 elements`; beide Dateien liegen unter `backend/tests/fixtures/`, `_tmp_cache` ist gelöscht.
 
 Falls Overpass gerade überlastet ist (`FetchError`), den Befehl nach ein bis zwei Minuten wiederholen — das Skript ist idempotent.
 
-- [ ] **Step 7: Fixture-Inhalt prüfen**
+- [ ] **Step 8: Fixture-Inhalt prüfen**
 
 Run:
 
@@ -832,17 +882,17 @@ for name, spec in (('frankfurt_roemer.json', FRANKFURT), ('frankfurt_bankenviert
 "
 ```
 
-Expected: `frankfurt_roemer.json` mit > 400 Gebäuden und > 20 Dächern, `frankfurt_bankenviertel.json` mit `parts` > 0. Ist `parts` = 0, ist die Query nicht die neue — Step 3 prüfen und neu aufzeichnen (vorher `backend/.cache/overpass` nicht anfassen, das Skript nutzt einen eigenen Cache).
+Expected: `frankfurt_roemer.json` mit > 400 Gebäuden und > 20 Dächern, `frankfurt_bankenviertel.json` mit `parts` > 0. Ist `parts` = 0, ist die Query nicht die neue — Step 4 prüfen und neu aufzeichnen (vorher `backend/.cache/overpass` nicht anfassen, das Skript nutzt einen eigenen Cache).
 
-- [ ] **Step 8: Volle Suite grün**
+- [ ] **Step 9: Volle Suite grün**
 
 Run: `cd backend && uv run pytest -q`
 Expected: alle Tests bestehen (`test_pipeline.py` nutzt die neu aufgezeichnete Fixture weiter).
 
-- [ ] **Step 9: Commit**
+- [ ] **Step 10: Commit**
 
 ```bash
-git add backend/skylineframe/fetch.py backend/tests/test_fetch.py backend/tests/conftest.py backend/tests/fixtures
+git add backend/skylineframe/fetch.py backend/skylineframe/heights.py backend/tests/test_fetch.py backend/tests/test_heights.py backend/tests/conftest.py backend/tests/fixtures
 git commit -m "feat(fetch): query building parts, parse roof tags and estimate missing heights
 
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
@@ -857,7 +907,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 - Test: `backend/tests/test_prepare.py` (bestehende Datei erweitern, zwei Tests ersetzen)
 
 **Interfaces:**
-- Consumes: `features.Building/Block/RoofSpec` (Task 1), `fetch.estimate_height_m(kind, area_m2)` (Task 2), `project.square_local(spec)`, `spec.MIN_FEATURE_MM`, `FrameSpec.roofs/.parts/.min_footprint_area_mm2`.
+- Consumes: `features.Building/Block/RoofSpec` (Task 1), `heights.estimate_height_m(kind, area_m2)` (Task 2, **nie** aus `fetch` importieren), `project.square_local(spec)`, `spec.MIN_FEATURE_MM`, `FrameSpec.roofs/.parts/.min_footprint_area_mm2`.
 - Produces:
   - `prepare.Prepared(buildings: list[Building], blocks: list[Block] = [], roads: list[Polygon] = [], water: list[Polygon] = [], footprint_coverage: float = 0.0)`
   - `prepare.prepare(features: Features, spec: FrameSpec) -> Prepared` — `buildings` enthält nur einzeln druckbare Grundrisse, jeder mit gefülltem `eaves_m`, `ridge_m`, und (falls Dach) `roof` + `rect` (vier Ecken in Metern).
@@ -865,11 +915,13 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
   - `prepare.weighted_percentile(values: list[float], weights: list[float], q: float) -> float`
   - `prepare.minimum_rect(poly: Polygon) -> tuple[tuple[float, float], ...]`
   - `prepare.default_roof_height_m(shape: str, short_side_m: float) -> float`
-  - `prepare.assign_parts(buildings: list[Building], default_height_m: float) -> list[Building]`
+  - `prepare.assign_parts(buildings: list[Building], default_height_m: float) -> list[Building]` — Zuordnung über `representative_point()` des Teils (Spec §6.3), nicht über den Schwerpunkt: bei L- und U-Formen liegt der Schwerpunkt außerhalb des Grundrisses.
   - `prepare.resolve_roof(b: Building, rotation_deg: float) -> None`
-  - `prepare.build_blocks(footprints, spec, close_m, min_area_m2, half_feature_m) -> list[Block]`
-  - Konstanten `SIMPLIFY_TOLERANCE_MM = 0.05`, `BLOCK_PERCENTILE = 0.25`, `ROOF_RECT_RATIO = 0.85`
+  - `prepare.road_corridors(roads: list[Road], spec: FrameSpec, square: Polygon) -> BaseGeometry` — die gepufferten Straßenflächen, bevor irgendetwas herausgeschnitten wird; Blockbildung und Straßen-Vertiefungen benutzen genau diese Geometrie.
+  - `prepare.build_blocks(footprints: list[Building], spec: FrameSpec, close_m: float, min_area_m2: float, half_feature_m: float, corridors: BaseGeometry) -> list[Block]`
+  - Konstanten `SIMPLIFY_TOLERANCE_MM = 0.05`, `ARC_SIMPLIFY_FRACTION = 0.1`, `BLOCK_PERCENTILE = 0.25`, `ROOF_RECT_RATIO = 0.85`
 - Downstream-Vertrag: `Building.rect` ist entweder leer oder genau vier Ecken; `ridge_m ≥ eaves_m`; `roof is None` ⇒ `eaves_m == ridge_m == height_m`.
+- Bewusst akzeptiert: `estimate_missing_heights` schätzt über die **geclippte** Fläche. Ein Gebäude, das der Quadratrand halbiert, wird damit etwas niedriger geschätzt als in Wirklichkeit — der Alternativweg (Fläche vor dem Clip mitschleppen) kostet ein zusätzliches Feld für einen Effekt, der nur den Rand betrifft.
 
 - [ ] **Step 1: Failing Tests schreiben**
 
@@ -916,7 +968,8 @@ def test_sliver_footprint_is_dropped():
     out = prepare(feats, spec())
     assert len(out.buildings) == 1
     assert out.buildings[0].geom.bounds == pytest.approx((20, 20, 40, 40))
-    assert [b.geom.bounds for b in out.blocks] == [pytest.approx((20, 20, 40, 40))]
+    # abs: the close reproduces the outline only to the tolerance of its own chord simplify.
+    assert [b.geom.bounds for b in out.blocks] == [pytest.approx((20, 20, 40, 40), abs=0.01)]
 ```
 
 Am Ende von `backend/tests/test_prepare.py` anhängen:
@@ -948,11 +1001,11 @@ def test_tagged_height_is_kept():
 # --- building parts -----------------------------------------------------
 
 
-def outline(geom, height=20.0, osm_id=1) -> Building:
+def outline(geom, height=20.0, osm_id="way/1") -> Building:
     return Building(geom, height_m=height, height_is_top=True, osm_id=osm_id, kind="yes")
 
 
-def part(geom, height=0.0, osm_id=2, min_height=0.0) -> Building:
+def part(geom, height=0.0, osm_id="way/2", min_height=0.0) -> Building:
     return Building(geom, height_m=height, height_is_top=height > 0, osm_id=osm_id, is_part=True, min_height_m=min_height, kind="yes")
 
 
@@ -962,8 +1015,8 @@ def test_part_inside_outline_replaces_it_together_with_the_remainder():
     by_area = sorted(out.buildings, key=lambda b: b.geom.area)
     assert [round(b.geom.area) for b in by_area] == [400, 1200]  # the part and the frame around it
     p, remainder = by_area
-    assert p.is_part is True and p.outline_id == 1 and p.min_height_m == 10.0 and p.height_m == 30.0
-    assert remainder.is_part is False and remainder.outline_id == 1 and remainder.height_m == 20.0
+    assert p.is_part is True and p.outline_id == "way/1" and p.min_height_m == 10.0 and p.height_m == 30.0
+    assert remainder.is_part is False and remainder.outline_id == "way/1" and remainder.height_m == 20.0
     assert remainder.geom.interiors  # the frame keeps the hole where the part stands
 
 
@@ -993,9 +1046,22 @@ def test_parts_can_be_switched_off():
 
 
 def test_assign_parts_keeps_everything_when_there_is_no_part():
-    buildings = [outline(box(0, 0, 10, 10)), outline(box(20, 20, 30, 30), osm_id=3)]
+    buildings = [outline(box(0, 0, 10, 10)), outline(box(20, 20, 30, 30), osm_id="way/3")]
     out = assign_parts(buildings, 8.0)
     assert [id(b) for b in out] == [id(b) for b in buildings]  # same objects, new list
+
+
+def test_part_is_assigned_by_an_interior_point_not_the_centroid():
+    # A part that covers its whole U-shaped outline. The centroid of that U is POINT (30, 18)
+    # — inside the notch and therefore outside both polygons, so a centroid lookup would find
+    # no outline at all. representative_point() is inside by construction (spec §6.3).
+    u_shape = Polygon([(0, 0), (60, 0), (60, 40), (40, 40), (40, 15), (20, 15), (20, 40), (0, 40)])
+    assert not u_shape.contains(u_shape.centroid)
+    out = prepare(Features(buildings=[outline(u_shape), part(u_shape, height=30.0)]), spec())
+    assert len(out.buildings) == 1  # the part covers the outline, so there is no remainder
+    assigned = out.buildings[0]
+    assert assigned.is_part is True
+    assert assigned.outline_id == "way/1"
 
 
 # --- blocks -------------------------------------------------------------
@@ -1012,7 +1078,9 @@ def test_three_row_houses_form_one_block():
     )
     out = prepare(feats, spec())
     assert len(out.blocks) == 1
-    assert out.blocks[0].geom.area == pytest.approx(310, rel=1e-3)  # 31 x 10 including both gaps
+    # 31 x 10 = 310 including both gaps, minus the ~0.4 m² the chord simplify shaves off the
+    # welded corners (measured 309.62 with shapely 2.1.2).
+    assert out.blocks[0].geom.area == pytest.approx(309.6, abs=0.5)
     # equal areas => the 25th percentile is the lowest of the three eaves heights
     assert out.blocks[0].height_m == pytest.approx(12.0)
     assert len(out.buildings) == 3  # each house is printable on its own as well
@@ -1043,16 +1111,42 @@ def test_unprintable_block_is_dropped_and_lowers_the_coverage():
     assert out.footprint_coverage == pytest.approx(0.8)
 
 
-def test_roads_are_blocked_by_the_block_not_only_by_the_footprints():
-    # Two houses 3 m apart: the close welds them, so the road pocket stops at the block outline
-    # and no groove runs through the gap between them (spec §6.7).
+def test_a_street_keeps_the_two_rows_in_separate_blocks():
+    # Two rows of 12 x 12 m houses, 6 m apart across the street. The close radius is 4 m, so it
+    # bridges anything below 8 m: without the road corridors subtracted first, both rows would
+    # weld into one block and the road pocket would be cut away by it (spec §6.4).
+    houses = [
+        box(-30, 3, -18, 15), box(-12, 3, 0, 15),  # north row, 6 m gap between the two houses
+        box(-30, -15, -18, -3), box(-12, -15, 0, -3),  # south row
+    ]
     feats = Features(
-        buildings=[bld(box(-13, -5, -3, 5)), bld(box(0, -5, 10, 5))],
-        roads=[Road(LineString([(-100, 0), (100, 0)]), "residential")],
+        buildings=[bld(g) for g in houses],
+        roads=[Road(LineString([(-100, 0), (100, 0)]), "residential")],  # 1.0 mm => 10 m wide
     )
     out = prepare(feats, spec(mode=Mode.full))
-    gap = box(-3, -5, 0, 5)
-    assert unary_union(out.roads).intersection(gap).area == pytest.approx(0, abs=1e-6)
+
+    assert len(out.blocks) == 2
+    # The corridor covers y in [-5, 5], so each block starts where the street ends.
+    assert sorted(round(b.geom.bounds[1], 2) for b in out.blocks) == [-15.0, 5.0]
+    assert sorted(round(b.geom.bounds[3], 2) for b in out.blocks) == [-5.0, 15.0]
+
+    roads = unary_union(out.roads)
+    # Buildings keep precedence over roads, blocks too: neither is grooved.
+    assert roads.intersection(unary_union([b.geom for b in out.blocks])).area == pytest.approx(0, abs=1e-6)
+    assert roads.intersection(unary_union(houses)).area == pytest.approx(0, abs=1e-6)
+    # Corridor 200 x 10 = 2000 m², minus the strips the four grown houses and the two grown
+    # blocks take out of it (~130 m²); measured 1870.2 with shapely 2.1.2.
+    assert roads.area == pytest.approx(1870, rel=5e-3)
+    # The middle of the street is untouched: 30 m of x by 4 m of y = 120 m².
+    assert roads.intersection(box(-30, -2, 0, 2)).area == pytest.approx(120.0)
+
+
+def test_block_around_a_single_house_is_not_split_without_roads():
+    # Same houses, simple mode: no corridors, so the close welds all four into one block and
+    # the road subtraction is provably the only reason for the split above.
+    houses = [box(-30, 3, -18, 15), box(-12, 3, 0, 15), box(-30, -15, -18, -3), box(-12, -15, 0, -3)]
+    out = prepare(Features(buildings=[bld(g) for g in houses]), spec(mode=Mode.simple))
+    assert len(out.blocks) == 1
 
 
 # --- roofs --------------------------------------------------------------
@@ -1167,7 +1261,7 @@ from shapely.ops import unary_union
 from shapely.validation import make_valid
 
 from .features import Block, Building, Features, Road, Water
-from .fetch import estimate_height_m
+from .heights import estimate_height_m
 from .project import square_local
 from .spec import MIN_FEATURE_MM, FrameSpec, Mode
 
@@ -1245,9 +1339,9 @@ def estimate_missing_heights(buildings: list[Building]) -> None:
 def assign_parts(buildings: list[Building], default_height_m: float) -> list[Building]:
     """Turn outlines with parts into (parts + remainder) and return the footprint list (spec §6.3).
 
-    A part belongs to the outline that contains its centroid. Outlines with at least one part
-    are not extruded as a whole any more: the parts are rendered, and what they leave of the
-    outline becomes one remainder footprint per polygon at the outline's own height.
+    A part belongs to the outline that contains an interior point of it. Outlines with at least
+    one part are not extruded as a whole any more: the parts are rendered, and what they leave
+    of the outline becomes one remainder footprint per polygon at the outline's own height.
     """
     outlines = [b for b in buildings if not b.is_part]
     parts = [b for b in buildings if b.is_part]
@@ -1260,8 +1354,10 @@ def assign_parts(buildings: list[Building], default_height_m: float) -> list[Bui
         hit: int | None = None
         if tree is not None:
             # STRtree applies the predicate as input.predicate(tree_geom), so "within" returns
-            # the outlines that contain the centroid. Nested outlines: the first hit wins.
-            found = tree.query(p.geom.centroid, predicate="within")
+            # the outlines that contain the point. representative_point() is inside the part by
+            # construction; the centroid of an L or a U is not (spec §6.3). Nested outlines:
+            # the first hit wins.
+            found = tree.query(p.geom.representative_point(), predicate="within")
             if len(found):
                 hit = int(found[0])
         if hit is None:
@@ -1375,10 +1471,31 @@ def weighted_percentile(values: list[float], weights: list[float], q: float) -> 
 
 
 def _close(area: BaseGeometry, radius_m: float) -> BaseGeometry:
-    """Morphological close with round joins: dilate, then erode (spec §6.4)."""
+    """Morphological close with round joins: dilate, then erode (spec §6.4).
+
+    The round joins are approximated by chords, which multiplies the vertex count of every
+    block outline without adding a shape the printer could resolve, so they are collapsed
+    again afterwards — same treatment as the road/water weld.
+    """
     if area.is_empty:
         return area
-    return area.buffer(radius_m, join_style="round").buffer(-radius_m, join_style="round")
+    closed = area.buffer(radius_m, join_style="round").buffer(-radius_m, join_style="round")
+    return closed.simplify(radius_m * ARC_SIMPLIFY_FRACTION, preserve_topology=True)
+
+
+def road_corridors(roads: list[Road], spec: FrameSpec, square: Polygon) -> BaseGeometry:
+    """The road surfaces before anything is cut out of them, clipped to the square.
+
+    Blocks are formed around these corridors and the pockets are cut from them, so both stages
+    see exactly the same road geometry (spec §6.4).
+    """
+    if not roads:
+        return Polygon()
+    buffered = [
+        r.geom.buffer(spec.road_width_mm[r.cls] / spec.scale / 2, cap_style="flat", join_style="round")
+        for r in roads
+    ]
+    return unary_union(buffered).intersection(square)
 
 
 def build_blocks(
@@ -1387,6 +1504,7 @@ def build_blocks(
     close_m: float,
     min_area_m2: float,
     half_feature_m: float,
+    corridors: BaseGeometry,
 ) -> list[Block]:
     """One Block per connected group of footprints, at the weighted 25th percentile eaves height.
 
@@ -1395,7 +1513,13 @@ def build_blocks(
     """
     if not footprints:
         return []
-    closed = _close(unary_union([b.geom for b in footprints]), close_m)
+    area = unary_union([b.geom for b in footprints])
+    if not corridors.is_empty:
+        # The close bridges every gap below 2 x close_m — 12 m at the Skyline preset, which is
+        # most inner-city streets. Taking the road corridors out of the input first keeps the
+        # blocks on their own side of the street (spec §6.4).
+        area = area.difference(corridors)
+    closed = _close(area, close_m)
     polys = [p for p in polygons_of(closed) if _is_printable(p, min_area_m2, half_feature_m)]
     if not polys:
         return []
@@ -1420,17 +1544,22 @@ def build_blocks(
     return blocks
 
 
-def _coverage(footprints: list[Building], blocks: list[Block]) -> float:
-    """Share of the building area in the square that the kept blocks still carry (spec §6)."""
+def _coverage(footprints: list[Building], blocks: list[Block], buildings: list[Building]) -> float:
+    """Share of the building area in the square that the model still carries (spec §6).
+
+    The model is the union of the blocks and the individually printable buildings: a footprint
+    whose block was dropped, or trimmed away by a road corridor, still counts when it is a
+    solid of its own.
+    """
     if not footprints:
         return 0.0
     total = unary_union([b.geom for b in footprints])
     if total.is_empty or total.area <= 0:
         return 0.0
-    if not blocks:
+    modelled = unary_union([*(b.geom for b in blocks), *(b.geom for b in buildings)])
+    if modelled.is_empty:
         return 0.0
-    kept = unary_union([b.geom for b in blocks])
-    return float(kept.intersection(total).area / total.area)
+    return float(modelled.intersection(total).area / total.area)
 
 
 def _weld(area: BaseGeometry, weld_m: float) -> BaseGeometry:
@@ -1465,20 +1594,11 @@ def _clearance(blocked: BaseGeometry, weld_m: float) -> BaseGeometry:
 
 
 def _road_areas(
-    roads: list[Road],
-    spec: FrameSpec,
-    square: Polygon,
-    blocked: BaseGeometry,
-    min_area_m2: float,
-    weld_m: float,
+    corridors: BaseGeometry, blocked: BaseGeometry, min_area_m2: float, weld_m: float
 ) -> list[Polygon]:
-    if not roads:
+    if corridors.is_empty:
         return []
-    buffered = [
-        r.geom.buffer(spec.road_width_mm[r.cls] / spec.scale / 2, cap_style="flat", join_style="round")
-        for r in roads
-    ]
-    area = unary_union(buffered).intersection(square).difference(_clearance(blocked, weld_m))
+    area = corridors.difference(_clearance(blocked, weld_m))
     return [p for p in polygons_of(_weld(area, weld_m)) if p.area >= min_area_m2]
 
 
@@ -1510,18 +1630,22 @@ def prepare(features: Features, spec: FrameSpec) -> Prepared:
     for b in footprints:
         resolve_roof(b, spec.rotation_deg)
 
-    blocks = build_blocks(footprints, spec, close_m, min_area_m2, half_feature_m)
+    full = spec.mode == Mode.full
+    # Only the full mode has roads at all; in simple mode nothing is subtracted (spec §6.4).
+    corridors = road_corridors(features.roads, spec, square) if full else Polygon()
+    blocks = build_blocks(footprints, spec, close_m, min_area_m2, half_feature_m, corridors)
     buildings = [b for b in footprints if _is_printable(b.geom, min_area_m2, half_feature_m)]
-    coverage = _coverage(footprints, blocks)
-    if spec.mode != Mode.full:
+    coverage = _coverage(footprints, blocks, buildings)
+    if not full:
         return Prepared(buildings=buildings, blocks=blocks, footprint_coverage=coverage)
 
     recess_min_area_m2 = MIN_FEATURE_MM**2 / scale**2
     weld_m = SIMPLIFY_TOLERANCE_MM / scale
-    # Precedence stays buildings > roads > water, and "buildings" is now the union of the
-    # blocks: a groove through a welded courtyard would cut the block wall open (spec §6.7).
-    blocked = unary_union([b.geom for b in blocks]) if blocks else Polygon()
-    roads = _road_areas(features.roads, spec, square, blocked, recess_min_area_m2, weld_m)
+    # Precedence stays buildings > roads > water. What blocks a pocket is the union of the
+    # blocks and of the individually printable buildings: the blocks stop at the corridors,
+    # but a building that sticks into one still keeps its ground (spec §6.4/§6.7).
+    blocked = unary_union([*(b.geom for b in blocks), *(b.geom for b in buildings)])
+    roads = _road_areas(corridors, blocked, recess_min_area_m2, weld_m)
     blocked_for_water = unary_union([blocked, *roads])
     water = _water_areas(features.water, square, blocked_for_water, recess_min_area_m2, weld_m)
     return Prepared(
@@ -1534,7 +1658,9 @@ def prepare(features: Features, spec: FrameSpec) -> Prepared:
 Run: `cd backend && uv run pytest tests/test_prepare.py -q`
 Expected: PASS (alle, inklusive der unveränderten Straßen-/Wasser-Tests).
 
-Falls `test_water_is_cut_out_under_buildings_and_roads` scheitert: die Blockbildung ersetzt das Gebäude durch seinen Close; für ein einzelnes konvexes Rechteck ist der Close flächengleich, die Abweichung liegt bei < 1e-4 relativ. Ein größerer Fehler bedeutet, dass `close_m` falsch berechnet ist (`MIN_FEATURE_MM / 2 / scale`, nicht `MIN_FEATURE_MM / scale`).
+Falls `test_water_is_cut_out_under_buildings_and_roads` oder `test_road_is_cut_out_under_building` scheitert: „blocked" ist die Vereinigung von Blöcken **und** einzeln druckbaren Gebäuden. Das 20 × 20-Gebäude dieser Tests ist einzeln druckbar, also ist die Vereinigung exakt das Rechteck — fällt das Gebäude aus `blocked` heraus, ist die Reihenfolge in `prepare` falsch (`buildings` wird vor `blocked` berechnet).
+
+Falls `test_sliver_footprint_is_dropped` an den Bounds scheitert: der Close schneidet die Ecken um ~0,005 m an (Chord-Simplify mit `radius × 0.1`), deshalb `abs=0.01` — nicht `rel`.
 
 - [ ] **Step 5: Volle Suite grün**
 
@@ -1601,15 +1727,19 @@ ZE, ZR = 0.0, 3.0
         ("pyramidal", 60.0),
         # wedge: the whole rectangle raised on one long side => 10 * 6 * 3 / 2 = 90.
         ("skillion", 90.0),
-        # hipped with inset 0.2*6 = 1.2 plus a ring at 0.7*3 = 2.1 mm on 0.8 of both half axes.
-        # Frustum 0 -> 2.1: 2.1/6 * (60 + 4*48.6 + 38.4) = 102.48; cap 2.1 -> 3:
+        # mansard = hipped (ridge inset 0.2*6 = 1.2) plus a ring at 0.7*3 = 2.1 mm on 0.8 of
+        # both half axes. Frustum 0 -> 2.1: 2.1/6 * (60 + 4*48.6 + 38.4) = 102.48; cap 2.1 -> 3:
         # 0.9/6 * (38.4 + 4*18.72) = 16.992; the convex hull also fills the dent their corners
         # leave between them, which is why the hull is 121.2 and not 119.472.
         ("mansard", 121.2),
-        # like mansard, but the ring keeps the full length (0.8 only across): 133.272.
-        ("gambrel", 133.272),
+        # gambrel = gabled (ridge over the full length) plus the same knee ring, pulled in
+        # across only (10 x 4.8 at 2.1 mm). Frustum 0 -> 2.1: 2.1/6 * (60 + 4*54 + 48) = 113.4;
+        # cap 2.1 -> 3: 0.9/6 * (48 + 4*24 + 0) = 21.6; the gable ends stay vertical, so there
+        # is no dent to fill and the hull is exactly 113.4 + 21.6 = 135.0.
+        ("gambrel", 135.0),
         # sphere(1, 24) scaled to (5, 3, 3) and trimmed at the eaves. The analytic half
-        # ellipsoid is 2/3 * pi * 5 * 3 * 3 = 94.2478; the 24-segment polyhedron reaches 90.547.
+        # ellipsoid is 2/3 * pi * 5 * 3 * 3 = 94.2478; the 24-segment polyhedron reaches
+        # 90.547 (measured with manifold3d 3.5.3 — a different tessellation would shift it).
         ("dome", 90.547),
         # half cylinder over 12 segments per arc: 0.5 * 3 * 3 * sin(pi/12) * 12 * 10 = 139.7623.
         ("round", 139.762),
@@ -1618,16 +1748,21 @@ ZE, ZR = 0.0, 3.0
 def test_roof_volumes_over_a_10x6_rectangle(shape, expected):
     solid = roof_hull(RECT, ZE, ZR, shape)
     assert solid is not None
-    assert solid.volume() == pytest.approx(expected, rel=1e-4)
+    # The dome is the one shape whose volume depends on the library's tessellation, so it gets
+    # a looser tolerance than the exact hull arithmetic of the others.
+    tolerance = 1e-3 if shape == "dome" else 1e-4
+    assert solid.volume() == pytest.approx(expected, rel=tolerance)
 
 
 @pytest.mark.parametrize("shape", sorted(SHAPES))
 def test_roof_stays_inside_the_rectangle_and_between_eaves_and_ridge(shape):
     solid = roof_hull(RECT, ZE, ZR, shape)
     xmin, ymin, zmin, xmax, ymax, zmax = solid.bounding_box()
-    assert (xmin, ymin) == pytest.approx((0.0, 0.0), abs=1e-6)
-    assert (xmax, ymax) == pytest.approx((10.0, 6.0), abs=1e-6)
-    assert (zmin, zmax) == pytest.approx((ZE, ZR), abs=1e-6)
+    # abs=1e-3: the dome and the round roof touch the rectangle only with the vertices of
+    # their tessellation (measured with manifold3d 3.5.3).
+    assert (xmin, ymin) == pytest.approx((0.0, 0.0), abs=1e-3)
+    assert (xmax, ymax) == pytest.approx((10.0, 6.0), abs=1e-3)
+    assert (zmin, zmax) == pytest.approx((ZE, ZR), abs=1e-3)
 
 
 def test_roof_sits_on_a_raised_eaves_plane():
@@ -1719,7 +1854,7 @@ DOME_SEGMENTS = 24  # circular segments of the sphere a dome is scaled from
 ROUND_SEGMENTS = 12  # segments per half-circle arc of a round roof
 HIP_INSET = 0.5  # ridge inset as a fraction of the short side
 HALF_HIP_INSET = 0.25
-MANSARD_INSET = 0.2
+MANSARD_INSET = 0.2  # mansard only; the gambrel ridge runs the full length (spec §7)
 GABLE_HEIGHT_FRACTION = 0.6  # half-hipped gable point, above the eaves
 KNEE_HEIGHT_FRACTION = 0.7  # mansard / gambrel second ring, above the eaves
 KNEE_WIDTH_FRACTION = 0.8  # mansard / gambrel second ring, at this fraction of the half width
@@ -1825,10 +1960,11 @@ def roof_points(
         sign = _skillion_sign(v, direction_deg)
         return base + [at(-a, sign * b, z_ridge_mm), at(a, sign * b, z_ridge_mm)]
     if shape in ("mansard", "gambrel"):
-        inset = min(MANSARD_INSET * short, a)
+        # mansard is the hipped variant (ridge pulled in on both ends), gambrel the gabled one
+        # (ridge over the full length, vertical gable ends) — spec §7. Both get the same knee
+        # ring, and the mansard pulls that in on both axes while the gambrel only narrows it.
+        inset = min(MANSARD_INSET * short, a) if shape == "mansard" else 0.0
         knee_z = z_eaves_mm + KNEE_HEIGHT_FRACTION * height
-        # The gambrel keeps its full length at the knee (gable ends), the mansard pulls in on
-        # both axes — that is the only difference between the two.
         knee_a = KNEE_WIDTH_FRACTION * a if shape == "mansard" else a
         knee_b = KNEE_WIDTH_FRACTION * b
         ring = [at(sx * knee_a, sy * knee_b, knee_z) for sx in (-1.0, 1.0) for sy in (-1.0, 1.0)]
@@ -1922,7 +2058,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 **Files:**
 - Modify: `backend/skylineframe/scale.py` (komplett ersetzen)
 - Modify: `backend/skylineframe/mesh.py` (komplett ersetzen)
-- Test: `backend/tests/test_scale.py` (anhängen)
+- Test: `backend/tests/test_scale.py` (einen bestehenden Test ersetzen, Rest anhängen)
 - Test: `backend/tests/test_mesh.py` (anhängen)
 
 **Interfaces:**
@@ -1953,6 +2089,7 @@ from skylineframe.spec import FrameSpec
 
 ```python
 def building(geom, **kw) -> Building:
+    """A prepared building: prepare always fills eaves_m/ridge_m, so the tests must too."""
     values = {"height_m": 20.0, "eaves_m": 20.0, "ridge_m": 20.0}
     values.update(kw)
     return Building(geom, **values)
@@ -1992,9 +2129,9 @@ def test_roof_below_the_print_minimum_is_dropped():
 
 
 def test_supported_part_starts_at_its_min_height():
-    lower = building(box(-100, -100, 100, 100), height_m=40.0, eaves_m=40.0, ridge_m=40.0, outline_id=7)
+    lower = building(box(-100, -100, 100, 100), height_m=40.0, eaves_m=40.0, ridge_m=40.0, outline_id="way/7")
     upper = building(
-        box(-50, -50, 50, 50), height_m=80.0, eaves_m=80.0, ridge_m=80.0, min_height_m=40.0, is_part=True, outline_id=7
+        box(-50, -50, 50, 50), height_m=80.0, eaves_m=80.0, ridge_m=80.0, min_height_m=40.0, is_part=True, outline_id="way/7"
     )
     out = scale_features(Prepared(buildings=[lower, upper]), spec())
     assert out.buildings[1].z0_mm == pytest.approx(6.0)  # 40 m x 0.15
@@ -2003,22 +2140,22 @@ def test_supported_part_starts_at_its_min_height():
 
 def test_floating_part_is_extended_down_to_the_plate():
     # Nothing of the same outline stands under it, so min_height is ignored (spec §8).
-    lonely = building(box(-50, -50, 50, 50), height_m=80.0, eaves_m=80.0, ridge_m=80.0, min_height_m=40.0, is_part=True, outline_id=7)
+    lonely = building(box(-50, -50, 50, 50), height_m=80.0, eaves_m=80.0, ridge_m=80.0, min_height_m=40.0, is_part=True, outline_id="way/7")
     out = scale_features(Prepared(buildings=[lonely]), spec())
     assert out.buildings[0].z0_mm == 0.0
 
 
 def test_part_next_to_its_sibling_is_not_supported_by_it():
     # Same outline, but the two footprints do not overlap, so the upper one would float.
-    lower = building(box(-100, -100, -10, 100), height_m=40.0, eaves_m=40.0, ridge_m=40.0, outline_id=7)
-    beside = building(box(10, -50, 100, 50), height_m=80.0, eaves_m=80.0, ridge_m=80.0, min_height_m=40.0, is_part=True, outline_id=7)
+    lower = building(box(-100, -100, -10, 100), height_m=40.0, eaves_m=40.0, ridge_m=40.0, outline_id="way/7")
+    beside = building(box(10, -50, 100, 50), height_m=80.0, eaves_m=80.0, ridge_m=80.0, min_height_m=40.0, is_part=True, outline_id="way/7")
     out = scale_features(Prepared(buildings=[lower, beside]), spec())
     assert out.buildings[1].z0_mm == 0.0
 
 
 def test_part_whose_base_is_above_its_own_top_falls_back_to_the_plate():
-    lower = building(box(-100, -100, 100, 100), height_m=90.0, eaves_m=90.0, ridge_m=90.0, outline_id=7)
-    broken = building(box(-50, -50, 50, 50), height_m=20.0, eaves_m=20.0, ridge_m=20.0, min_height_m=60.0, is_part=True, outline_id=7)
+    lower = building(box(-100, -100, 100, 100), height_m=90.0, eaves_m=90.0, ridge_m=90.0, outline_id="way/7")
+    broken = building(box(-50, -50, 50, 50), height_m=20.0, eaves_m=20.0, ridge_m=20.0, min_height_m=60.0, is_part=True, outline_id="way/7")
     out = scale_features(Prepared(buildings=[lower, broken]), spec())
     assert out.buildings[1].z0_mm == 0.0
 
@@ -2036,6 +2173,21 @@ def test_raw_height_has_no_minimum_but_keeps_the_cap():
     assert raw_height_mm(2.0, spec()) == pytest.approx(0.3)  # building_height_mm would return 0.8
     assert raw_height_mm(5000.0, spec()) == pytest.approx(100.0)
 ```
+
+Danach den **bestehenden** Test `test_footprints_are_scaled_about_origin` ersetzen — er baut ein `Building` von Hand, und seit Task 3 kommt die Druckhöhe aus `eaves_m` (ein rohes `Building(box(...), 10.0)` hätte `eaves_m = 0.0` und würde auf die Mindesthöhe 0,8 mm geklemmt):
+
+```python
+def test_footprints_are_scaled_about_origin():
+    prepared = Prepared(buildings=[building(box(-500, -500, 500, 500), height_m=10.0, eaves_m=10.0, ridge_m=10.0)])
+    out = scale_features(prepared, spec())
+    assert out.buildings[0].geom.bounds == pytest.approx((-50, -50, 50, 50))
+    assert out.buildings[0].height_mm == pytest.approx(1.5)
+```
+
+Danach prüfen, dass kein weiterer Test in `tests/test_scale.py` ein `Building(...)` ohne `eaves_m` an `scale_features` gibt:
+
+Run: `cd backend && grep -n "Building(" tests/test_scale.py`
+Expected: nur noch Treffer innerhalb des `building(...)`-Helpers und der neuen Tests; jeder direkte Aufruf setzt `eaves_m`.
 
 - [ ] **Step 2: Fehlschlag bestätigen**
 
@@ -2108,8 +2260,8 @@ def _scale_geom(geom: Polygon, factor: float) -> Polygon:
     return shapely.affinity.scale(geom, xfact=factor, yfact=factor, origin=(0, 0))
 
 
-def _by_outline(buildings: list[Building]) -> dict[int, list[Building]]:
-    groups: dict[int, list[Building]] = {}
+def _by_outline(buildings: list[Building]) -> dict[str, list[Building]]:
+    groups: dict[str, list[Building]] = {}
     for b in buildings:
         if b.outline_id is not None:
             groups.setdefault(b.outline_id, []).append(b)
@@ -2335,11 +2487,22 @@ def recess(polys: list[Polygon], depth: float) -> tuple[m3d.Manifold, m3d.Manifo
     return cutter, inlay
 
 
+def _is_solid(p: Prism) -> bool:
+    return p.geom.area > 0 and p.height_mm > p.z0_mm
+
+
 def _roof_body(p: Prism) -> m3d.Manifold | None:
-    """The roof of one footprint, cut down to the footprint itself (spec §7)."""
+    """The roof of one footprint, cut down to the footprint itself (spec §7).
+
+    The clip prism reaches EPS below the eaves and EPS above the ridge: its bottom face must
+    not be coplanar with the bottom face of the roof body, or the intersection has to resolve
+    two coincident faces. Overshooting also leaves the roof overlapping the body it sits on
+    instead of touching it face to face.
+    """
     if p.roof is None:
         return None
-    clip = prism(p.geom, p.roof.z_ridge_mm - p.roof.z_eaves_mm + EPS, z0=p.roof.z_eaves_mm)
+    height = p.roof.z_ridge_mm - p.roof.z_eaves_mm + 2 * EPS
+    clip = prism(p.geom, height, z0=p.roof.z_eaves_mm - EPS)
     return roof_solid(
         p.roof.rect_mm,
         p.roof.z_eaves_mm,
@@ -2350,17 +2513,27 @@ def _roof_body(p: Prism) -> m3d.Manifold | None:
     )
 
 
-def _solids(prisms: list[Prism], sink: float) -> list[m3d.Manifold]:
-    """Vertical bodies plus roofs. `sink` pulls a footprint that stands on the plate below it."""
+def _roof_bodies(prisms: list[Prism]) -> list[m3d.Manifold]:
+    """All roofs of a list of prisms. Built once and reused by the flush and the sunk union:
+    a roof sits above the plate, so sinking the bodies never moves it."""
+    roofs = []
+    for p in prisms:
+        if not _is_solid(p):
+            continue
+        roof = _roof_body(p)
+        if roof is not None:
+            roofs.append(roof)
+    return roofs
+
+
+def _bodies(prisms: list[Prism], sink: float) -> list[m3d.Manifold]:
+    """Vertical bodies. `sink` pulls a footprint that stands on the plate below it."""
     out: list[m3d.Manifold] = []
     for p in prisms:
-        if p.geom.area <= 0 or p.height_mm <= p.z0_mm:
+        if not _is_solid(p):
             continue
         bottom = p.z0_mm - sink if p.z0_mm <= 0 else p.z0_mm
         out.append(prism(p.geom, p.height_mm - bottom, z0=bottom))
-        roof = _roof_body(p)
-        if roof is not None:
-            out.append(roof)
     return out
 
 
@@ -2368,16 +2541,20 @@ def build_meshes(scaled: Scaled, spec: FrameSpec) -> MeshSet:
     if not scaled.buildings and not scaled.blocks:
         raise MeshError("No buildings in the selected area.")
 
-    solids = _solids(scaled.buildings, 0.0) + _solids(scaled.blocks, 0.0)
-    if not solids:
+    bodies = _bodies(scaled.buildings, 0.0) + _bodies(scaled.blocks, 0.0)
+    if not bodies:
         raise MeshError("No printable building footprints in the selected area.")
+    # Roofs are hulls and boolean intersections — the two unions below share them instead of
+    # building every roof twice. Blocks never carry a roof.
+    roofs = _roof_bodies(scaled.buildings)
 
     base = plate(spec)
     # Exported part: flush on the plate top, so 3MF parts never overlap.
-    buildings = _check(union(solids), "buildings")
+    buildings = _check(union(bodies + roofs), "buildings")
     # For the single-colour union we sink the buildings slightly so the boolean never relies on
     # a pure face contact at z = 0. Parts that start in the air keep their bottom.
-    buildings_sunk = union(_solids(scaled.buildings, BUILDING_SINK_MM) + _solids(scaled.blocks, BUILDING_SINK_MM))
+    sunk_bodies = _bodies(scaled.buildings, BUILDING_SINK_MM) + _bodies(scaled.blocks, BUILDING_SINK_MM)
+    buildings_sunk = union(sunk_bodies + roofs)
 
     water = roads = None
     cut = recess(scaled.water, spec.water_depth_mm) if scaled.water else None
@@ -2438,7 +2615,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 - Consumes: `prepare.Prepared.blocks/.footprint_coverage` (Task 3), `scale.Scaled.blocks` (Task 5), `spec.PRESETS`, `spec.Preset` (Task 1).
 - Produces:
   - `pipeline.RunResult(paths: ExportPaths, stats: dict[str, float])`
-  - `stats`-Schlüssel: `buildings`, `buildings_individual`, `blocks`, `parts`, `roofs`, `footprint_coverage`, `roads`, `water`, `stl_bytes`, `threemf_bytes`, `nonmanifold_edges`, `degenerate_faces`. `buildings` bleibt erhalten (API, Frontend, Playwright) und ist identisch mit `buildings_individual`.
+  - `stats`-Schlüssel: `buildings`, `buildings_individual`, `blocks`, `parts`, `roofs`, `footprint_coverage`, `roads`, `road_area_mm2`, `water`, `stl_bytes`, `threemf_bytes`, `nonmanifold_edges`, `degenerate_faces`. `buildings` bleibt erhalten (API, Frontend, Playwright) und ist identisch mit `buildings_individual`. `road_area_mm2` ist die Rillenfläche auf der Platte — die Kennzahl, an der die Abnahme sieht, dass die Blockbildung die Straßen nicht aufgefressen hat.
   - `cli.generate` mit `--preset`, `--side`/`--plate` als `float | None` (explizit schlägt Preset), `--roofs/--no-roofs`, `--parts/--no-parts`.
 
 - [ ] **Step 1: Failing Tests schreiben**
@@ -2462,6 +2639,8 @@ def test_run_frankfurt_offline(tmp_path, frankfurt_spec, frankfurt_data):
     assert result.stats["blocks"] >= 1
     assert result.stats["roofs"] > 0  # the fixture has 60 roof:shape buildings
     assert result.stats["roads"] >= 1
+    # The blocks are built around the road corridors, so the grooves survive (spec §6.4).
+    assert result.stats["road_area_mm2"] > 100
     assert result.stats["stl_bytes"] > 10_000
     # Spec §6: the model must carry at least 95 % of the building area in the square.
     assert result.stats["footprint_coverage"] >= 0.95
@@ -2497,7 +2676,15 @@ def run_cli(monkeypatch, tmp_path, args: list[str]) -> tuple[object, object]:
         captured["spec"] = spec
         return RunResult(
             ExportPaths(out_dir / "model.stl", out_dir / "model.3mf", out_dir / "preview.glb"),
-            {"buildings": 3, "blocks": 2, "parts": 1, "roofs": 4, "footprint_coverage": 0.97},
+            {
+                "buildings": 3,
+                "blocks": 2,
+                "parts": 1,
+                "roofs": 4,
+                "roads": 5,
+                "road_area_mm2": 1234.5,
+                "footprint_coverage": 0.97,
+            },
         )
 
     monkeypatch.setattr(cli, "run", fake_run)
@@ -2535,6 +2722,7 @@ def test_generate_prints_the_detail_stats(monkeypatch, tmp_path):
     assert "Blocks: 2" in result.output
     assert "Parts: 1" in result.output
     assert "Roofs: 4" in result.output
+    assert "Roads: 5 (1234 mm²)" in result.output  # .0f rounds 1234.5 to even
     assert "Footprint coverage: 97.0%" in result.output
 ```
 
@@ -2607,6 +2795,9 @@ def run(
         "roofs": sum(1 for b in prepared.buildings if b.roof is not None),
         "footprint_coverage": round(prepared.footprint_coverage, 4),
         "roads": len(prepared.roads),
+        # Groove area on the plate: the number that shows whether the blocks left the streets
+        # intact (spec §6.4). prepared.roads is in metres, so it is scaled here.
+        "road_area_mm2": round(sum(p.area for p in prepared.roads) * spec.scale**2, 1),
         "water": len(prepared.water),
         "stl_bytes": paths.stl.stat().st_size,
         "threemf_bytes": paths.threemf.stat().st_size,
@@ -2688,6 +2879,7 @@ def generate(
     typer.echo(f"Blocks: {int(stats.get('blocks', 0))}")
     typer.echo(f"Parts: {int(stats.get('parts', 0))}")
     typer.echo(f"Roofs: {int(stats.get('roofs', 0))}")
+    typer.echo(f"Roads: {int(stats.get('roads', 0))} ({stats.get('road_area_mm2', 0.0):.0f} mm²)")
     typer.echo(f"Footprint coverage: {stats.get('footprint_coverage', 0.0):.1%}")
     typer.echo(f"Non-manifold edges after vertex merge: {int(stats.get('nonmanifold_edges', 0))}")
     typer.echo(f"Degenerate faces after vertex merge: {int(stats.get('degenerate_faces', 0))}")
@@ -2741,7 +2933,7 @@ Erwartung: `coverage` ≥ 0.95 und `area outside the blocks` ≈ 0. Ist `coverag
 - [ ] **Step 7: CLI-Hilfe prüfen**
 
 Run: `cd backend && uv run skylineframe --help`
-Expected: Optionen `--preset`, `--side`, `--plate`, `--roofs / --no-roofs`, `--parts / --no-parts` sind gelistet.
+Expected: Die Optionsliste zeigt `--preset` mit den Werten `skyline|detail|gross` (Typer rendert die Auswahl je nach Version als `[skyline|detail|gross]` oder `<skyline|detail|gross>`) sowie `--side`, `--plate`, `--roofs / --no-roofs`, `--parts / --no-parts`. Fehlt die Werteliste, ist der Typ von `preset` nicht `Preset | None`.
 
 - [ ] **Step 8: Commit**
 
@@ -3169,8 +3361,8 @@ Den Abschnitt „## CLI" in `README.md` ersetzen durch:
 
 `--side` und `--plate` schlagen das Preset. Zum Vergleichen: `--no-roofs` lässt alle Dächer flach,
 `--no-parts` rendert je Umriss einen Kasten statt der `building:part`-Rücksprünge (beides ist per
-Default an). Die Ausgabe nennt Gebäude, Blöcke, Teile, Dächer und die Flächenabdeckung
-(Gebäudefläche im Modell / Gebäudefläche im Quadrat).
+Default an). Die Ausgabe nennt Gebäude, Blöcke, Teile, Dächer, Straßen (Anzahl und Rillenfläche
+in mm²) und die Flächenabdeckung (Gebäudefläche im Modell / Gebäudefläche im Quadrat).
 ```
 
 Nach dem Abschnitt „## Datenquellen" anhängen:
@@ -3191,7 +3383,7 @@ diesen Hinweis **nicht** selbst in das Modell; wer Drucke verkauft, muss ihn sel
 - [ ] **Step 2: Abnahmelauf Frankfurt Skyline**
 
 Run: `cd backend && uv run skylineframe --lat 50.1106 --lon 8.6821 --preset skyline --mode full --out ../out/frankfurt-skyline`
-Expected: `[fetch] … [export] …`, dann `Buildings:` > 1000, `Blocks:` > 100, `Roofs:` > 100, `Footprint coverage:` ≥ 95,0 %, `Non-manifold edges after vertex merge:` wird ausgegeben, Laufzeit unter drei Minuten.
+Expected: `[fetch] … [export] …`, dann `Buildings:` > 1000, `Blocks:` > 100, `Roofs:` > 100, `Roads:` > 50 mit einer Rillenfläche > 1000 mm² (auf der 100 × 100 mm-Platte; eine Fläche nahe 0 hieße, dass die Blöcke die Straßen überbrückt haben — Spec §6.4), `Footprint coverage:` ≥ 95,0 %, `Non-manifold edges after vertex merge:` wird ausgegeben, Laufzeit unter drei Minuten.
 
 - [ ] **Step 3: Abnahmelauf Frankfurt Detail**
 
@@ -3217,12 +3409,12 @@ In `tasks/todo.md` einen Abschnitt „Review Building Detail Upgrade" anlegen mi
 ```markdown
 ## Review Building Detail Upgrade
 
-| Lauf | Gebäude | Blöcke | Teile | Dächer | Coverage | STL (MB) | Laufzeit |
-|---|---|---|---|---|---|---|---|
-| Frankfurt Skyline (1500 m / 100 mm) | | | | | | | |
-| Frankfurt Detail (800 m / 100 mm) | | | | | | | |
-| Manhattan Midtown (1500 m / 100 mm) | | | | | | | |
-| Frankfurt ohne Dächer/Teile | | | | | | | |
+| Lauf | Gebäude | Blöcke | Teile | Dächer | Straßen (mm²) | Coverage | STL (MB) | Laufzeit |
+|---|---|---|---|---|---|---|---|---|
+| Frankfurt Skyline (1500 m / 100 mm) | | | | | | | | |
+| Frankfurt Detail (800 m / 100 mm) | | | | | | | | |
+| Manhattan Midtown (1500 m / 100 mm) | | | | | | | | |
+| Frankfurt ohne Dächer/Teile | | | | | | | | |
 
 Beobachtungen: …
 ```
@@ -3233,7 +3425,7 @@ Zum Vergleich mit dem MVP: dieser hatte am Frankfurter Default 609 von 2.534 Geb
 
 1. `out/frankfurt-skyline/model.stl` importieren. Erwartung: ein Objekt, 100 × 100 mm, Slicing ohne Warnungen zu nicht-mannigfaltigen Kanten; Dächer als Satteldächer/Walmdächer erkennbar, Blöcke als zusammenhängende Sockel statt einzelner Kästen.
 2. `out/frankfurt-skyline/model.3mf` importieren, alle Objekte markieren → Rechtsklick → „Assemble", je Teil ein Filament. Erwartung: `base`, `buildings`, `water`, `roads` wie bisher.
-3. Sichtprüfung: keine schwebenden Teile über dem Modell (freischwebende `building:part` wurden bis zur Platte verlängert), keine Nadeln auf Dächern, Türme des Bankenviertels mit Rücksprüngen.
+3. Sichtprüfung: keine schwebenden Teile über dem Modell (freischwebende `building:part` wurden bis zur Platte verlängert), keine Nadeln auf Dächern, Türme des Bankenviertels mit Rücksprüngen, und die Straßenrillen laufen durch — Blöcke enden an den Straßen, statt sie zu überbrücken.
 4. Die automatische Reparatur beim 3MF weiter **ablehnen** — sie füllt die Vertiefungen auf.
 
 - [ ] **Step 8: Ergebnis der Slicer-Prüfung ergänzen und committen**
@@ -3256,20 +3448,20 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 | §2.1 Blockverschmelzung | Task 3 (`build_blocks`, `_close`), Task 5 (Extrusion) |
 | §2.2 `building:part` | Task 2 (Query/Parsing), Task 3 (`assign_parts`), Task 5 (`z0_mm`, Stützregel) |
 | §2.3 Dachkörper | Task 2 (`parse_roof`), Task 3 (`resolve_roof`), Task 4 (`roofs.py`), Task 5 (Mesh) |
-| §2.4 Höhenschätzung | Task 2 (`estimate_height_m`), Task 3 (`estimate_missing_heights`) |
+| §2.4 Höhenschätzung | Task 2 (`heights.estimate_height_m`), Task 3 (`estimate_missing_heights`) |
 | §2.5 Presets | Task 6 (CLI), Task 7 (UI) |
 | §2.6 README/ODbL | Task 8 |
-| §3 Datenmodell (`RoofSpec`, `Building`, `Block`) | Task 1 |
+| §3 Datenmodell (`RoofSpec`, `Building`, `Block`, `osm_id: str`) | Task 1 (Felder), Task 2 (`fetch.osm_id`), Task 3/5 (`outline_id`) |
 | §4 Abfrage und Parsing, `height`-Semantik | Task 2 (Parsing), Task 3 (`resolve_roof` löst `height_is_top` auf) |
-| §5 Höhentabelle und Flächenregel | Task 2 |
-| §6.1–6.7 Vorbereitungsreihenfolge | Task 3 |
-| §7 Dachformen, Zuschnitt, Default-Dachhöhe, 0,3-mm-Grenze | Task 3 (Default-Höhe, Rechteck), Task 4 (Körper, Zuschnitt), Task 5 (0,3-mm-Grenze in `_roof_of`) |
-| §8 Mesh (Blöcke, Teile, Versenkung, Skalierung) | Task 5 |
+| §5 Höhentabelle, Flächenregel, eigenes Modul `heights.py` | Task 2 (Modul + `test_heights.py`), Task 3 (Aufruf) |
+| §6.1–6.7 Vorbereitungsreihenfolge, `representative_point`, Close mit Sehnen-Simplify, Blöcke um Straßenkorridore | Task 3 |
+| §7 Dachformen (mansard = hipped, gambrel = gabled), Zuschnitt, Default-Dachhöhe, 0,3-mm-Grenze | Task 3 (Default-Höhe, Rechteck), Task 4 (Körper, Zuschnitt), Task 5 (0,3-mm-Grenze in `_roof_of`) |
+| §8 Mesh (Blöcke, Teile, Versenkung, Skalierung ohne Mindesthöhe für `min_height`/First) | Task 5 (`raw_height_mm` vs. `building_height_mm`) |
 | §9 Presets im Frontend | Task 7 |
 | §10 CLI-Flags | Task 6 |
-| §11 Statistik | Task 6 (Backend), Task 7 (UI-Zeile) |
+| §11 Statistik | Task 6 (Backend, inkl. `road_area_mm2`), Task 7 (UI-Zeile) |
 | §12 Lizenz | Task 8 |
-| §13 Tests | Task 2 (fetch), Task 3 (prepare), Task 4 (roofs), Task 5 (mesh), Task 6 (pipeline), Task 7 (Frontend), Task 8 (Abnahme) |
+| §13 Tests | Task 2 (fetch, heights), Task 3 (prepare), Task 4 (roofs), Task 5 (scale/mesh), Task 6 (pipeline), Task 7 (Frontend), Task 8 (Abnahme) |
 | §14 Kompatibilität | Task 1 (`FrameSpec`), Task 6 (`stats["buildings"]` bleibt, 3MF-Teile unverändert) |
 
 Keine Spec-Anforderung ohne Task.
@@ -3279,11 +3471,16 @@ Keine Spec-Anforderung ohne Task.
 **3. Typkonsistenz**
 
 - `Building` (Task 1) wird in Task 2 (`fetch`), Task 3 (`prepare`), Task 5 (`scale`) mit exakt denselben Feldnamen benutzt: `height_m`, `height_is_top`, `min_height_m`, `roof`, `osm_id`, `is_part`, `outline_id`, `kind`, `eaves_m`, `ridge_m`, `rect`.
+- `osm_id`/`outline_id` sind durchgehend `str` im Format `"way/123"`: erzeugt in Task 2 (`fetch.osm_id`), zugewiesen in Task 3 (`assign_parts`), Schlüssel von `scale._by_outline` in Task 5 (`dict[str, list[Building]]`), und in den Tests von Task 1, 2, 3 und 5 als String geschrieben.
+- `heights.estimate_height_m` hat genau einen Aufrufer (`prepare.estimate_missing_heights`, Task 3) und genau eine Importquelle (`from .heights import estimate_height_m`); `fetch.py` importiert das Modul nicht, und `test_heights.py` prüft, dass `heights.py` keine Paket-Imports enthält.
+- `scale.raw_height_mm` (ohne Mindesthöhe) wird für `z0_mm` und den First benutzt, `scale.building_height_mm` (mit Mindesthöhe) für Traufe und Blockhöhe — beide in Task 5 definiert, nur dort benutzt.
 - `RoofSpec(shape, height_m, direction_deg)` — `height_m == 0.0` heißt in Task 2 „nicht getaggt" und wird in Task 3 (`default_roof_height_m`) gefüllt; Task 5 liest danach nur noch `shape` und `direction_deg`, die Höhe steckt in `eaves_m`/`ridge_m`.
 - `Block(geom, height_m)` aus Task 1 wird in Task 3 erzeugt und in Task 5 zu `Prism(geom, height_mm)` skaliert.
 - `Prism(geom, height_mm, z0_mm, roof)` und `ScaledRoof(rect_mm, shape, z_eaves_mm, z_ridge_mm, direction_deg)` heißen in Task 5 (`scale.py`), Task 5 (`mesh.py`) und in beiden Testdateien gleich.
 - `roof_solid(rect_mm, z_eaves_mm, z_ridge_mm, shape, direction_deg=None, clip=None)` wird in Task 4 definiert und in Task 5 (`mesh._roof_body`) mit genau dieser Reihenfolge aufgerufen; `MIN_ROOF_MM` wird von `scale.py` und `roofs.py` aus derselben Quelle (`roofs`) gelesen.
 - `prepare.Prepared(buildings, blocks, roads, water, footprint_coverage)` — Feldreihenfolge ist rückwärtskompatibel zu den bestehenden Keyword-Aufrufen in `test_scale.py`.
-- `stats`-Schlüssel sind in Task 6 (`pipeline`), Task 6 (`cli`), Task 7 (`main.ts`, Playwright) identisch: `buildings`, `blocks`, `roofs`, `parts`, `footprint_coverage`.
+- `stats`-Schlüssel sind in Task 6 (`pipeline`), Task 6 (`cli`), Task 7 (`main.ts`, Playwright) identisch: `buildings`, `blocks`, `roofs`, `parts`, `roads`, `road_area_mm2`, `footprint_coverage`.
+- `prepare.road_corridors` (Task 3) hat genau zwei Abnehmer, beide in `prepare.prepare`: `build_blocks(..., corridors)` und `_road_areas(corridors, blocked, ...)` — dieselbe Geometrie, damit Blockrand und Rillenrand zusammenpassen.
+- `mesh._bodies` / `mesh._roof_bodies` (Task 5) ersetzen das frühere `_solids`; beide Unionen (`buildings`, `buildings_sunk`) benutzen dieselbe Roof-Liste.
 - `PRESETS` existiert zweimal (Python in `spec.py`, TypeScript in `presets.ts`) mit denselben Werten; beide Kopien tragen einen Kommentar, der auf die andere verweist, und `controls.test.ts` prüft die Tabelle gegen die Spec-Werte.
-- `STRtree.query(..., predicate="within")` wird in Task 3 zweimal benutzt (Teil → Umriss, Grundriss → Block) — beide Male mit der geprüften Richtung `eingabe.predicate(baum_geom)`.
+- `STRtree.query(..., predicate="within")` wird in Task 3 zweimal benutzt (Teil → Umriss, Grundriss → Block) — beide Male mit `representative_point()` als Eingabe und mit der geprüften Richtung `eingabe.predicate(baum_geom)`.
