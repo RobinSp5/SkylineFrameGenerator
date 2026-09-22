@@ -86,8 +86,9 @@ def _roof_body(p: Prism) -> m3d.Manifold | None:
 
     The clip prism reaches EPS below the eaves and EPS above the ridge: its bottom face must
     not be coplanar with the bottom face of the roof body, or the intersection has to resolve
-    two coincident faces. Overshooting also leaves the roof overlapping the body it sits on
-    instead of touching it face to face.
+    two coincident faces. The roof itself keeps the exact eaves plane roofs.py gives it; what
+    removes the face contact with the wall below is the body, whose top _bodies raises by EPS
+    into the roof.
     """
     if p.roof is None:
         return None
@@ -117,13 +118,20 @@ def _roof_bodies(prisms: list[Prism]) -> list[m3d.Manifold]:
 
 
 def _bodies(prisms: list[Prism], sink: float) -> list[m3d.Manifold]:
-    """Vertical bodies. `sink` pulls a footprint that stands on the plate below it."""
+    """Vertical bodies. `sink` pulls a footprint that stands on the plate below it.
+
+    A body that carries a roof is raised by EPS into it: the roof starts exactly at the eaves,
+    so without the overlap the two solids would only touch face to face at that plane and the
+    union would have to resolve coincident faces. EPS is 0.01 mm, well below what a nozzle can
+    resolve, and it never shows: the roof covers the footprint it stands on.
+    """
     out: list[m3d.Manifold] = []
     for p in prisms:
         if not _is_solid(p):
             continue
         bottom = p.z0_mm - sink if p.z0_mm <= 0 else p.z0_mm
-        out.append(prism(p.geom, p.height_mm - bottom, z0=bottom))
+        top = p.height_mm + EPS if p.roof is not None else p.height_mm
+        out.append(prism(p.geom, top - bottom, z0=bottom))
     return out
 
 

@@ -72,8 +72,9 @@ def test_sliver_footprint_is_dropped():
     out = prepare(feats, spec())
     assert len(out.buildings) == 1
     assert out.buildings[0].geom.bounds == pytest.approx((20, 20, 40, 40))
-    # abs: the close reproduces the outline only to the tolerance of its own chord simplify.
-    assert [b.geom.bounds for b in out.blocks] == [pytest.approx((20, 20, 40, 40), abs=0.01)]
+    # The block is the house plus the BLOCK_HAIR_MM the close leaves it (0.02 mm => 0.2 m at
+    # this scale); abs: the close reproduces the outline only to its own chord simplify.
+    assert [b.geom.bounds for b in out.blocks] == [pytest.approx((19.8, 19.8, 40.2, 40.2), abs=0.1)]
 
 
 def test_multipolygon_building_is_split():
@@ -186,10 +187,12 @@ def test_water_is_cut_out_under_buildings_and_roads():
     water = unary_union(out.water)
     assert water.intersection(box(-10, -10, 10, 10)).area == pytest.approx(0, abs=1e-6)
     assert water.intersection(unary_union(out.roads)).area == pytest.approx(0, abs=1e-6)
-    # The building blocks 20x20 m and the road a 10 m wide strip, each grown by the 0.5 m
-    # (0.05 mm in print space) clearance that keeps recess walls off the walls that bound them.
-    # The weld is a shape operation, so the outline is only accurate to its own tolerance.
-    assert water.area == pytest.approx(200 * 200 - 21 * 21 - 200 * 11, rel=1e-4)
+    # What blocks the water under the house is its block: 20x20 m plus the 0.2 m block hair,
+    # and the road is a 10 m wide strip; each is then grown by the 0.5 m (0.05 mm in print
+    # space) clearance that keeps recess walls off the walls that bound them. The weld is a
+    # shape operation and the hair rounds the block corners, so the outline is only accurate
+    # to its own tolerance.
+    assert water.area == pytest.approx(200 * 200 - 21.4 * 21.4 - 200 * 11, rel=2e-4)
 
 
 def test_water_is_clipped_to_square():
@@ -312,10 +315,11 @@ def test_three_row_houses_form_one_block():
     )
     out = prepare(feats, spec())
     assert len(out.blocks) == 1
-    # 31 x 10 = 310 including both gaps, minus the ~1.8 m² the chord simplify shaves off the
-    # welded corners (measured 308.20 with shapely 2.1.2). How much a corner loses depends on
-    # where the ring the close produced happens to start, so the tolerance is generous.
-    assert out.blocks[0].geom.area == pytest.approx(308.2, abs=1.5)
+    # 31 x 10 = 310 including both gaps, plus the ~8 m² the 0.2 m block hair adds around the
+    # 82 m of outline, minus the ~1.8 m² the chord simplify shaves off the welded corners
+    # (measured 317.80 with shapely 2.1.2). How much a corner loses depends on where the ring
+    # the close produced happens to start, so the tolerance is generous.
+    assert out.blocks[0].geom.area == pytest.approx(317.8, abs=1.5)
     # equal areas => the 25th percentile is the lowest of the three eaves heights
     assert out.blocks[0].height_m == pytest.approx(12.0)
     assert len(out.buildings) == 3  # each house is printable on its own as well
@@ -361,9 +365,10 @@ def test_a_street_keeps_the_two_rows_in_separate_blocks():
     out = prepare(feats, spec(mode=Mode.full))
 
     assert len(out.blocks) == 2
-    # The corridor covers y in [-5, 5], so each block starts where the street ends.
-    assert sorted(round(b.geom.bounds[1], 2) for b in out.blocks) == [-15.0, 5.0]
-    assert sorted(round(b.geom.bounds[3], 2) for b in out.blocks) == [-5.0, 15.0]
+    # The corridor covers y in [-5, 5], so each block starts where the street ends — minus the
+    # 0.2 m block hair, which the chord simplify rounds back to about 0.19 m.
+    assert sorted(b.geom.bounds[1] for b in out.blocks) == pytest.approx([-15.2, 4.8], abs=0.05)
+    assert sorted(b.geom.bounds[3] for b in out.blocks) == pytest.approx([-4.8, 15.2], abs=0.05)
 
     roads = unary_union(out.roads)
     # Buildings keep precedence over roads, blocks too: neither is grooved.

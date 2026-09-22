@@ -143,8 +143,10 @@ def test_part_standing_on_a_lower_part_is_one_body():
 def test_roof_volume_is_added_on_top_of_the_body():
     roof = ScaledRoof(rect_mm=RECT_MM, shape="gabled", z_eaves_mm=2.0, z_ridge_mm=5.0)
     ms = build_meshes(Scaled(buildings=[Prism(box(-5, -3, 5, 3), 2.0, roof=roof)]), spec())
-    # body 10 x 6 x 2 = 120, gabled roof over the same rectangle at 3 mm = 90
-    assert ms.buildings.volume() == pytest.approx(120 + 90, rel=1e-6)
+    # body 10 x 6 x 2 = 120, gabled roof over the same rectangle at 3 mm = 90.
+    # rel=1e-4: the body reaches EPS into the roof, so the union keeps the sliver of body that
+    # the sloping roof does not cover — a second-order term of about base length x EPS^2.
+    assert ms.buildings.volume() == pytest.approx(120 + 90, rel=1e-4)
     xmin, ymin, zmin, xmax, ymax, zmax = ms.buildings.bounding_box()
     assert zmax == pytest.approx(5.0)
     tm = to_trimesh(ms.single)
@@ -155,7 +157,8 @@ def test_roof_is_clipped_to_a_footprint_that_is_smaller_than_its_rectangle():
     # The footprint is the left half of the rectangle, so only half the roof survives.
     roof = ScaledRoof(rect_mm=RECT_MM, shape="gabled", z_eaves_mm=2.0, z_ridge_mm=5.0)
     ms = build_meshes(Scaled(buildings=[Prism(box(-5, -3, 0, 3), 2.0, roof=roof)]), spec())
-    assert ms.buildings.volume() == pytest.approx(5 * 6 * 2 + 45, rel=1e-6)
+    # rel=1e-4 for the same EPS overlap as in the test above.
+    assert ms.buildings.volume() == pytest.approx(5 * 6 * 2 + 45, rel=1e-4)
 
 
 def test_everything_together_stays_watertight():

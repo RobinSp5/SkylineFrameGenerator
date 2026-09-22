@@ -24,6 +24,9 @@ SIMPLIFY_TOLERANCE_MM = 0.05
 # Fraction of the weld radius used to collapse the chords its round joins leave behind.
 ARC_SIMPLIFY_FRACTION = 0.1
 BLOCK_PERCENTILE = 0.25  # spec §6.4
+# Blocks stay a hair wider than the pure close so individual building walls are strictly inside
+# the block volume below block height; avoids coincident faces in the 3D union.
+BLOCK_HAIR_MM = 0.02
 ROOF_RECT_RATIO = 0.85  # spec §6.6
 ROOF_SLOPE_FACTOR = 0.29  # 30° over the half width (spec §7)
 ROOF_HEIGHT_MIN_M = 2.0
@@ -229,8 +232,15 @@ def weighted_percentile(values: list[float], weights: list[float], q: float) -> 
     return pairs[-1][0]
 
 
-def _close(area: BaseGeometry, radius_m: float) -> BaseGeometry:
+def _close(area: BaseGeometry, radius_m: float, hair_m: float = 0.0) -> BaseGeometry:
     """Morphological close with round joins: dilate, then erode (spec §6.4).
+
+    Eroding by `hair_m` less than the dilation leaves the block that much wider than the pure
+    close. A block is the welded hull of the very footprints it contains, so without the hair
+    its wall is exactly the wall of every bulky building in it: the union of the two solids
+    then has to resolve coincident vertical faces and leaves degenerate faces and zero-volume
+    shells behind. The hair is 0.02 mm in print space — two orders of magnitude below what a
+    nozzle can resolve, and enough to put every building wall strictly inside the block.
 
     The round joins are approximated by chords, which multiplies the vertex count of every
     block outline without adding a shape the printer could resolve, so they are collapsed
@@ -238,7 +248,7 @@ def _close(area: BaseGeometry, radius_m: float) -> BaseGeometry:
     """
     if area.is_empty:
         return area
-    closed = area.buffer(radius_m, join_style="round").buffer(-radius_m, join_style="round")
+    closed = area.buffer(radius_m, join_style="round").buffer(-(radius_m - hair_m), join_style="round")
     return closed.simplify(radius_m * ARC_SIMPLIFY_FRACTION, preserve_topology=True)
 
 
@@ -264,11 +274,15 @@ def build_blocks(
     min_area_m2: float,
     half_feature_m: float,
     corridors: BaseGeometry,
+    square: Polygon,
 ) -> list[Block]:
     """One Block per connected group of footprints, at the weighted 25th percentile eaves height.
 
     A block that is itself unprintable (a single shed in the middle of a field) is dropped —
     it would be a sliver in the mesh, and footprint_coverage reports what that costs.
+
+    The result is clipped to the square: the block hair widens a block that reaches the edge of
+    the model past the plate, and the plate is exactly plate_size_mm wide.
     """
     if not footprints:
         return []
@@ -278,7 +292,7 @@ def build_blocks(
         # most inner-city streets. Taking the road corridors out of the input first keeps the
         # blocks on their own side of the street (spec §6.4).
         area = area.difference(corridors)
-    closed = _close(area, close_m)
+    closed = _close(area, close_m, BLOCK_HAIR_MM / spec.scale).intersection(square)
     polys = [p for p in polygons_of(closed) if _is_printable(p, min_area_m2, half_feature_m)]
     if not polys:
         return []
@@ -392,7 +406,7 @@ def prepare(features: Features, spec: FrameSpec) -> Prepared:
     full = spec.mode == Mode.full
     # Only the full mode has roads at all; in simple mode nothing is subtracted (spec §6.4).
     corridors = road_corridors(features.roads, spec, square) if full else Polygon()
-    blocks = build_blocks(footprints, spec, close_m, min_area_m2, half_feature_m, corridors)
+    blocks = build_blocks(footprints, spec, close_m, min_area_m2, half_feature_m, corridors, square)
     buildings = [b for b in footprints if _is_printable(b.geom, min_area_m2, half_feature_m)]
     coverage = _coverage(footprints, blocks, buildings)
     if not full:
