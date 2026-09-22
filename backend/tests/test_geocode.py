@@ -79,8 +79,11 @@ def test_search_backs_off_after_429():
     )
     with pytest.raises(GeocodeError):
         g.search("Berlin")
-    g.search("Hamburg")
-    assert sleeps[-1] == pytest.approx(61.0, abs=0.01)
+    # Inside the backoff window the next search fails at once: parking a thread-pool worker for
+    # a minute would exhaust the pool long before Nominatim starts answering again.
+    with pytest.raises(GeocodeError, match="rate limited"):
+        g.search("Hamburg")
+    assert sleeps == []
 
 
 def test_search_rejects_a_busy_lock_instead_of_blocking():

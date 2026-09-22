@@ -70,6 +70,10 @@ class Geocoder:
 
         if self._last_request is not None:
             wait = self._min_interval_s - (self._now() - self._last_request)
+            if wait > self._min_interval_s:
+                # Only a backoff window pushes the wait beyond the polite interval. Sitting it
+                # out would hold a thread-pool worker for a minute, so the caller is told instead.
+                raise GeocodeError(f"Place search is rate limited; try again in {int(wait)} s.")
             if wait > 0:
                 self._sleep(wait)
         self._last_request = self._now()
