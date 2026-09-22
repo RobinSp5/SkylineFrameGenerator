@@ -82,3 +82,10 @@ Das Plattenmaß wird in beiden Fällen exakt getroffen (Toleranz 0,01 mm eingeha
 - [ ] `out/frankfurt/model.stl` importieren: ein Objekt, 100 × 100 mm Grundfläche, Slicing ohne Warnungen zu nicht-mannigfaltigen Kanten.
 - [ ] `out/frankfurt/model.3mf` importieren: vier Objekte `base`, `buildings`, `water`, `roads`; alle markieren → Rechtsklick → „Assemble“ → ein Objekt mit vier Teilen, Einleger bündig in den Vertiefungen (nicht auf der Druckplatte); je Teil ein Filament (weiß, weiß, blau, grau); Slicing ohne Fehler. Falls Bambu Studio die Teile beim Assemble verschiebt: Ergebnis dokumentieren und als Alternative pro Teil ein STL exportieren und gemeinsam importieren (Phase-2-Kandidat).
 - [ ] Sichtprüfung im Slicer: Straßen als Rillen erkennbar, Main als Vertiefung, Gebäude am Plattenrand sauber abgeschnitten.
+
+### Nach der Fix-Welle (2026-09-22, Commits 60aaad3..51a86f7)
+| Datei | Nicht-mannigfaltige Kanten (nach Vertex-Merge) | davon z ≤ 0 (Platte) | Degenerierte Dreiecke |
+|---|---|---|---|
+| Frankfurt STL | 1169 → 51 | 1113 → 0 | 1129 → 2 |
+| Berlin STL | 36 → 36 | 0 → 0 | 5 → 5 |
+Restliche geteilte Kanten liegen ausschließlich an Gebäudeecken (z > 0), die sich berühren; Slicer verschmelzen diese. Beim 3MF-Import in Bambu Studio eine angebotene Auto-Reparatur ablehnen (Vertiefungen). Weitere Änderungen: Overpass-Elementlimit 250.000, Höhen-Plausibilität (> 1000 m → Default, Deckel = Plattengröße), Geocoder bricht im Backoff sofort ab, `AreaError` statt `ValueError`, `extra="forbid"` in FrameSpec. Tests: Backend 127, Frontend 18, Playwright 2.
