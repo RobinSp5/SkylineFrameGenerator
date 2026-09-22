@@ -97,6 +97,7 @@ def assign_parts(buildings: list[Building], default_height_m: float) -> list[Bui
     A part belongs to the outline that contains an interior point of it. Outlines with at least
     one part are not extruded as a whole any more: the parts are rendered, and what they leave
     of the outline becomes one remainder footprint per polygon at the outline's own height.
+    A part with no outline is treated as a building of its own, height estimate included.
     """
     outlines = [b for b in buildings if not b.is_part]
     parts = [b for b in buildings if b.is_part]
@@ -117,7 +118,10 @@ def assign_parts(buildings: list[Building], default_height_m: float) -> list[Bui
                 hit = int(found[0])
         if hit is None:
             if p.height_m <= 0:
-                p.height_m = default_height_m
+                # A part whose outline is missing from the data is an ordinary building
+                # (spec §6.3), so it gets the same type/area estimate as any untagged outline
+                # and falls back to the spec default only if that estimate has nothing to say.
+                p.height_m = estimate_height_m(p.kind, p.geom.area) or default_height_m
             continue
         owner = outlines[hit]
         p.outline_id = owner.osm_id

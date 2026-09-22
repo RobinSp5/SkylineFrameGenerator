@@ -229,8 +229,8 @@ def outline(geom, height=20.0, osm_id="way/1") -> Building:
     return Building(geom, height_m=height, height_is_top=True, osm_id=osm_id, kind="yes")
 
 
-def part(geom, height=0.0, osm_id="way/2", min_height=0.0) -> Building:
-    return Building(geom, height_m=height, height_is_top=height > 0, osm_id=osm_id, is_part=True, min_height_m=min_height, kind="yes")
+def part(geom, height=0.0, osm_id="way/2", min_height=0.0, kind="yes") -> Building:
+    return Building(geom, height_m=height, height_is_top=height > 0, osm_id=osm_id, is_part=True, min_height_m=min_height, kind=kind)
 
 
 def test_part_inside_outline_replaces_it_together_with_the_remainder():
@@ -253,12 +253,22 @@ def test_part_without_height_inherits_the_outline_height():
 
 
 def test_part_without_outline_is_treated_like_a_building():
-    feats = Features(buildings=[part(box(0, 0, 20, 20))])
+    # An orphan part is an ordinary building, so it gets the height estimate and not the bare
+    # spec default. 21 x 21 = 441 m² sits clear of the 400 m² boundary of the area rule => 12 m.
+    feats = Features(buildings=[part(box(0, 0, 21, 21))])
     out = prepare(feats, spec())
     assert len(out.buildings) == 1
     p = out.buildings[0]
     assert p.outline_id is None
-    assert p.height_m == 8.0  # spec default_building_height_m
+    assert p.height_m == 12.0
+
+
+def test_part_without_outline_is_estimated_from_its_own_type():
+    # The type table wins over the area rule for an orphan part too.
+    out = prepare(Features(buildings=[part(box(0, 0, 21, 21), kind="church")]), spec())
+    assert len(out.buildings) == 1
+    assert out.buildings[0].outline_id is None
+    assert out.buildings[0].height_m == 18.0
 
 
 def test_parts_can_be_switched_off():
