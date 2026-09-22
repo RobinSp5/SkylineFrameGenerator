@@ -89,3 +89,15 @@ Das Plattenmaß wird in beiden Fällen exakt getroffen (Toleranz 0,01 mm eingeha
 | Frankfurt STL | 1169 → 51 | 1113 → 0 | 1129 → 2 |
 | Berlin STL | 36 → 36 | 0 → 0 | 5 → 5 |
 Restliche geteilte Kanten liegen ausschließlich an Gebäudeecken (z > 0), die sich berühren; Slicer verschmelzen diese. Beim 3MF-Import in Bambu Studio eine angebotene Auto-Reparatur ablehnen (Vertiefungen). Weitere Änderungen: Overpass-Elementlimit 250.000, Höhen-Plausibilität (> 1000 m → Default, Deckel = Plattengröße), Geocoder bricht im Backoff sofort ab, `AreaError` statt `ValueError`, `extra="forbid"` in FrameSpec. Tests: Backend 127, Frontend 18, Playwright 2.
+
+## Phase 2 – Building Detail Upgrade
+Plan: docs/superpowers/plans/2026-09-22-building-detail-upgrade.md
+Spec: docs/superpowers/specs/2026-09-22-building-detail-design.md
+- [ ] Task 1: Datenmodell, Spec-Felder und Projektion
+- [ ] Task 2: Fetch — building:part, Dach-Tags, Höhenschätzung, neue Fixtures (einmalig Netz)
+- [ ] Task 3: Prepare — Höhen auffüllen, Teile zuordnen, Blöcke bilden, Dächer vorbereiten
+- [ ] Task 4: Dachkörper (roofs.py)
+- [ ] Task 5: Skalierung und Mesh — Blöcke, Teile, Dächer
+- [ ] Task 6: Pipeline, Statistik, CLI-Flags und API-Durchreichung
+- [ ] Task 7: Frontend — Presets und neue Statuszeile
+- [ ] Task 8: README und Abnahme (Frankfurt Skyline/Detail, Manhattan; Bambu Studio manuell)
