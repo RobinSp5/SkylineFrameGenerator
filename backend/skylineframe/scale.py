@@ -4,11 +4,18 @@ from dataclasses import dataclass, field
 
 import shapely.affinity
 from shapely.geometry import Polygon
+from shapely.ops import unary_union
 
 from .features import Building
 from .prepare import Prepared
 from .roofs import MIN_ROOF_MM
 from .spec import FrameSpec
+
+# Share of a part's footprint that has to rest on lower bodies of the same outline before the
+# part may start in the air (spec §8). Two towers of one complex often share a single corner
+# node, so any positive overlap would accept a contact of a few hundredths of a square
+# millimetre as a foundation and print a tower balancing on a point.
+SUPPORT_FRACTION = 0.25
 
 
 @dataclass
@@ -68,19 +75,30 @@ def _by_outline(buildings: list[Building]) -> dict[str, list[Building]]:
 
 
 def _is_supported(b: Building, siblings: list[Building]) -> bool:
-    """True when another footprint of the same outline reaches up to the bottom of `b`.
+    """True when the footprints of the same outline under `b` carry enough of it (spec §8).
 
     Parts start in the air by design (a setback tower stands on its base). A part with nothing
     below it is a tagging artefact, and printing it floating is impossible, so it is extended
-    down to the plate instead (spec §8).
+    down to the plate instead.
+
+    "Under `b`" means the sibling's body spans the bottom plane of `b`. All of them are unioned
+    before the overlap is measured, so a part that rests on two neighbours each carrying a third
+    of it is supported even though neither would qualify alone. The union has to cover at least
+    SUPPORT_FRACTION of the part: a shared corner or a hairline seam is a point contact, not a
+    foundation, and a tower standing on one would snap off the plate.
     """
-    for other in siblings:
-        if other is b:
-            continue
-        if other.min_height_m < b.min_height_m and other.eaves_m >= b.min_height_m:
-            if other.geom.intersection(b.geom).area > 0:
-                return True
-    return False
+    area = b.geom.area
+    if area <= 0:  # a degenerate footprint has nothing to rest on and nothing to carry
+        return False
+    below = [
+        other
+        for other in siblings
+        if other is not b and other.min_height_m < b.min_height_m and other.eaves_m >= b.min_height_m
+    ]
+    if not below:
+        return False
+    carried = unary_union([o.geom for o in below]).intersection(b.geom).area
+    return carried / area >= SUPPORT_FRACTION
 
 
 def _roof_of(b: Building, eaves_mm: float, spec: FrameSpec) -> ScaledRoof | None:

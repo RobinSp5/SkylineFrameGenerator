@@ -2,7 +2,9 @@ import pytest
 from shapely.geometry import box
 
 from skylineframe.features import Block, Building, RoofSpec
-from skylineframe.prepare import Prepared
+from skylineframe.fetch import parse_overpass
+from skylineframe.prepare import Prepared, prepare
+from skylineframe.project import project_features
 from skylineframe.scale import building_height_mm, raw_height_mm, scale_features
 from skylineframe.spec import FrameSpec
 
@@ -107,6 +109,53 @@ def test_part_next_to_its_sibling_is_not_supported_by_it():
     beside = building(box(10, -50, 100, 50), height_m=80.0, eaves_m=80.0, ridge_m=80.0, min_height_m=40.0, is_part=True, outline_id="way/7")
     out = scale_features(Prepared(buildings=[lower, beside]), spec())
     assert out.buildings[1].z0_mm == 0.0
+
+
+def test_part_on_a_point_contact_is_not_supported():
+    # The sibling below covers 10 % of the part — a ledge, not a foundation. Below
+    # SUPPORT_FRACTION the part is grounded instead of balancing on that sliver (spec §8).
+    ledge = building(box(-50, 0, 10, 100), height_m=40.0, eaves_m=40.0, ridge_m=40.0, outline_id="way/7")
+    tower = building(
+        box(0, 0, 100, 100), height_m=80.0, eaves_m=80.0, ridge_m=80.0, min_height_m=40.0, is_part=True, outline_id="way/7"
+    )
+    out = scale_features(Prepared(buildings=[ledge, tower]), spec())
+    assert out.buildings[1].z0_mm == 0.0
+
+
+def test_part_carried_by_two_siblings_is_lifted():
+    # 30 % of the part rests on each of the two bodies below it, so it keeps its min_height.
+    west = building(box(-50, 0, 30, 100), height_m=40.0, eaves_m=40.0, ridge_m=40.0, outline_id="way/7")
+    east = building(box(70, 0, 150, 100), height_m=40.0, eaves_m=40.0, ridge_m=40.0, outline_id="way/7")
+    tower = building(
+        box(0, 0, 100, 100), height_m=80.0, eaves_m=80.0, ridge_m=80.0, min_height_m=40.0, is_part=True, outline_id="way/7"
+    )
+    out = scale_features(Prepared(buildings=[west, east, tower]), spec())
+    assert out.buildings[2].z0_mm == pytest.approx(6.0)  # 40 m x 0.15
+
+
+def test_support_is_measured_on_the_union_of_the_bodies_below():
+    # 15 % each, so neither sibling reaches SUPPORT_FRACTION alone; together they carry 30 %.
+    west = building(box(-50, 0, 15, 100), height_m=40.0, eaves_m=40.0, ridge_m=40.0, outline_id="way/7")
+    east = building(box(85, 0, 150, 100), height_m=40.0, eaves_m=40.0, ridge_m=40.0, outline_id="way/7")
+    tower = building(
+        box(0, 0, 100, 100), height_m=80.0, eaves_m=80.0, ridge_m=80.0, min_height_m=40.0, is_part=True, outline_id="way/7"
+    )
+    out = scale_features(Prepared(buildings=[west, east, tower]), spec())
+    assert out.buildings[2].z0_mm == pytest.approx(6.0)
+    # One of the two alone stays below the threshold, so the union is what makes the difference.
+    assert scale_features(Prepared(buildings=[west, tower]), spec()).buildings[1].z0_mm == 0.0
+
+
+def test_commerzbank_parts_touching_only_at_a_corner_are_grounded(bankenviertel_data, bankenviertel_spec):
+    # The two upper Commerzbank parts share ~0.05 mm² of footprint with the bodies below them,
+    # which used to be enough to start them in the air (spec §8).
+    features = project_features(parse_overpass(bankenviertel_data, bankenviertel_spec), bankenviertel_spec)
+    prepared = prepare(features, bankenviertel_spec)
+    scaled = scale_features(prepared, bankenviertel_spec)
+    floating = {"way/279967653", "way/279967656"}
+    z0 = {b.osm_id: p.z0_mm for b, p in zip(prepared.buildings, scaled.buildings) if b.osm_id in floating}
+    assert set(z0) == floating  # both survive prepare, so the assertion below has something to say
+    assert list(z0.values()) == [0.0, 0.0]
 
 
 def test_part_whose_base_is_above_its_own_top_falls_back_to_the_plate():
