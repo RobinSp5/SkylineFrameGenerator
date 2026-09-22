@@ -188,11 +188,12 @@ def test_water_is_cut_out_under_buildings_and_roads():
     water = unary_union(out.water)
     assert water.intersection(box(-10, -10, 10, 10)).area == pytest.approx(0, abs=1e-6)
     assert water.intersection(unary_union(out.roads)).area == pytest.approx(0, abs=1e-6)
-    # The water surface is taken out of the block input, and this house stands entirely inside
-    # it, so it has no block: what stops the water under it is the house itself, 20x20 m, and
-    # the road is a 10 m wide strip. Each is then grown by the 0.5 m (0.05 mm in print space)
-    # clearance that keeps recess walls off the walls that bound them. The weld is a shape
-    # operation, so the outline is only accurate to its own tolerance.
+    # This house stands entirely inside the water surface, so its block is cut back to exactly
+    # the footprint — the 0.2 m block hair lies over open water and goes with it. What stops
+    # the water under the house is therefore 20x20 m and not the 20.4x20.4 m a block on dry
+    # land would have, and the road is a 10 m wide strip. Each is then grown by the 0.5 m
+    # (0.05 mm in print space) clearance that keeps recess walls off the walls that bound them.
+    # The weld is a shape operation, so the outline is only accurate to its own tolerance.
     assert water.area == pytest.approx(200 * 200 - 21 * 21 - 200 * 11, rel=2e-4)
 
 
@@ -412,10 +413,10 @@ def test_a_street_keeps_the_two_rows_in_separate_blocks():
 
 
 def test_a_canal_keeps_the_two_rows_in_separate_blocks():
-    # The same shape as the street test with a 10 m canal instead of a road. The rows overhang
-    # the bank by 2 m, so with the water surface left in the block input the close (radius 4 m,
-    # bridges anything below 8 m) welds both banks into one block — and that block then cuts
-    # the canal recess in two (spec §6.4).
+    # The same shape as the street test with a 10 m canal instead of a road. The close (radius
+    # 4 m, bridges anything below 8 m) welds the two rows across the 6 m of open water between
+    # their overhangs; cutting `water - footprints` out of the closed area removes that bridge
+    # again, because a bridge across a canal is by construction water with nothing on it.
     houses = [
         box(-30, 3, -18, 15), box(-12, 3, 0, 15),  # north bank
         box(-30, -15, -18, -3), box(-12, -15, 0, -3),  # south bank
@@ -424,18 +425,34 @@ def test_a_canal_keeps_the_two_rows_in_separate_blocks():
     out = prepare(feats, spec(mode=Mode.full))
 
     assert len(out.blocks) == 2
-    # Each block starts where the canal ends, minus the 0.2 m block hair.
-    assert sorted(b.geom.bounds[1] for b in out.blocks) == pytest.approx([-15.2, 4.8], abs=0.05)
-    assert sorted(b.geom.bounds[3] for b in out.blocks) == pytest.approx([-4.8, 15.2], abs=0.05)
+    # Each block keeps the 2 m its houses overhang the bank — they stand in the water and the
+    # block layer carries them — and stops at the last footprint, not at the kerb of the canal.
+    assert sorted(b.geom.bounds[1] for b in out.blocks) == pytest.approx([-15.2, 3.0], abs=0.05)
+    assert sorted(b.geom.bounds[3] for b in out.blocks) == pytest.approx([-3.0, 15.2], abs=0.05)
+    assert len(out.buildings) == 4 and out.footprint_coverage == pytest.approx(1.0, abs=1e-3)
 
     assert len(out.water) == 1  # one canal, not two pools either side of a block across it
     water = out.water[0]
     assert water.intersection(unary_union([b.geom for b in out.blocks])).area == pytest.approx(0, abs=1e-6)
-    # 200 x 10 = 2000 m² of canal inside the square, and only the banks are taken out of it:
-    # the four houses overhang it by 2 m over 12 m each and the blocks reach 0.2 m into it,
-    # 96.2 m² together, grown by the 0.5 m recess clearance to 131.5 m². Measured 1868.85 with
-    # shapely 2.1.2; the weld reproduces the outline only to its own tolerance.
-    assert water.area == pytest.approx(2000 - 131.5, rel=1e-3)
+    assert water.bounds == pytest.approx((-100, -5, 100, 5), abs=0.01)
+    # 200 x 10 = 2000 m² of canal inside the square, and what it loses is only what stands in
+    # it: the four houses overhang it by 2 m over 12 m each, 96.0 m², grown by the 0.5 m
+    # (0.05 mm in print space) recess clearance to 135.3 m². Measured 1865.01 with shapely
+    # 2.1.2; the weld reproduces the outline only to its own tolerance.
+    assert water.area == pytest.approx(2000 - 135.3, rel=1e-3)
+
+
+def test_a_house_standing_in_the_water_keeps_its_block():
+    # Water is subtracted from the closed block area, not from the footprints that go into it,
+    # so a pier or a riverbank house does not disappear from the block layer (spec §6.4). The
+    # block stops exactly at the footprint: the 0.2 m block hair lies over open water and is
+    # cut away with the rest of the canal.
+    feats = Features(buildings=[bld(box(-10, -10, 10, 10))], water=[Water(box(-100, -100, 100, 100))])
+    out = prepare(feats, spec(mode=Mode.full))
+    assert len(out.blocks) == 1
+    assert out.blocks[0].geom.bounds == pytest.approx((-10, -10, 10, 10), abs=0.05)
+    assert len(out.buildings) == 1
+    assert out.footprint_coverage == pytest.approx(1.0, abs=1e-3)
 
 
 def test_block_around_a_single_house_is_not_split_without_roads():

@@ -284,7 +284,8 @@ def build_blocks(
     close_m: float,
     min_area_m2: float,
     half_feature_m: float,
-    barriers: BaseGeometry,
+    corridors: BaseGeometry,
+    waters: BaseGeometry,
     square: Polygon,
 ) -> list[Block]:
     """One Block per connected group of footprints, at the weighted 25th percentile eaves height.
@@ -297,19 +298,25 @@ def build_blocks(
     metre floor of min_building_height_mm / scale here would be scaled again afterwards and
     would therefore carry z_exaggeration twice (spec §6.4).
 
+    Roads and water both stop the close from welding across them, but they do it at opposite
+    ends of it (spec §6.4). The road corridors come off the *input*: a street buffer overlaps
+    the footprints along it, and trimming them back to the kerb is what opens the gap the close
+    then refuses to bridge. Water comes off the *output*, and only where no footprint stands:
+    subtracting it from the input would delete a building standing in the water — a pier, a
+    riverbank block, an island — from the block layer altogether, while cutting
+    `water - footprints` out of the closed area still removes any bridge the close threw across
+    a canal, because such a bridge is by construction water with no footprint on it.
+
     The result is clipped to the square: the block hair widens a block that reaches the edge of
     the model past the plate, and the plate is exactly plate_size_mm wide.
     """
     if not footprints:
         return []
-    area = unary_union([b.geom for b in footprints])
-    if not barriers.is_empty:
-        # The close bridges every gap below 2 x close_m — 12 m at the Skyline preset, which is
-        # most inner-city streets and many an inner-city canal. Taking the road corridors and
-        # the water surfaces out of the input first keeps the blocks on their own side of the
-        # street and on their own bank (spec §6.4).
-        area = area.difference(barriers)
+    covered = unary_union([b.geom for b in footprints])
+    area = covered.difference(corridors) if not corridors.is_empty else covered
     closed = _close(area, close_m, BLOCK_HAIR_MM / spec.scale).intersection(square)
+    if not waters.is_empty:
+        closed = closed.difference(waters.difference(covered))
     polys = [p for p in polygons_of(closed) if _is_printable(p, min_area_m2, half_feature_m)]
     if not polys:
         return []
@@ -430,8 +437,7 @@ def prepare(features: Features, spec: FrameSpec) -> Prepared:
     # the close is free to weld across both (spec §6.4).
     corridors = road_corridors(features.roads, spec, square) if full else Polygon()
     waters = water_area(features.water, square) if full else Polygon()
-    barriers = unary_union([corridors, waters])
-    blocks = build_blocks(footprints, spec, close_m, min_area_m2, half_feature_m, barriers, square)
+    blocks = build_blocks(footprints, spec, close_m, min_area_m2, half_feature_m, corridors, waters, square)
     buildings = [b for b in footprints if _is_printable(b.geom, min_area_m2, half_feature_m)]
     coverage = _coverage(footprints, blocks, buildings)
     if not full:
