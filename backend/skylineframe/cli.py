@@ -52,6 +52,8 @@ def generate(
         typer.echo(f"Error: {_message(exc)}", err=True)
         raise typer.Exit(code=1)
     typer.echo(f"Buildings: {result.stats.get('buildings', 0)}")
+    typer.echo(f"Non-manifold edges after vertex merge: {result.stats.get('nonmanifold_edges', 0)}")
+    typer.echo(f"Degenerate faces after vertex merge: {result.stats.get('degenerate_faces', 0)}")
     typer.echo(f"STL: {result.paths.stl}")
     typer.echo(f"3MF: {result.paths.threemf}")
 

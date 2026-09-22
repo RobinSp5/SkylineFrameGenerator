@@ -3,7 +3,7 @@ from shapely.geometry import LineString, Polygon, box
 from shapely.ops import unary_union
 
 from skylineframe.features import Building, Features, Road, Water
-from skylineframe.prepare import polygons_of, prepare
+from skylineframe.prepare import SIMPLIFY_TOLERANCE_MM, polygons_of, prepare
 from skylineframe.spec import FrameSpec, Mode
 
 
@@ -123,6 +123,41 @@ def test_road_is_cut_out_under_building():
     assert overlap == pytest.approx(0, abs=1e-6)
 
 
+def test_road_pockets_touching_at_a_point_are_welded():
+    # Two residential segments (1.0 mm => 10 m wide) whose buffers meet in the single point
+    # (0, 5). Extruded as two prisms that would leave a zero-thickness plate wall between them,
+    # so prepare welds them into one pocket.
+    feats = Features(
+        buildings=[bld(box(200, 200, 220, 220))],
+        roads=[
+            Road(LineString([(-100, 0), (0, 0)]), "residential"),
+            Road(LineString([(0, 10), (100, 10)]), "residential"),
+        ],
+    )
+    out = prepare(feats, spec(mode=Mode.full))
+    assert len(out.roads) == 1
+
+
+def test_recesses_keep_a_hairline_clearance_from_buildings():
+    # A recess wall that coincides exactly with a building wall is a zero-thickness plate wall,
+    # so pockets stop RECESS_CLEARANCE_MM short of whatever blocks them.
+    feats = Features(
+        buildings=[bld(box(-10, -10, 10, 10))],
+        roads=[Road(LineString([(-100, 0), (100, 0)]), "residential")],
+        water=[Water(box(-400, -400, 400, 400))],
+    )
+    out = prepare(feats, spec(mode=Mode.full))
+    clearance_m = SIMPLIFY_TOLERANCE_MM / spec(mode=Mode.full).scale
+    building = box(-10, -10, 10, 10)
+    roads = unary_union(out.roads)
+    water = unary_union(out.water)
+    # The weld collapses the chords of its own round joins afterwards, which can eat a fraction
+    # of the gap; what matters is that a gap of roughly the nominal size is there at all.
+    assert roads.distance(building) == pytest.approx(clearance_m, rel=0.1)
+    assert water.distance(building) == pytest.approx(clearance_m, rel=0.1)
+    assert water.distance(roads) == pytest.approx(clearance_m, rel=0.1)
+
+
 def test_water_is_cut_out_under_buildings_and_roads():
     feats = Features(
         buildings=[bld(box(-10, -10, 10, 10))],
@@ -133,10 +168,14 @@ def test_water_is_cut_out_under_buildings_and_roads():
     water = unary_union(out.water)
     assert water.intersection(box(-10, -10, 10, 10)).area == pytest.approx(0, abs=1e-6)
     assert water.intersection(unary_union(out.roads)).area == pytest.approx(0, abs=1e-6)
-    assert water.area == pytest.approx(200 * 200 - 20 * 20 - 200 * 10, abs=1.0)
+    # The building blocks 20x20 m and the road a 10 m wide strip, each grown by the 0.5 m
+    # (0.05 mm in print space) clearance that keeps recess walls off the walls that bound them.
+    # The weld is a shape operation, so the outline is only accurate to its own tolerance.
+    assert water.area == pytest.approx(200 * 200 - 21 * 21 - 200 * 11, rel=1e-4)
 
 
 def test_water_is_clipped_to_square():
     feats = Features(buildings=[bld(box(0, 0, 20, 20))], water=[Water(box(-2000, -2000, 2000, -400))])
     out = prepare(feats, spec(mode=Mode.full))
-    assert unary_union(out.water).bounds == pytest.approx((-500, -500, 500, -400))
+    # abs: the weld reproduces the clipped outline to its own tolerance, not to the last bit.
+    assert unary_union(out.water).bounds == pytest.approx((-500, -500, 500, -400), abs=0.01)

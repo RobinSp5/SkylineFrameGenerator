@@ -12,6 +12,8 @@ from .project import square_local
 from .spec import MIN_FEATURE_MM, FrameSpec, Mode
 
 SIMPLIFY_TOLERANCE_MM = 0.05
+# Fraction of the weld radius used to collapse the chords its round joins leave behind.
+ARC_SIMPLIFY_FRACTION = 0.1
 
 
 @dataclass
@@ -59,8 +61,44 @@ def _clip_buildings(
     return out
 
 
+def _weld(area: BaseGeometry, weld_m: float) -> BaseGeometry:
+    """Morphological close: merge pockets that only touch at a point and drop hairline gaps.
+
+    Two pockets meeting in a single point are extruded as two prisms and leave a zero-thickness
+    plate wall between them, which no slicer can print. Closing fuses them into one pocket and
+    costs at most weld_m of outline accuracy.
+
+    The close approximates its round joins with chords, which multiplies the vertex count of
+    every pocket outline (and with it the triangle count of the whole model) without adding any
+    shape the printer could resolve. Collapsing them again with a tolerance an order of magnitude
+    below the outline tolerance removes them without reopening what the close merged.
+    """
+    if area.is_empty:
+        return area
+    closed = area.buffer(weld_m).buffer(-weld_m)
+    return closed.simplify(weld_m * ARC_SIMPLIFY_FRACTION, preserve_topology=True)
+
+
+def _clearance(blocked: BaseGeometry, weld_m: float) -> BaseGeometry:
+    """Grow what blocks a pocket, so the pocket wall never coincides with the wall that bounds it.
+
+    Buildings are sunk into the plate, so a pocket cut exactly at a building outline puts the
+    building wall and the pocket wall in the same plane: the union of the two solids then has to
+    resolve a zero-thickness wall and leaves degenerate faces and non-manifold edges behind.
+    A hairline gap of SIMPLIFY_TOLERANCE_MM in print space removes that coincidence entirely.
+    """
+    # Mitre joins, so growing a footprint keeps its corner count instead of replacing every
+    # corner with a fan of arc vertices.
+    return blocked if blocked.is_empty else blocked.buffer(weld_m, join_style="mitre")
+
+
 def _road_areas(
-    roads: list[Road], spec: FrameSpec, square: Polygon, blocked: BaseGeometry, min_area_m2: float
+    roads: list[Road],
+    spec: FrameSpec,
+    square: Polygon,
+    blocked: BaseGeometry,
+    min_area_m2: float,
+    weld_m: float,
 ) -> list[Polygon]:
     if not roads:
         return []
@@ -68,17 +106,17 @@ def _road_areas(
         r.geom.buffer(spec.road_width_mm[r.cls] / spec.scale / 2, cap_style="flat", join_style="round")
         for r in roads
     ]
-    area = unary_union(buffered).intersection(square).difference(blocked)
-    return [p for p in polygons_of(area) if p.area >= min_area_m2]
+    area = unary_union(buffered).intersection(square).difference(_clearance(blocked, weld_m))
+    return [p for p in polygons_of(_weld(area, weld_m)) if p.area >= min_area_m2]
 
 
 def _water_areas(
-    water: list[Water], square: Polygon, blocked: BaseGeometry, min_area_m2: float
+    water: list[Water], square: Polygon, blocked: BaseGeometry, min_area_m2: float, weld_m: float
 ) -> list[Polygon]:
     if not water:
         return []
-    area = unary_union([w.geom for w in water]).intersection(square).difference(blocked)
-    return [p for p in polygons_of(area) if p.area >= min_area_m2]
+    area = unary_union([w.geom for w in water]).intersection(square).difference(_clearance(blocked, weld_m))
+    return [p for p in polygons_of(_weld(area, weld_m)) if p.area >= min_area_m2]
 
 
 def prepare(features: Features, spec: FrameSpec) -> Prepared:
@@ -95,8 +133,11 @@ def prepare(features: Features, spec: FrameSpec) -> Prepared:
         return Prepared(buildings=buildings)
 
     min_area_m2 = MIN_FEATURE_MM**2 / scale**2
+    weld_m = SIMPLIFY_TOLERANCE_MM / scale
     building_union = unary_union([b.geom for b in buildings]) if buildings else Polygon()
-    roads = _road_areas(features.roads, spec, square, building_union, min_area_m2)
+    # Precedence stays buildings > roads > water: roads are welded first and the welded result
+    # is what blocks the water.
+    roads = _road_areas(features.roads, spec, square, building_union, min_area_m2, weld_m)
     blocked_for_water = unary_union([building_union, *roads])
-    water = _water_areas(features.water, square, blocked_for_water, min_area_m2)
+    water = _water_areas(features.water, square, blocked_for_water, min_area_m2, weld_m)
     return Prepared(buildings=buildings, roads=roads, water=water)

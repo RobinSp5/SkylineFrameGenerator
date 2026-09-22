@@ -81,6 +81,22 @@ def test_water_recess_uses_water_depth():
     assert list(ms.parts()) == ["base", "buildings", "water"]
 
 
+def test_all_degenerate_recess_polygons_are_treated_as_absent():
+    degenerate = Polygon([(0, 0), (10, 0), (10, 0), (0, 0)])
+    ms = build_meshes(Scaled(buildings=[Prism(box(0, 0, 5, 5), 2.0)], roads=[degenerate]), spec())
+    assert ms.roads is None
+    assert list(ms.parts()) == ["base", "buildings"]
+    assert ms.base.volume() == pytest.approx(PLATE_VOLUME, rel=1e-6)
+
+
+def test_degenerate_recess_polygons_are_skipped_next_to_a_real_one():
+    degenerate = Polygon([(0, 0), (10, 0), (10, 0), (0, 0)])
+    road = box(-50, -0.5, 50, 0.5)
+    ms = build_meshes(Scaled(buildings=[Prism(box(20, 20, 30, 30), 2.0)], roads=[degenerate, road]), spec())
+    assert ms.roads is not None
+    assert ms.roads.volume() == pytest.approx(100 * 1 * 0.4, rel=1e-6)
+
+
 def test_no_buildings_raises():
     with pytest.raises(MeshError, match="No buildings"):
         build_meshes(Scaled(buildings=[]), spec())

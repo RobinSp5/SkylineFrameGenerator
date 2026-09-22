@@ -56,5 +56,6 @@ def run(
         "water": len(prepared.water),
         "stl_bytes": paths.stl.stat().st_size,
         "threemf_bytes": paths.threemf.stat().st_size,
+        **paths.diagnostics,
     }
     return RunResult(paths=paths, stats=stats)

@@ -61,8 +61,16 @@ def plate(spec: FrameSpec) -> m3d.Manifold:
     return m3d.Manifold.cube((size, size, t), center=True).translate((0, 0, -t / 2))
 
 
-def recess(polys: list[Polygon], depth: float) -> tuple[m3d.Manifold, m3d.Manifold]:
-    """Return (cutter, inlay). The cutter overshoots above z=0; the inlay fills the recess exactly."""
+def recess(polys: list[Polygon], depth: float) -> tuple[m3d.Manifold, m3d.Manifold] | None:
+    """Return (cutter, inlay), or None when nothing printable is left.
+
+    The cutter overshoots above z=0; the inlay fills the recess exactly. Zero-area polygons
+    cannot be extruded at all, so they are dropped; a part made only of those is simply absent
+    rather than a hard failure.
+    """
+    polys = [p for p in polys if p.area > 0]
+    if not polys:
+        return None
     cutter = union([prism(p, depth + EPS, z0=-depth) for p in polys])
     inlay = union([prism(p, depth, z0=-depth) for p in polys])
     return cutter, inlay
@@ -84,12 +92,14 @@ def build_meshes(scaled: Scaled, spec: FrameSpec) -> MeshSet:
     buildings_sunk = union([prism(b.geom, b.height_mm + BUILDING_SINK_MM, z0=-BUILDING_SINK_MM) for b in footprints])
 
     water = roads = None
-    if scaled.water:
-        cutter, water = recess(scaled.water, spec.water_depth_mm)
+    cut = recess(scaled.water, spec.water_depth_mm) if scaled.water else None
+    if cut is not None:
+        cutter, water = cut
         base = base - cutter
         _check(water, "water")
-    if scaled.roads:
-        cutter, roads = recess(scaled.roads, spec.road_depth_mm)
+    cut = recess(scaled.roads, spec.road_depth_mm) if scaled.roads else None
+    if cut is not None:
+        cutter, roads = cut
         base = base - cutter
         _check(roads, "roads")
     _check(base, "base")

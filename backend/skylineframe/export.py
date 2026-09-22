@@ -1,8 +1,9 @@
 """Write STL (single colour), 3MF (named parts) and GLB (coloured preview) after verifying the solid."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
+import numpy as np
 import trimesh
 
 from .errors import ExportError
@@ -16,6 +17,7 @@ PART_COLORS: dict[str, tuple[int, int, int, int]] = {
     "roads": (90, 90, 90, 255),
 }
 SIZE_TOLERANCE_MM = 0.01
+DEGENERATE_AREA_MM2 = 1e-9
 
 
 @dataclass
@@ -23,6 +25,7 @@ class ExportPaths:
     stl: Path
     threemf: Path
     glb: Path
+    diagnostics: dict = field(default_factory=dict)
 
 
 def verify_single(tm: trimesh.Trimesh, spec: FrameSpec) -> None:
@@ -33,6 +36,23 @@ def verify_single(tm: trimesh.Trimesh, spec: FrameSpec) -> None:
         raise ExportError(f"Model footprint {tm.extents[0]:.2f}x{tm.extents[1]:.2f} mm does not match plate size {size} mm.")
     if tm.volume <= size * size * spec.plate_thickness_mm * 0.5:
         raise ExportError("Model has no volume above the plate.")
+
+
+def mesh_diagnostics(tm: trimesh.Trimesh) -> dict:
+    """Slicer-style health check: merge coincident vertices first, then count broken topology.
+
+    Verification runs on the manifold topology, where buildings that merely touch keep their own
+    vertices. A slicer merges those first, and only then can it see whether an edge is shared by
+    exactly two faces. These numbers are reported, not enforced: touching buildings legitimately
+    share edges after a merge.
+    """
+    merged = tm.copy()
+    merged.merge_vertices()
+    _, counts = np.unique(merged.edges_sorted, axis=0, return_counts=True)
+    return {
+        "nonmanifold_edges": int(np.count_nonzero(counts != 2)),
+        "degenerate_faces": int(np.count_nonzero(merged.area_faces < DEGENERATE_AREA_MM2)),
+    }
 
 
 def verify_part(tm: trimesh.Trimesh, name: str) -> None:
@@ -58,4 +78,5 @@ def export_all(meshset: MeshSet, spec: FrameSpec, out_dir: Path) -> ExportPaths:
     for name, tm in parts.items():
         tm.visual.face_colors = PART_COLORS[name]
     trimesh.Scene(parts).export(str(paths.glb), file_type="glb")
+    paths.diagnostics = mesh_diagnostics(single)
     return paths

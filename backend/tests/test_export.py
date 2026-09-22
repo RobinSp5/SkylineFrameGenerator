@@ -3,7 +3,7 @@ import trimesh
 from shapely.geometry import box
 
 from skylineframe.errors import ExportError
-from skylineframe.export import export_all, verify_part, verify_single
+from skylineframe.export import export_all, mesh_diagnostics, verify_part, verify_single
 from skylineframe.mesh import build_meshes, to_trimesh
 from skylineframe.scale import Prism, Scaled
 from skylineframe.spec import FrameSpec, Mode
@@ -84,3 +84,13 @@ def test_verify_rejects_non_watertight(meshset):
     broken = trimesh.Trimesh(vertices=tm.vertices, faces=tm.faces[:-1], process=False)
     with pytest.raises(ExportError, match="watertight"):
         verify_single(broken, spec())
+
+
+def test_mesh_diagnostics_reports_a_clean_solid(meshset):
+    assert mesh_diagnostics(to_trimesh(meshset.single)) == {"nonmanifold_edges": 0, "degenerate_faces": 0}
+
+
+def test_export_all_reports_diagnostics(tmp_path, meshset):
+    paths = export_all(meshset, spec(), tmp_path)
+    assert paths.diagnostics["nonmanifold_edges"] == 0
+    assert paths.diagnostics["degenerate_faces"] == 0
