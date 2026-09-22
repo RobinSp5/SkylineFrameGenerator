@@ -2,7 +2,7 @@
 
 from enum import StrEnum
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class Mode(StrEnum):
@@ -41,6 +41,10 @@ LEVEL_HEIGHT_M = 3.2  # metres per building level when only building:levels is t
 
 
 class FrameSpec(BaseModel):
+    # The spec is parsed straight from the request body: an unknown key is a client-side typo
+    # or a stale field name, and silently dropping it would generate the wrong model.
+    model_config = ConfigDict(extra="forbid")
+
     center_lat: float = Field(ge=-85, le=85)
     center_lon: float = Field(ge=-180, le=180)
     side_m: float = Field(default=1500, ge=200, le=5000)

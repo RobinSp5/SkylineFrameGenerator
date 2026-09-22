@@ -122,7 +122,7 @@ Boolean-Engine: manifold3d direkt (Manifold-Objekte werden erst im Export in tri
 - `model.3mf`: alle Teil-Meshes als benannte Objekte im selben Koordinatensystem.
 - `preview.glb`: Teil-Meshes mit festen Farben (Platte hellgrau, Gebäude weiß, Wasser blau, Straßen dunkelgrau) für die Vorschau.
 
-Vor dem Schreiben: Bounding-Box von `single` muss in x/y exakt `plate_size_mm` sein (Toleranz 0,01 mm), Volumen > Plattenvolumen.
+Vor dem Schreiben: Bounding-Box von `single` muss in x/y exakt `plate_size_mm` sein (Toleranz 0,01 mm), Volumen > 0,5 × Plattenvolumen (Vertiefungen können mehr abtragen als Gebäude hinzufügen).
 
 ### 5.7 `pipeline.py` und `cli.py`
 `run(spec, out_dir, progress_cb) -> ExportPaths` verkettet 5.1–5.6 und meldet Fortschritt (`fetch`, `prepare`, `mesh`, `export`).

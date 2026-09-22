@@ -18,6 +18,14 @@ Ort suchen, Quadrat auf der Karte verschieben, Größe/Drehung einstellen, „Ge
 Der Server läuft bewusst mit einem einzigen uvicorn-Worker: der Rate-Limiter für die Ortssuche (Nominatim,
 max. 1 Anfrage/Sekunde) gilt pro Prozess und würde mit mehreren Workern vervielfacht.
 
+## Produktionsmodus
+
+    make build     # baut das Frontend nach frontend/dist
+    make backend   # uvicorn auf :8000, liefert frontend/dist unter / aus
+
+Danach genügt http://localhost:8000 — kein Vite-Server nötig. Für die Entwicklung getrennt:
+`make frontend` (Vite auf :5173) und `make backend`.
+
 ## CLI
 
     cd backend && uv run skylineframe --lat 50.1106 --lon 8.6821 --side 1500 --mode full --out ../out
@@ -31,6 +39,9 @@ max. 1 Anfrage/Sekunde) gilt pro Prozess und würde mit mehreren Workern verviel
   Objekt mit mehreren Teilen bilden und die Einleger in den Vertiefungen bleiben statt einzeln auf die Druckplatte
   zu fallen. Danach `base`, `buildings`, `water`, `roads` je ein Filament zuweisen.
   Wer Straßen als Rille statt als Farbe will, löscht das Teil `roads`.
+- Bambu Studio meldet beim Import u. U. gemeinsame Kanten dort, wo sich Gebäude an einer Ecke berühren.
+  Die automatische Reparatur beim 3MF bitte **ablehnen** — sie füllt die Vertiefungen für Straßen und
+  Wasser auf.
 
 ## Tests
 

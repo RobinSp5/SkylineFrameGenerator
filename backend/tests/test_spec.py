@@ -49,6 +49,13 @@ def test_rejects_recess_deeper_than_plate():
         FrameSpec(center_lat=50, center_lon=8, plate_thickness_mm=1.0, road_depth_mm=1.5)
 
 
+def test_rejects_unknown_field():
+    # The spec is built straight from the request body, so an unknown key is a typo in the
+    # client (or a stale field name) and must not be silently ignored.
+    with pytest.raises(ValidationError):
+        FrameSpec(center_lat=50, center_lon=8, plate_size_cm=10)
+
+
 def test_mode_accepts_string():
     s = FrameSpec(center_lat=50, center_lon=8, mode="full")
     assert s.mode is Mode.full
