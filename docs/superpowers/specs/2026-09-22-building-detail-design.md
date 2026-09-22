@@ -44,9 +44,9 @@ class Building:
     height_m: float          # Oberkante (inkl. Dach, falls height-Tag), sonst Traufhöhe
     min_height_m: float = 0.0
     roof: RoofSpec | None = None   # None = flach
-    osm_id: int = 0
+    osm_id: str = ""        # f"{type}/{id}", weil Way- und Relation-IDs kollidieren können
     is_part: bool = False
-    outline_id: int | None = None  # bei Teilen: OSM-ID des Umrisses, falls zuordenbar
+    outline_id: str | None = None  # bei Teilen: osm_id des Umrisses, falls zuordenbar
 
 @dataclass
 class RoofSpec:
@@ -74,7 +74,7 @@ Parsing:
 - `roof:direction` (Grad oder Himmelsrichtung N/E/S/W/NE …) optional.
 - Wenn ein `height`-Tag vorhanden ist, gilt `height_m = height` und die Traufhöhe ist `height − roof.height_m` (nie unter 0,5 × height). Ohne `height`-Tag ist `height_m` die Traufhöhe (levels × 3,2 oder Schätzung) und das Dach kommt obendrauf.
 
-## 5. Höhenschätzung (`fetch.py`, `estimate_height_m(tags, area_m2)`)
+## 5. Höhenschätzung (`heights.py`, `estimate_height_m(kind, area_m2)`)
 
 Reihenfolge: `height` → `building:levels × 3.2` → Typtabelle → Flächenregel.
 
@@ -91,7 +91,7 @@ Reihenfolge: `height` → `building:levels × 3.2` → Typtabelle → Flächenre
 
 Flächenregel: < 100 m² → 5 m; < 400 m² → 8 m; < 1500 m² → 12 m; sonst 15 m.
 
-Die Fläche wird im lokalen metrischen System berechnet, deshalb läuft die Schätzung nach `project` (in `prepare`), nicht beim Parsen. `fetch` speichert die Tags, die dafür nötig sind (`building`-Wert) im `Building` (Feld `kind: str`).
+Die Fläche wird im lokalen metrischen System berechnet, deshalb läuft die Schätzung nach `project` (in `prepare`), nicht beim Parsen. `fetch` speichert den `building`-Wert im `Building` (Feld `kind: str`). Die Tabellen und `estimate_height_m` liegen in einem eigenen Modul `heights.py`, damit `prepare` nicht von `fetch` (httpx, osm2geojson) abhängt.
 
 ## 6. Vorbereitung (`prepare.py`)
 
@@ -99,8 +99,8 @@ Reihenfolge:
 
 1. **Projektion, Clip, Reparatur** wie bisher (`polygons_of`, `simplify`).
 2. **Höhen auffüllen**: Gebäude ohne Höhenangabe erhalten die Schätzung aus §5.
-3. **Teile zuordnen**: Für jedes Teil wird der Umriss gesucht, der den Teil-Schwerpunkt enthält (STRtree). Umrisse mit mindestens einem Teil gelten als „mit Teilen". Für solche Umrisse gilt: Teile werden gerendert; der Restbereich `Umriss − Vereinigung der Teile` wird mit der Umrisshöhe extrudiert, sofern er die Druckbarkeitsgrenze erreicht. Teile ohne Umriss werden wie normale Gebäude behandelt. Teile ohne Höhe bekommen die Umrisshöhe.
-4. **Blöcke bilden**: Alle Grundrisse (Umrisse ohne Teile, Teile, Restbereiche) werden 2D vereinigt mit einem Close um `MIN_FEATURE_MM / 2 / scale` (dilate → erode, runde Verbindungen). Jede resultierende Fläche ist ein **Block**. Blockhöhe = 25. Perzentil der Traufhöhen der enthaltenen Grundrisse (flächengewichtet), mindestens `min_building_height_mm / scale`.
+3. **Teile zuordnen**: Für jedes Teil wird der Umriss gesucht, der einen garantiert innenliegenden Punkt des Teils (`representative_point()`) enthält (STRtree). Umrisse mit mindestens einem Teil gelten als „mit Teilen". Für solche Umrisse gilt: Teile werden gerendert; der Restbereich `Umriss − Vereinigung der Teile` wird mit der Umrisshöhe extrudiert, sofern er die Druckbarkeitsgrenze erreicht. Teile ohne Umriss werden wie normale Gebäude behandelt. Teile ohne Höhe bekommen die Umrisshöhe.
+4. **Blöcke bilden**: Alle Grundrisse (Umrisse ohne Teile, Teile, Restbereiche) werden 2D vereinigt mit einem Close um `MIN_FEATURE_MM / 2 / scale` (dilate → erode, runde Verbindungen, Bogen-Sehnen anschließend vereinfacht). Im Full-Modus werden die Straßenkorridore (gepufferte Straßen) vor dem Close aus der Eingabe entfernt, damit das Close keine Straße überbrückt; einzeln druckbare Gebäude behalten wie bisher Vorrang vor Straßen. Jede resultierende Fläche ist ein **Block**. Blockhöhe = 25. Perzentil der Traufhöhen der enthaltenen Grundrisse (flächengewichtet), mindestens `min_building_height_mm / scale`.
 5. **Druckbarkeit**: Ein Grundriss ist „einzeln druckbar", wenn `area ≥ min_footprint_area_mm2 / scale²` und `buffer(−MIN_FEATURE_MM/2/scale)` nicht leer. Der Default für `min_footprint_area_mm2` sinkt von 1,0 auf 0,25. Nicht einzeln druckbare Grundrisse gehen **nur** in den Block ein (kein Verlust der Fläche mehr).
 6. **Dächer**: Für einzeln druckbare Grundrisse mit `roof` wird geprüft, ob `area / minimum_rotated_rectangle.area ≥ 0.85`; nur dann wird das Dach erzeugt (sonst flach). Die Dachgeometrie wird in `mesh.py` gebaut; `prepare` liefert das Rechteck (vier Ecken) und die Dachparameter mit.
 7. Straßen und Wasser: unverändert, aber „blocked" ist jetzt die Vereinigung der Blöcke (nicht der Einzelgrundrisse).
@@ -120,7 +120,7 @@ Alle Formen werden über dem minimalen umschließenden Rechteck des Grundrisses 
 | half_hipped | wie hipped, Einrückung `0.25 × kurze Seite`, Firstpunkte bei z_r; zusätzlich Giebelpunkte bei `z_e + 0.6 × roof.height_m` an den kurzen Seiten |
 | pyramidal | 4 Ecken bei z_e + Mittelpunkt bei z_r |
 | skillion | 2 Ecken einer langen Seite bei z_e + gegenüberliegende 2 Ecken bei z_r |
-| mansard, gambrel | wie hipped bzw. gabled, mit Einrückung `0.2 × kurze Seite` und einem zweiten Punktkranz bei `z_e + 0.7 × roof.height_m` auf `0.8` der Halbbreite (steiler Unterteil) |
+| mansard, gambrel | mansard wie hipped (First um `0.2 × kurze Seite` eingerückt), gambrel wie gabled (First über die volle Länge); beide mit einem zweiten Punktkranz bei `z_e + 0.7 × roof.height_m` auf `0.8` der Halbbreite (steiler Unterteil) |
 | dome | `Manifold.sphere(1, 24)` skaliert auf (halbe Länge, halbe Breite, roof.height_m), Mittelpunkt bei z_e, `trim_by_plane((0,0,1), z_e)` |
 | round | Halbzylinder: Hülle aus 2 × 13 Punkten auf Halbkreisbögen an beiden kurzen Seiten (Radius = halbe Breite, Höhe skaliert auf roof.height_m) |
 
@@ -133,7 +133,7 @@ Der Gebäudekörper besteht dann aus `prism(footprint, z_min … z_e)` + Dachkö
 - `blocks` werden wie Gebäude extrudiert (Sockel, versenkt um `BUILDING_SINK_MM` für `single`).
 - Einzeln druckbare Gebäude: Prisma von `max(min_height, 0)` bis Traufe, plus Dach. Teile mit `min_height > 0` beginnen in der Luft; da sie in der Praxis auf niedrigeren Teilen desselben Gebäudes stehen, entsteht nach der 3D-Vereinigung ein zusammenhängender Körper. Freischwebende Teile (ohne Körper darunter) werden bis 0 verlängert (Sicherheitsregel: `min_height` wird ignoriert, wenn kein anderer Grundriss desselben Umrisses darunter liegt).
 - Alles wird per `batch_boolean(Add)` zum Teil `buildings` vereinigt; `single` und die 3MF-Teile bleiben wie im MVP.
-- Skalierung: alle Höhen (Traufe, First, min_height, Blockhöhe) laufen durch `building_height_mm`-Logik (scale × z_exaggeration, Mindesthöhe, Deckel Plattengröße). Dachhöhen werden mit demselben Faktor skaliert, damit Proportionen stimmen.
+- Skalierung: alle Höhen laufen durch `scale × z_exaggeration` und den Deckel Plattengröße. Die Mindesthöhe `min_building_height_mm` wird nur auf die Oberkante eines Körpers angewendet (Blockhöhe, Trauf-/Gesamthöhe); `min_height` und Firsthöhe werden nicht angehoben, sonst würden Teile am Boden abheben. Dachhöhen werden mit demselben Faktor skaliert, damit Proportionen stimmen.
 
 ## 9. Presets (`frontend`)
 
