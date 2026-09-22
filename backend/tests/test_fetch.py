@@ -6,6 +6,7 @@ import pytest
 from skylineframe.errors import FetchError
 from skylineframe.fetch import (
     DEFAULT_OVERPASS_URL,
+    MAX_ELEMENTS,
     USER_AGENT,
     _cache_path,
     build_query,
@@ -106,6 +107,14 @@ def test_parse_overpass_keeps_building_that_is_also_relation_member():
     # way 10 is both a tagged building and the outer ring of the water relation
     feats = parse_overpass(SAMPLE, spec())
     assert len(feats.buildings) == 1
+
+
+def test_parse_overpass_rejects_an_oversized_response():
+    # Guard before osm2geojson: a few hundred thousand elements would otherwise be turned into
+    # GeoJSON and shapely geometries before anything noticed the area is far too large.
+    huge = {"elements": [{"type": "node", "id": i, "lat": 0.0, "lon": 0.0} for i in range(MAX_ELEMENTS + 1)]}
+    with pytest.raises(FetchError, match="too much map data"):
+        parse_overpass(huge, spec(mode=Mode.full))
 
 
 # --- http + cache ------------------------------------------------------

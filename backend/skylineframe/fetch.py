@@ -23,6 +23,9 @@ USER_AGENT = "skylineframe/0.1.0 (Skyline Frame Generator; 3D-printable OSM city
 RETRY_STATUSES = {429, 502, 503, 504}
 MAX_HEIGHT_M = 1000.0  # the tallest building on earth is ~830 m; anything above is mistagged
 MAX_LEVELS = 300.0
+# Soft limit on one Overpass answer. Beyond this the run would spend minutes in osm2geojson and
+# shapely before the mesh stage ever starts, so the area is rejected up front.
+MAX_ELEMENTS = 250_000
 WATER_SELECTORS = (
     '["natural"="water"]',
     '["waterway"="riverbank"]',
@@ -85,6 +88,8 @@ def _is_water(tags: dict) -> bool:
 
 
 def parse_overpass(data: dict, spec: FrameSpec) -> Features:
+    if len(data.get("elements", [])) > MAX_ELEMENTS:
+        raise FetchError("The selected area contains too much map data; choose a smaller square or the simple mode.")
     # filter_used_refs=False keeps tagged ways that are also relation members (e.g. a building
     # that is the outer ring of a multipolygon); untagged members are dropped below.
     geojson = osm2geojson.json2geojson(data, filter_used_refs=False, log_level="ERROR")

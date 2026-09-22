@@ -43,3 +43,6 @@ OpenStreetMap über die Overpass-API (Antworten werden unter `backend/.cache/ove
 Ortssuche über Nominatim. Bitte die Nutzungsbedingungen beider Dienste beachten.
 
 `SKYLINE_OVERPASS_URL` setzt einen anderen Overpass-Endpunkt (z. B. eine eigene Instanz).
+
+Weiche Obergrenze: Antworten mit mehr als 250 000 OSM-Elementen werden abgelehnt — dann ein kleineres
+Quadrat oder den einfachen Modus wählen.
