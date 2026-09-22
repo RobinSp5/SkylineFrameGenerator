@@ -8,3 +8,6 @@ dist/
 *.3mf
 *.glb
 .DS_Store
+frontend/test-results/
+frontend/playwright-report/
+out/
