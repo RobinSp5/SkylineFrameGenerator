@@ -4,6 +4,7 @@ import httpx
 import pytest
 
 from skylineframe.errors import FetchError
+from skylineframe.features import RoofSpec
 from skylineframe.fetch import (
     DEFAULT_OVERPASS_URL,
     MAX_ELEMENTS,
@@ -12,8 +13,11 @@ from skylineframe.fetch import (
     build_query,
     fetch_overpass,
     overpass_url,
+    parse_direction,
     parse_height,
+    parse_min_height,
     parse_overpass,
+    parse_roof,
 )
 from skylineframe.spec import FrameSpec, Mode
 
@@ -246,3 +250,163 @@ def test_frankfurt_fixture_parses(frankfurt_spec, frankfurt_data):
     assert len(feats.buildings) > 20
     assert len(feats.roads) > 5
     assert len(feats.water) >= 1
+    assert sum(1 for b in feats.buildings if b.roof is not None) > 20
+
+
+def test_bankenviertel_fixture_has_building_parts(bankenviertel_spec, bankenviertel_data):
+    feats = parse_overpass(bankenviertel_data, bankenviertel_spec)
+    assert sum(1 for b in feats.buildings if b.is_part) > 0
+    assert all(b.osm_id.startswith(("way/", "relation/")) for b in feats.buildings)
+
+
+# --- building parts, roofs, estimates ----------------------------------
+
+PARTS_SAMPLE = {
+    "version": 0.6,
+    "elements": [
+        # outline 200:
+        {"type": "node", "id": 101, "lat": 50.0000, "lon": 8.0000},
+        {"type": "node", "id": 102, "lat": 50.0000, "lon": 8.0020},
+        {"type": "node", "id": 103, "lat": 50.0020, "lon": 8.0020},
+        {"type": "node", "id": 104, "lat": 50.0020, "lon": 8.0000},
+        {"type": "way", "id": 200, "nodes": [101, 102, 103, 104, 101], "tags": {"building": "yes", "height": "20"}},
+        # part 201 inside the outline, starting at 10 m, with a gabled roof
+        {"type": "node", "id": 105, "lat": 50.0005, "lon": 8.0005},
+        {"type": "node", "id": 106, "lat": 50.0005, "lon": 8.0015},
+        {"type": "node", "id": 107, "lat": 50.0015, "lon": 8.0015},
+        {"type": "node", "id": 108, "lat": 50.0015, "lon": 8.0005},
+        {
+            "type": "way",
+            "id": 201,
+            "nodes": [105, 106, 107, 108, 105],
+            "tags": {
+                "building:part": "yes",
+                "min_height": "10 m",
+                "height": "40",
+                "roof:shape": "gabled",
+                "roof:height": "3",
+                "roof:direction": "NE",
+            },
+        },
+        # 202: a canopy -> dropped
+        {"type": "node", "id": 109, "lat": 50.0030, "lon": 8.0000},
+        {"type": "node", "id": 110, "lat": 50.0030, "lon": 8.0010},
+        {"type": "node", "id": 111, "lat": 50.0040, "lon": 8.0010},
+        {"type": "node", "id": 112, "lat": 50.0040, "lon": 8.0000},
+        {"type": "way", "id": 202, "nodes": [109, 110, 111, 112, 109], "tags": {"building": "roof"}},
+        # 203: building:part=no -> dropped
+        {"type": "node", "id": 113, "lat": 50.0050, "lon": 8.0000},
+        {"type": "node", "id": 114, "lat": 50.0050, "lon": 8.0010},
+        {"type": "node", "id": 115, "lat": 50.0060, "lon": 8.0010},
+        {"type": "node", "id": 116, "lat": 50.0060, "lon": 8.0000},
+        {"type": "way", "id": 203, "nodes": [113, 114, 115, 116, 113], "tags": {"building:part": "no"}},
+        # 204: part without any height, with building:min_level
+        {"type": "node", "id": 117, "lat": 50.0070, "lon": 8.0000},
+        {"type": "node", "id": 118, "lat": 50.0070, "lon": 8.0010},
+        {"type": "node", "id": 119, "lat": 50.0080, "lon": 8.0010},
+        {"type": "node", "id": 120, "lat": 50.0080, "lon": 8.0000},
+        {
+            "type": "way",
+            "id": 204,
+            "nodes": [117, 118, 119, 120, 117],
+            "tags": {"building:part": "yes", "building:min_level": "5", "roof:shape": "onion"},
+        },
+        # 205: house without any height tag -> height_m 0.0, kind "house"
+        {"type": "node", "id": 121, "lat": 50.0090, "lon": 8.0000},
+        {"type": "node", "id": 122, "lat": 50.0090, "lon": 8.0010},
+        {"type": "node", "id": 123, "lat": 50.0100, "lon": 8.0010},
+        {"type": "node", "id": 124, "lat": 50.0100, "lon": 8.0000},
+        {"type": "way", "id": 205, "nodes": [121, 122, 123, 124, 121], "tags": {"building": "house", "roof:shape": "brezel"}},
+    ],
+}
+
+
+def by_id(feats) -> dict[str, object]:
+    return {b.osm_id: b for b in feats.buildings}
+
+
+def test_build_query_asks_for_building_parts():
+    q = build_query((49.9, 7.9, 50.1, 8.1), Mode.simple)
+    assert 'way["building:part"](49.900000,7.900000,50.100000,8.100000);' in q
+    assert 'relation["building:part"]["type"="multipolygon"]' in q
+
+
+def test_parse_overpass_reads_outline_and_part():
+    feats = parse_overpass(PARTS_SAMPLE, spec())
+    buildings = by_id(feats)
+    # ids carry the element type: way and relation ids are separate number spaces (spec §3).
+    assert set(buildings) == {"way/200", "way/201", "way/204", "way/205"}
+
+    outline = buildings["way/200"]
+    assert outline.is_part is False
+    assert outline.height_m == 20.0 and outline.height_is_top is True
+    assert outline.kind == "yes" and outline.min_height_m == 0.0 and outline.roof is None
+
+    part = buildings["way/201"]
+    assert part.is_part is True and part.kind == "yes"
+    assert part.height_m == 40.0 and part.height_is_top is True
+    assert part.min_height_m == 10.0
+    assert part.roof == RoofSpec(shape="gabled", height_m=3.0, direction_deg=45.0)
+
+
+def test_parse_overpass_reads_min_level_and_maps_roof_aliases():
+    buildings = by_id(parse_overpass(PARTS_SAMPLE, spec()))
+    part = buildings["way/204"]
+    assert part.min_height_m == pytest.approx(16.0)  # 5 levels x 3.2 m
+    assert part.height_m == 0.0  # unknown; prepare fills it from the outline or the default
+    assert part.roof is not None and part.roof.shape == "dome"  # onion -> dome
+    assert part.roof.height_m == 0.0  # untagged; prepare derives it from the footprint
+
+
+def test_parse_overpass_leaves_unknown_roof_and_height_flat():
+    house = by_id(parse_overpass(PARTS_SAMPLE, spec()))["way/205"]
+    assert house.roof is None  # "brezel" is not a supported shape -> flat
+    assert house.height_m == 0.0 and house.height_is_top is False
+    assert house.kind == "house"
+
+
+@pytest.mark.parametrize(
+    "tags,expected",
+    [
+        ({"min_height": "12"}, 12.0),
+        ({"min_height": "12.5 m"}, 12.5),
+        ({"building:min_level": "4"}, 12.8),
+        ({"min_height": "junk", "building:min_level": "2"}, 6.4),
+        ({}, 0.0),
+        ({"min_height": "-3"}, 0.0),
+        ({"min_height": "5000"}, 0.0),
+    ],
+)
+def test_parse_min_height(tags, expected):
+    assert parse_min_height(tags) == pytest.approx(expected)
+
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [("45", 45.0), ("45.5", 45.5), ("N", 0.0), ("NE", 45.0), ("SSW", 202.5), ("e", 90.0), ("400", 40.0), ("", None), (None, None), ("uphill", None)],
+)
+def test_parse_direction(raw, expected):
+    assert parse_direction(raw) == expected
+
+
+@pytest.mark.parametrize(
+    "tags,shape,height",
+    [
+        ({"roof:shape": "gabled"}, "gabled", 0.0),
+        ({"roof:shape": "half-hipped"}, "half_hipped", 0.0),
+        ({"roof:shape": "HIPPED"}, "hipped", 0.0),
+        ({"roof:shape": "gabled", "roof:height": "4 m"}, "gabled", 4.0),
+        ({"roof:shape": "gabled", "roof:levels": "2"}, "gabled", 6.4),
+        ({"roof:shape": "gabled", "roof:height": "500"}, "gabled", 0.0),
+    ],
+)
+def test_parse_roof(tags, shape, height):
+    roof = parse_roof(tags)
+    assert roof is not None
+    assert roof.shape == shape
+    assert roof.height_m == pytest.approx(height)
+
+
+@pytest.mark.parametrize("tags", [{}, {"roof:shape": "flat"}, {"roof:shape": "something"}])
+def test_parse_roof_returns_none_for_flat_and_unknown(tags):
+    assert parse_roof(tags) is None

@@ -12,7 +12,7 @@ import osm2geojson
 from shapely.geometry import shape
 
 from .errors import FetchError
-from .features import Building, Features, Road, Water
+from .features import Building, Features, Road, RoofSpec, Water
 from .project import query_bbox
 from .spec import LEVEL_HEIGHT_M, ROAD_CLASSES, FrameSpec, Mode
 
@@ -33,11 +33,44 @@ WATER_SELECTORS = (
     '["natural"="bay"]',
 )
 
+MAX_ROOF_HEIGHT_M = 100.0
+
+# roof:shape values we can build (spec §7) plus the common synonyms; everything else is flat.
+ROOF_SHAPE_MAP: dict[str, str] = {
+    "gabled": "gabled",
+    "pitched": "gabled",
+    "hipped": "hipped",
+    "half-hipped": "half_hipped",
+    "half_hipped": "half_hipped",
+    "pyramidal": "pyramidal",
+    "cone": "pyramidal",
+    "skillion": "skillion",
+    "mansard": "mansard",
+    "gambrel": "gambrel",
+    "dome": "dome",
+    "onion": "dome",
+    "round": "round",
+}
+
+COMPASS_DEG: dict[str, float] = {
+    "N": 0.0, "NNE": 22.5, "NE": 45.0, "ENE": 67.5,
+    "E": 90.0, "ESE": 112.5, "SE": 135.0, "SSE": 157.5,
+    "S": 180.0, "SSW": 202.5, "SW": 225.0, "WSW": 247.5,
+    "W": 270.0, "WNW": 292.5, "NW": 315.0, "NNW": 337.5,
+}
+
 
 def build_query(bbox: tuple[float, float, float, float], mode: Mode) -> str:
     south, west, north, east = bbox
     bb = f"({south:.6f},{west:.6f},{north:.6f},{east:.6f})"
-    parts = [f'way["building"]{bb};', f'relation["building"]["type"="multipolygon"]{bb};']
+    parts = [
+        f'way["building"]{bb};',
+        f'relation["building"]["type"="multipolygon"]{bb};',
+        # Parts are the setbacks and rooftop boxes of a tagged outline (spec §4). They are their
+        # own elements, so without this pair the MVP query never saw a single one of them.
+        f'way["building:part"]{bb};',
+        f'relation["building:part"]["type"="multipolygon"]{bb};',
+    ]
     if mode == Mode.full:
         classes = "|".join(ROAD_CLASSES)
         parts.append(f'way["highway"~"^({classes})$"]{bb};')
@@ -79,6 +112,86 @@ def parse_height(tags: dict, default_m: float) -> float:
     return default_m
 
 
+def _metres(raw: str | None, limit: float) -> float | None:
+    """A non-negative length in metres from an OSM value, or None when it is unusable."""
+    if not raw:
+        return None
+    try:
+        value = float(raw.strip().removesuffix("m").strip())
+    except ValueError:
+        return None
+    return value if 0 <= value <= limit else None
+
+
+def _levels(raw: str | None) -> float | None:
+    if not raw:
+        return None
+    try:
+        count = float(raw)
+    except ValueError:
+        return None
+    return count if 0 <= count <= MAX_LEVELS else None
+
+
+def parse_min_height(tags: dict) -> float:
+    """Bottom of a building part: min_height, else building:min_level x 3.2, else 0 (spec §4)."""
+    value = _metres(tags.get("min_height"), MAX_HEIGHT_M)
+    if value is not None:
+        return value
+    levels = _levels(tags.get("building:min_level"))
+    return levels * LEVEL_HEIGHT_M if levels is not None else 0.0
+
+
+def parse_direction(raw: str | None) -> float | None:
+    """roof:direction as a compass bearing in degrees (0 = north, clockwise), or None."""
+    if not raw:
+        return None
+    text = raw.strip().upper()
+    if text in COMPASS_DEG:
+        return COMPASS_DEG[text]
+    try:
+        value = float(text)
+    except ValueError:
+        return None
+    return value % 360
+
+
+def parse_roof(tags: dict) -> RoofSpec | None:
+    """The roof of one element, or None for flat / unsupported / untagged shapes (spec §7).
+
+    height_m stays 0.0 when neither roof:height nor roof:levels is tagged; prepare then derives
+    it from the footprint, because the rule needs the short side in local metres.
+    """
+    shape = ROOF_SHAPE_MAP.get((tags.get("roof:shape") or "").strip().lower())
+    if shape is None:
+        return None
+    height = _metres(tags.get("roof:height"), MAX_ROOF_HEIGHT_M)
+    if height is None:
+        levels = _levels(tags.get("roof:levels"))
+        height = levels * LEVEL_HEIGHT_M if levels else None
+    return RoofSpec(shape=shape, height_m=height or 0.0, direction_deg=parse_direction(tags.get("roof:direction")))
+
+
+def osm_id(properties: dict) -> str:
+    """Stable id of one element: way and relation ids are separate number spaces (spec §3)."""
+    return f"{properties.get('type', 'way')}/{properties.get('id', 0)}"
+
+
+def _building_tags(tags: dict) -> tuple[str, bool] | None:
+    """(kind, is_part) for a building or a building part, or None when the element is neither.
+
+    building=roof is a carport or a canopy with no walls, and every =no is an explicit
+    "there is nothing here"; both are dropped (spec §4).
+    """
+    value = tags.get("building")
+    if value and value not in ("no", "roof"):
+        return value, False
+    part = tags.get("building:part")
+    if part and part != "no":
+        return part, True
+    return None
+
+
 def _is_water(tags: dict) -> bool:
     return (
         tags.get("natural") in ("water", "bay")
@@ -100,8 +213,24 @@ def parse_overpass(data: dict, spec: FrameSpec) -> Features:
             continue
         geom = shape(feature["geometry"])
         kind = geom.geom_type
-        if "building" in tags and kind in ("Polygon", "MultiPolygon"):
-            feats.buildings.append(Building(geom, parse_height(tags, spec.default_building_height_m)))
+        classified = _building_tags(tags)
+        if classified is not None and kind in ("Polygon", "MultiPolygon"):
+            building_kind, is_part = classified
+            tagged_height = _metres(tags.get("height"), MAX_HEIGHT_M)
+            feats.buildings.append(
+                Building(
+                    geom=geom,
+                    # 0.0 means "no height information at all"; prepare fills it with the
+                    # estimate (buildings) or the outline height (parts), spec §5/§6.
+                    height_m=parse_height(tags, 0.0),
+                    height_is_top=bool(tagged_height),
+                    min_height_m=parse_min_height(tags) if is_part else 0.0,
+                    roof=parse_roof(tags),
+                    osm_id=osm_id(feature["properties"]),
+                    is_part=is_part,
+                    kind=building_kind,
+                )
+            )
         elif tags.get("highway") in ROAD_CLASSES and kind in ("LineString", "MultiLineString"):
             feats.roads.append(Road(geom, tags["highway"]))
         elif _is_water(tags) and kind in ("Polygon", "MultiPolygon"):
