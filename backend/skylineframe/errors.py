@@ -17,5 +17,9 @@ class ExportError(SkylineError):
     """The final mesh failed verification or could not be written."""
 
 
+class AreaError(SkylineError):
+    """The selected area cannot be processed (e.g. antimeridian)."""
+
+
 class PipelineError(SkylineError):
     """The selected area cannot produce a model (e.g. no buildings)."""

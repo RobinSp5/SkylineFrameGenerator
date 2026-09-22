@@ -107,10 +107,10 @@ class JobStore:
         # status must never read the message of the previous one.
         try:
             result = self._runner(job.spec, job.dir, self._cache_dir, progress)
-        except (SkylineError, ValueError) as exc:
-            # Both carry a message written for the user (ValueError e.g. from the projection stage),
-            # but only the bare ValueError is unexpected enough to be worth a traceback.
-            log.warning("job %s failed: %s", job.id, exc, exc_info=isinstance(exc, ValueError))
+        except SkylineError as exc:
+            # Every expected failure of the pipeline is a SkylineError and carries a message
+            # written for the user; anything else is a bug and is hidden below.
+            log.warning("job %s failed: %s", job.id, exc)
             job.message, job.status = str(exc), "error"
         except Exception:
             log.exception("job %s crashed", job.id)

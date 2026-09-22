@@ -3,7 +3,7 @@ from pathlib import Path
 from typer.testing import CliRunner
 
 from skylineframe import cli
-from skylineframe.errors import FetchError
+from skylineframe.errors import AreaError, FetchError
 from skylineframe.export import ExportPaths
 from skylineframe.pipeline import RunResult
 
@@ -45,9 +45,9 @@ def test_generate_reports_invalid_spec(tmp_path):
     assert "Traceback" not in result.output
 
 
-def test_generate_reports_value_error(monkeypatch, tmp_path):
+def test_generate_reports_area_error(monkeypatch, tmp_path):
     def failing_run(spec, out_dir, cache_dir, progress=None):
-        raise ValueError("Areas crossing the antimeridian (±180° longitude) are not supported.")
+        raise AreaError("Areas crossing the antimeridian (±180° longitude) are not supported.")
 
     monkeypatch.setattr(cli, "run", failing_run)
     result = runner.invoke(cli.app, ["--lat", "50.1", "--lon", "8.6", "--out", str(tmp_path)])

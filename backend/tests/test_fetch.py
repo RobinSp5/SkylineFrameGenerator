@@ -111,15 +111,20 @@ def test_parse_overpass_keeps_building_that_is_also_relation_member():
 # --- http + cache ------------------------------------------------------
 
 
-def make_client(responses: list[int | dict], calls: list[tuple[str, str | None]]) -> httpx.Client:
+def make_client(responses: list[int | str | dict], calls: list[tuple[str, str | None]]) -> httpx.Client:
     """Records (request body, User-Agent) per call; MockTransport ignores headers, so the
-    User-Agent must be asserted explicitly or the header could be dropped unnoticed."""
+    User-Agent must be asserted explicitly or the header could be dropped unnoticed.
+
+    An int is a status code, a dict a JSON body, a str a 200 with a non-JSON body.
+    """
 
     def handler(request: httpx.Request) -> httpx.Response:
         calls.append((request.content.decode(), request.headers.get("user-agent")))
         r = responses.pop(0)
         if isinstance(r, int):
             return httpx.Response(r, text="error")
+        if isinstance(r, str):
+            return httpx.Response(200, text=r, headers={"content-type": "text/html"})
         return httpx.Response(200, json=r)
 
     return httpx.Client(transport=httpx.MockTransport(handler))
@@ -181,6 +186,19 @@ def test_fetch_overpass_retries_on_runtime_error_remark(tmp_path):
     cached = list(tmp_path.glob("*.json"))
     assert len(cached) == 1
     assert json.loads(cached[0].read_text()) == SAMPLE  # the remark payload was never cached
+
+
+def test_fetch_overpass_retries_on_a_non_json_body(tmp_path):
+    # An overloaded Overpass instance answers 200 with an HTML error page. That is transient,
+    # so it is retried and never cached.
+    calls: list[tuple[str, str | None]] = []
+    sleeps: list[float] = []
+    client = make_client(["<html>Gateway overloaded</html>", SAMPLE], calls)
+    assert fetch_overpass("q8", tmp_path, client=client, sleep=sleeps.append) == SAMPLE
+    assert sleeps == [2.0]
+    cached = list(tmp_path.glob("*.json"))
+    assert len(cached) == 1
+    assert json.loads(cached[0].read_text()) == SAMPLE
 
 
 def test_fetch_overpass_does_not_retry_client_errors(tmp_path):

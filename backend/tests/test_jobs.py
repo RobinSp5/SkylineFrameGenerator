@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from app.jobs import JOB_FILES, MAX_ACTIVE_JOBS, Job, JobQueueFull, JobStore
-from skylineframe.errors import FetchError
+from skylineframe.errors import AreaError, FetchError
 from skylineframe.export import ExportPaths
 from skylineframe.pipeline import RunResult
 from skylineframe.spec import FrameSpec
@@ -33,7 +33,7 @@ def crashing_runner(spec, out_dir, cache_dir, progress):
 
 
 def antimeridian_runner(spec, out_dir, cache_dir, progress):
-    raise ValueError("Areas crossing the antimeridian (±180° longitude) are not supported.")
+    raise AreaError("Areas crossing the antimeridian (±180° longitude) are not supported.")
 
 
 def wait_done(store: JobStore, job_id: str, timeout_s: float = 5.0):
@@ -73,7 +73,7 @@ def test_unexpected_exception_is_hidden(tmp_path):
     assert "Unexpected" in job.message
 
 
-def test_value_error_message_reaches_user(tmp_path):
+def test_area_error_message_reaches_user(tmp_path):
     store = JobStore(tmp_path / "jobs", tmp_path / "cache", runner=antimeridian_runner)
     job = wait_done(store, store.create(spec()).id)
     assert job.status == "error"

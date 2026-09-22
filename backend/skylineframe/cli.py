@@ -34,8 +34,8 @@ def generate(
     cache: Annotated[Path, typer.Option(help="Overpass cache directory")] = Path(".cache/overpass"),
 ) -> None:
     # Spec construction is inside the try: out-of-range options must read as an error line,
-    # not as a pydantic traceback. ValidationError and ValueError (e.g. the antimeridian guard
-    # in query_bbox) are named explicitly so the boundary does not depend on their hierarchy.
+    # not as a pydantic traceback. Pydantic's ValidationError is named next to SkylineError
+    # because it is the one expected failure that is not part of our own hierarchy.
     try:
         spec = FrameSpec(
             center_lat=lat,
@@ -48,7 +48,7 @@ def generate(
             z_exaggeration=z,
         )
         result = run(spec, out, cache, progress=lambda stage, msg: typer.echo(f"[{stage}] {msg}"))
-    except (SkylineError, ValidationError, ValueError) as exc:
+    except (SkylineError, ValidationError) as exc:
         typer.echo(f"Error: {_message(exc)}", err=True)
         raise typer.Exit(code=1)
     typer.echo(f"Buildings: {result.stats.get('buildings', 0)}")

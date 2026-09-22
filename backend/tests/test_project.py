@@ -1,6 +1,7 @@
 import pytest
 from shapely.geometry import LineString, Point, Polygon
 
+from skylineframe.errors import AreaError
 from skylineframe.features import Building, Features, Road
 from skylineframe.project import (
     local_transformer,
@@ -75,5 +76,5 @@ def test_project_features_keeps_attributes():
 
 def test_query_bbox_rejects_antimeridian_crossing():
     s = FrameSpec(center_lat=0.0, center_lon=179.999, side_m=1000)
-    with pytest.raises(ValueError, match="antimeridian"):
+    with pytest.raises(AreaError, match="antimeridian"):
         query_bbox(s)

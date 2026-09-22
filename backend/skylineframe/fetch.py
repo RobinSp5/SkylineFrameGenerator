@@ -153,16 +153,24 @@ def fetch_overpass(
                 last_error = f"network error: {exc}"
             else:
                 if response.status_code == 200:
-                    data = response.json()
-                    # Overpass reports query timeouts and out-of-memory as HTTP 200 with a "remark"
-                    # and an empty element list. Caching that would make a transient failure
-                    # permanent, so treat it exactly like a retryable server error.
-                    remark = data.get("remark", "")
-                    if "runtime error" in remark.lower():
-                        last_error = f"Overpass remark: {remark}"
+                    try:
+                        data = response.json()
+                    except ValueError:
+                        # An overloaded instance can answer 200 with an HTML error page. Like the
+                        # remark below that is transient, so it is retried and never cached.
+                        data = None
+                    if data is None:
+                        last_error = "Overpass returned a non-JSON body"
                     else:
-                        _write_cache(path, data)
-                        return data
+                        # Overpass reports query timeouts and out-of-memory as HTTP 200 with a
+                        # "remark" and an empty element list. Caching that would make a transient
+                        # failure permanent, so treat it exactly like a retryable server error.
+                        remark = data.get("remark", "")
+                        if "runtime error" in remark.lower():
+                            last_error = f"Overpass remark: {remark}"
+                        else:
+                            _write_cache(path, data)
+                            return data
                 else:
                     last_error = f"HTTP {response.status_code}"
                     if response.status_code not in RETRY_STATUSES:

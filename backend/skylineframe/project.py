@@ -6,6 +6,7 @@ from pyproj import CRS, Transformer
 from shapely.geometry import Polygon, box
 from shapely.geometry.base import BaseGeometry
 
+from .errors import AreaError
 from .features import Building, Features, Road, Water
 from .spec import FrameSpec
 
@@ -51,7 +52,7 @@ def query_bbox(spec: FrameSpec, margin_m: float = 100.0) -> tuple[float, float, 
     grown = _rotated_square_metric(spec).buffer(margin_m, join_style="mitre")
     minx, miny, maxx, maxy = _to_wgs84(grown, spec).bounds
     if maxx - minx > 180:
-        raise ValueError("Areas crossing the antimeridian (±180° longitude) are not supported.")
+        raise AreaError("Areas crossing the antimeridian (±180° longitude) are not supported.")
     return (miny, minx, maxy, maxx)
 
 
