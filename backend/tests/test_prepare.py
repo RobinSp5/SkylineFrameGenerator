@@ -188,12 +188,12 @@ def test_water_is_cut_out_under_buildings_and_roads():
     water = unary_union(out.water)
     assert water.intersection(box(-10, -10, 10, 10)).area == pytest.approx(0, abs=1e-6)
     assert water.intersection(unary_union(out.roads)).area == pytest.approx(0, abs=1e-6)
-    # What blocks the water under the house is its block: 20x20 m plus the 0.2 m block hair,
-    # and the road is a 10 m wide strip; each is then grown by the 0.5 m (0.05 mm in print
-    # space) clearance that keeps recess walls off the walls that bound them. The weld is a
-    # shape operation and the hair rounds the block corners, so the outline is only accurate
-    # to its own tolerance.
-    assert water.area == pytest.approx(200 * 200 - 21.4 * 21.4 - 200 * 11, rel=2e-4)
+    # The water surface is taken out of the block input, and this house stands entirely inside
+    # it, so it has no block: what stops the water under it is the house itself, 20x20 m, and
+    # the road is a 10 m wide strip. Each is then grown by the 0.5 m (0.05 mm in print space)
+    # clearance that keeps recess walls off the walls that bound them. The weld is a shape
+    # operation, so the outline is only accurate to its own tolerance.
+    assert water.area == pytest.approx(200 * 200 - 21 * 21 - 200 * 11, rel=2e-4)
 
 
 def test_water_is_clipped_to_square():
@@ -218,6 +218,33 @@ def test_missing_height_falls_back_to_the_area_rule():
     feats = Features(buildings=[Building(box(0, 0, 20, 20), height_m=0.0, kind="yes")])
     out = prepare(feats, spec())
     assert out.buildings[0].height_m == 12.0
+
+
+def test_missing_height_is_estimated_before_the_clip():
+    # 21 x 21 = 441 m² of building, of which 9 x 21 = 189 m² lies inside the square. The area
+    # rule is a property of the building, not of the cut-out: 441 m² lands in the "< 1500" row
+    # => 12 m, while the clipped 189 m² would have landed in "< 400" => 8 m (spec §6.2).
+    feats = Features(buildings=[Building(box(491, 0, 512, 21), height_m=0.0, kind="yes")])
+    out = prepare(feats, spec())
+    assert out.buildings[0].geom.area == pytest.approx(189)
+    assert out.buildings[0].height_m == 12.0
+
+
+def test_multipolygon_building_gets_one_estimate_for_all_its_pieces():
+    # One untagged building with two 15 x 15 m lobes: 450 m² => 12 m. Estimated lobe by lobe
+    # each would be 225 m² => 8 m, so both pieces must carry the one estimate of the building.
+    mp = unary_union([box(0, 0, 15, 15), box(50, 50, 65, 65)])
+    out = prepare(Features(buildings=[Building(mp, height_m=0.0, kind="yes")]), spec())
+    assert len(out.buildings) == 2
+    assert {b.height_m for b in out.buildings} == {12.0}
+
+
+def test_prepare_leaves_the_input_buildings_alone():
+    # The estimate is filled in place, so prepare works on copies: a caller that reuses its
+    # Features (the API keeps one fetch for several specs) must not see filled-in heights.
+    original = Building(box(0, 0, 20, 20), height_m=0.0, kind="yes")
+    prepare(Features(buildings=[original]), spec())
+    assert original.height_m == 0.0 and original.eaves_m == 0.0
 
 
 def test_tagged_height_is_kept():
@@ -382,6 +409,33 @@ def test_a_street_keeps_the_two_rows_in_separate_blocks():
     assert roads.area == pytest.approx(1870, rel=5e-3)
     # The middle of the street is untouched: 30 m of x by 4 m of y = 120 m².
     assert roads.intersection(box(-30, -2, 0, 2)).area == pytest.approx(120.0)
+
+
+def test_a_canal_keeps_the_two_rows_in_separate_blocks():
+    # The same shape as the street test with a 10 m canal instead of a road. The rows overhang
+    # the bank by 2 m, so with the water surface left in the block input the close (radius 4 m,
+    # bridges anything below 8 m) welds both banks into one block — and that block then cuts
+    # the canal recess in two (spec §6.4).
+    houses = [
+        box(-30, 3, -18, 15), box(-12, 3, 0, 15),  # north bank
+        box(-30, -15, -18, -3), box(-12, -15, 0, -3),  # south bank
+    ]
+    feats = Features(buildings=[bld(g) for g in houses], water=[Water(box(-100, -5, 100, 5))])
+    out = prepare(feats, spec(mode=Mode.full))
+
+    assert len(out.blocks) == 2
+    # Each block starts where the canal ends, minus the 0.2 m block hair.
+    assert sorted(b.geom.bounds[1] for b in out.blocks) == pytest.approx([-15.2, 4.8], abs=0.05)
+    assert sorted(b.geom.bounds[3] for b in out.blocks) == pytest.approx([-4.8, 15.2], abs=0.05)
+
+    assert len(out.water) == 1  # one canal, not two pools either side of a block across it
+    water = out.water[0]
+    assert water.intersection(unary_union([b.geom for b in out.blocks])).area == pytest.approx(0, abs=1e-6)
+    # 200 x 10 = 2000 m² of canal inside the square, and only the banks are taken out of it:
+    # the four houses overhang it by 2 m over 12 m each and the blocks reach 0.2 m into it,
+    # 96.2 m² together, grown by the 0.5 m recess clearance to 131.5 m². Measured 1868.85 with
+    # shapely 2.1.2; the weld reproduces the outline only to its own tolerance.
+    assert water.area == pytest.approx(2000 - 131.5, rel=1e-3)
 
 
 def test_block_around_a_single_house_is_not_split_without_roads():

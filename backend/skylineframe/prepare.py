@@ -267,13 +267,24 @@ def road_corridors(roads: list[Road], spec: FrameSpec, square: Polygon) -> BaseG
     return unary_union(buffered).intersection(square)
 
 
+def water_area(water: list[Water], square: Polygon) -> BaseGeometry:
+    """The water surfaces before anything is cut out of them, clipped to the square.
+
+    Blocks are formed around these surfaces and the recesses are cut from them, so both stages
+    see exactly the same water geometry — the same contract road_corridors has (spec §6.4).
+    """
+    if not water:
+        return Polygon()
+    return unary_union([w.geom for w in water]).intersection(square)
+
+
 def build_blocks(
     footprints: list[Building],
     spec: FrameSpec,
     close_m: float,
     min_area_m2: float,
     half_feature_m: float,
-    corridors: BaseGeometry,
+    barriers: BaseGeometry,
     square: Polygon,
 ) -> list[Block]:
     """One Block per connected group of footprints, at the weighted 25th percentile eaves height.
@@ -292,11 +303,12 @@ def build_blocks(
     if not footprints:
         return []
     area = unary_union([b.geom for b in footprints])
-    if not corridors.is_empty:
+    if not barriers.is_empty:
         # The close bridges every gap below 2 x close_m — 12 m at the Skyline preset, which is
-        # most inner-city streets. Taking the road corridors out of the input first keeps the
-        # blocks on their own side of the street (spec §6.4).
-        area = area.difference(corridors)
+        # most inner-city streets and many an inner-city canal. Taking the road corridors and
+        # the water surfaces out of the input first keeps the blocks on their own side of the
+        # street and on their own bank (spec §6.4).
+        area = area.difference(barriers)
     closed = _close(area, close_m, BLOCK_HAIR_MM / spec.scale).intersection(square)
     polys = [p for p in polygons_of(closed) if _is_printable(p, min_area_m2, half_feature_m)]
     if not polys:
@@ -380,11 +392,11 @@ def _road_areas(
 
 
 def _water_areas(
-    water: list[Water], square: Polygon, blocked: BaseGeometry, min_area_m2: float, weld_m: float
+    waters: BaseGeometry, blocked: BaseGeometry, min_area_m2: float, weld_m: float
 ) -> list[Polygon]:
-    if not water:
+    if waters.is_empty:
         return []
-    area = unary_union([w.geom for w in water]).intersection(square).difference(_clearance(blocked, weld_m))
+    area = waters.difference(_clearance(blocked, weld_m))
     return [p for p in polygons_of(_weld(area, weld_m)) if p.area >= min_area_m2]
 
 
@@ -396,21 +408,30 @@ def prepare(features: Features, spec: FrameSpec) -> Prepared:
     min_area_m2 = spec.min_footprint_area_mm2 / scale**2
     close_m = MIN_FEATURE_MM / 2 / scale
 
-    clipped = _clip(features.buildings, square, tol_m)
+    # The type/area estimate is a property of the building, not of the cut-out, so it runs on
+    # the projected but still unclipped footprints: a building sliced by the edge of the square
+    # must not shrink into a lower area class, and a MultiPolygon must be estimated once rather
+    # than once per lobe (spec §6.2). The estimate is filled in place, so prepare works on
+    # shallow copies and leaves the caller's Buildings alone.
+    buildings = [replace(b) for b in features.buildings]
+    estimate_missing_heights(buildings)
+    clipped = _clip(buildings, square, tol_m)
     if not spec.parts:
         clipped = [b for b in clipped if not b.is_part]
     if not spec.roofs:
         for b in clipped:
             b.roof = None
-    estimate_missing_heights(clipped)
     footprints = assign_parts(clipped, spec.default_building_height_m)
     for b in footprints:
         resolve_roof(b, spec.rotation_deg)
 
     full = spec.mode == Mode.full
-    # Only the full mode has roads at all; in simple mode nothing is subtracted (spec §6.4).
+    # Only the full mode has roads and water at all; in simple mode nothing is subtracted and
+    # the close is free to weld across both (spec §6.4).
     corridors = road_corridors(features.roads, spec, square) if full else Polygon()
-    blocks = build_blocks(footprints, spec, close_m, min_area_m2, half_feature_m, corridors, square)
+    waters = water_area(features.water, square) if full else Polygon()
+    barriers = unary_union([corridors, waters])
+    blocks = build_blocks(footprints, spec, close_m, min_area_m2, half_feature_m, barriers, square)
     buildings = [b for b in footprints if _is_printable(b.geom, min_area_m2, half_feature_m)]
     coverage = _coverage(footprints, blocks, buildings)
     if not full:
@@ -424,7 +445,7 @@ def prepare(features: Features, spec: FrameSpec) -> Prepared:
     blocked = unary_union([*(b.geom for b in blocks), *(b.geom for b in buildings)])
     roads = _road_areas(corridors, blocked, recess_min_area_m2, weld_m)
     blocked_for_water = unary_union([blocked, *roads])
-    water = _water_areas(features.water, square, blocked_for_water, recess_min_area_m2, weld_m)
+    water = _water_areas(waters, blocked_for_water, recess_min_area_m2, weld_m)
     return Prepared(
         buildings=buildings, blocks=blocks, roads=roads, water=water, footprint_coverage=coverage
     )
