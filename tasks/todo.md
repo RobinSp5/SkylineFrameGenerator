@@ -13,12 +13,12 @@ Spec: docs/superpowers/specs/2026-09-21-skyline-frame-generator-design.md
 - [x] Task 7: Export STL/3MF/GLB mit Verifikation
 - [x] Task 8: Pipeline, CLI, Offline-E2E-Test
 - [x] Task 9: FastAPI mit Hintergrund-Jobs
-- [ ] Task 10: Geocoding über Nominatim
+- [x] Task 10: Geocoding über Nominatim
 
 ## Frontend
-- [ ] Task 11: Vite-Grundgerüst, Quadrat-Geometrie, API-Client
-- [ ] Task 12: Karte mit verschiebbarem Quadrat und Ortssuche
-- [ ] Task 13: Seitenleiste, 3D-Vorschau, Verdrahtung
+- [x] Task 11: Vite-Grundgerüst, Quadrat-Geometrie, API-Client
+- [x] Task 12: Karte mit verschiebbarem Quadrat und Ortssuche
+- [x] Task 13: Seitenleiste, 3D-Vorschau, Verdrahtung
 
 ## Abschluss
 - [ ] Task 14: Makefile, README, Playwright-Smoke-Test
