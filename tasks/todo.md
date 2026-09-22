@@ -21,7 +21,7 @@ Spec: docs/superpowers/specs/2026-09-21-skyline-frame-generator-design.md
 - [x] Task 13: Seitenleiste, 3D-Vorschau, Verdrahtung
 
 ## Abschluss
-- [ ] Task 14: Makefile, README, Playwright-Smoke-Test
+- [x] Task 14: Makefile, README, Playwright-Smoke-Test
 - [ ] Task 15: Manuelle Abnahme (echter Lauf + Bambu Studio)
 
 ## Review
