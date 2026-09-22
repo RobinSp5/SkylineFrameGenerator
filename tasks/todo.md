@@ -93,11 +93,11 @@ Restliche geteilte Kanten liegen ausschließlich an Gebäudeecken (z > 0), die s
 ## Phase 2 – Building Detail Upgrade
 Plan: docs/superpowers/plans/2026-09-22-building-detail-upgrade.md
 Spec: docs/superpowers/specs/2026-09-22-building-detail-design.md
-- [ ] Task 1: Datenmodell, Spec-Felder und Projektion
-- [ ] Task 2: Fetch — building:part, Dach-Tags, Höhenschätzung, neue Fixtures (einmalig Netz)
-- [ ] Task 3: Prepare — Höhen auffüllen, Teile zuordnen, Blöcke bilden, Dächer vorbereiten
-- [ ] Task 4: Dachkörper (roofs.py)
-- [ ] Task 5: Skalierung und Mesh — Blöcke, Teile, Dächer
-- [ ] Task 6: Pipeline, Statistik, CLI-Flags und API-Durchreichung
+- [x] Task 1: Datenmodell, Spec-Felder und Projektion
+- [x] Task 2: Fetch — building:part, Dach-Tags, Höhenschätzung, neue Fixtures (einmalig Netz)
+- [x] Task 3: Prepare — Höhen auffüllen, Teile zuordnen, Blöcke bilden, Dächer vorbereiten
+- [x] Task 4: Dachkörper (roofs.py)
+- [x] Task 5: Skalierung und Mesh — Blöcke, Teile, Dächer
+- [x] Task 6: Pipeline, Statistik, CLI-Flags und API-Durchreichung
 - [ ] Task 7: Frontend — Presets und neue Statuszeile
 - [ ] Task 8: README und Abnahme (Frankfurt Skyline/Detail, Manhattan; Bambu Studio manuell)
