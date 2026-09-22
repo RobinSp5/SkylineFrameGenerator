@@ -8,7 +8,8 @@ import trimesh
 from shapely.geometry import Polygon
 
 from .errors import MeshError
-from .scale import Scaled
+from .roofs import roof_solid
+from .scale import Prism, Scaled
 from .spec import FrameSpec
 
 EPS = 0.01  # overshoot of cutters above the plate top for a clean boolean cut
@@ -76,20 +77,74 @@ def recess(polys: list[Polygon], depth: float) -> tuple[m3d.Manifold, m3d.Manifo
     return cutter, inlay
 
 
+def _is_solid(p: Prism) -> bool:
+    return p.geom.area > 0 and p.height_mm > p.z0_mm
+
+
+def _roof_body(p: Prism) -> m3d.Manifold | None:
+    """The roof of one footprint, cut down to the footprint itself (spec §7).
+
+    The clip prism reaches EPS below the eaves and EPS above the ridge: its bottom face must
+    not be coplanar with the bottom face of the roof body, or the intersection has to resolve
+    two coincident faces. Overshooting also leaves the roof overlapping the body it sits on
+    instead of touching it face to face.
+    """
+    if p.roof is None:
+        return None
+    height = p.roof.z_ridge_mm - p.roof.z_eaves_mm + 2 * EPS
+    clip = prism(p.geom, height, z0=p.roof.z_eaves_mm - EPS)
+    return roof_solid(
+        p.roof.rect_mm,
+        p.roof.z_eaves_mm,
+        p.roof.z_ridge_mm,
+        p.roof.shape,
+        p.roof.direction_deg,
+        clip=clip,
+    )
+
+
+def _roof_bodies(prisms: list[Prism]) -> list[m3d.Manifold]:
+    """All roofs of a list of prisms. Built once and reused by the flush and the sunk union:
+    a roof sits above the plate, so sinking the bodies never moves it."""
+    roofs = []
+    for p in prisms:
+        if not _is_solid(p):
+            continue
+        roof = _roof_body(p)
+        if roof is not None:
+            roofs.append(roof)
+    return roofs
+
+
+def _bodies(prisms: list[Prism], sink: float) -> list[m3d.Manifold]:
+    """Vertical bodies. `sink` pulls a footprint that stands on the plate below it."""
+    out: list[m3d.Manifold] = []
+    for p in prisms:
+        if not _is_solid(p):
+            continue
+        bottom = p.z0_mm - sink if p.z0_mm <= 0 else p.z0_mm
+        out.append(prism(p.geom, p.height_mm - bottom, z0=bottom))
+    return out
+
+
 def build_meshes(scaled: Scaled, spec: FrameSpec) -> MeshSet:
-    if not scaled.buildings:
+    if not scaled.buildings and not scaled.blocks:
         raise MeshError("No buildings in the selected area.")
 
-    footprints = [b for b in scaled.buildings if b.geom.area > 0]
-    if not footprints:
+    bodies = _bodies(scaled.buildings, 0.0) + _bodies(scaled.blocks, 0.0)
+    if not bodies:
         raise MeshError("No printable building footprints in the selected area.")
+    # Roofs are hulls and boolean intersections — the two unions below share them instead of
+    # building every roof twice. Blocks never carry a roof.
+    roofs = _roof_bodies(scaled.buildings)
 
     base = plate(spec)
     # Exported part: flush on the plate top, so 3MF parts never overlap.
-    buildings = _check(union([prism(b.geom, b.height_mm) for b in footprints]), "buildings")
+    buildings = _check(union(bodies + roofs), "buildings")
     # For the single-colour union we sink the buildings slightly so the boolean never relies on
-    # a pure face contact at z = 0.
-    buildings_sunk = union([prism(b.geom, b.height_mm + BUILDING_SINK_MM, z0=-BUILDING_SINK_MM) for b in footprints])
+    # a pure face contact at z = 0. Parts that start in the air keep their bottom.
+    sunk_bodies = _bodies(scaled.buildings, BUILDING_SINK_MM) + _bodies(scaled.blocks, BUILDING_SINK_MM)
+    buildings_sunk = union(sunk_bodies + roofs)
 
     water = roads = None
     cut = recess(scaled.water, spec.water_depth_mm) if scaled.water else None
