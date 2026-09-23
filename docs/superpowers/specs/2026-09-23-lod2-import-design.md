@@ -157,7 +157,7 @@ Geometrie erzeugt mit Skyline Frame Generator am 2026-09-23.
 Gebäude: 3D-Gebäudemodell LoD2 Hessen, Hessische Verwaltung für Bodenmanagement und Geoinformation,
          Datenlizenz Deutschland – Zero – Version 2.0 (https://www.govdata.de/dl-de/zero-2-0).
 Straßen, Wasser, Grundrisse: © OpenStreetMap-Mitwirkende, ODbL (https://www.openstreetmap.org/copyright).
-Beim Verkauf von Drucken ist die OpenStreetMap-Namensnennung anzubringen.
+Bei Verkauf, Weitergabe oder Veröffentlichung von Drucken und Dateien ist die OpenStreetMap-Namensnennung anzubringen.
 ```
 
 Der Text je Quelle steht in `sources.py` und wird dort gepflegt, nicht im Code verstreut.
@@ -166,7 +166,7 @@ Der Text je Quelle steht in `sources.py` und wird dort gepflegt, nicht im Code v
 
 - `FrameSpec.lod2: bool = True` (nutzen, wenn verfügbar). `extra="forbid"` bleibt.
 - CLI: `--lod2/--no-lod2`; die Ausgabe nennt die genutzte Quelle und die Zahl der LoD2-Gebäude.
-- Statistik: `lod2_buildings` (Gebäude mit echtem Körper im Modell), `lod2_source` (Name oder leer; leer auch dann, wenn ein Provider zwar geantwortet hat, aber keine seiner Geometrien ins Modell gelangt ist), `lod2_rejected` (auf ein Prisma zurückgefallene Modelle — **zwei Ursachen in einer Zahl**, die die Ausgabe nicht auseinanderhält: Modelle, deren Körper sich nicht schließen ließ, **und** geschlossene Körper, die die Druckbarkeitsprüfung anschließend verworfen hat, weil sie unter `min_building_height_mm` bleiben oder die Platte verlassen; gemessen 2026-09-23 am 1500-m-Quadrat Frankfurt: 8 + 38 = 46).
+- Statistik: `lod2_buildings` (Gebäude mit echtem Körper im Modell), `lod2_source` (Name oder leer; leer auch dann, wenn ein Provider zwar geantwortet hat, aber keine seiner Geometrien ins Modell gelangt ist), `lod2_rejected` (auf ein Prisma zurückgefallene Modelle — **zwei Ursachen in einer Zahl**, die die Ausgabe nicht auseinanderhält: Modelle, deren Körper sich nicht schließen ließ, **und** geschlossene Körper, die die Druckbarkeitsprüfung anschließend verworfen hat, weil sie unter `min_building_height_mm` bleiben, die Platte verlassen oder beim Schnitt mit dem vereinfachten Grundriss-Prisma leer bleiben bzw. einen Fehlerstatus liefern; gemessen 2026-09-23 am 1500-m-Quadrat Frankfurt: 8 + 38 = 46).
 - UI: Statuszeile nennt die Quelle, zum Beispiel „Fertig: 851 Gebäude, 164 Blöcke, 612 davon aus LoD2 Hessen".
 
 ## 9. Verhalten ohne LoD2
