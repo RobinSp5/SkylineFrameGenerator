@@ -68,8 +68,16 @@ def run(
     # LoD2 models close into a body, and scale still drops one that stays below the printable
     # minimum or leaves the plate. Such a building prints as a prism, so it belongs with the
     # rejected ones — the two numbers together are every LoD2 model that reached the print.
-    bodies_prepared = sum(1 for b in prepared.buildings if b.lod2 and b.solid_m is not None)
     bodies_printed = sum(1 for p in scaled.buildings if p.solid_mm is not None)
+    # Paired, not subtracted: the difference of the two totals only counts the dropped bodies
+    # while scale_features hands back one prism per prepared building. strict=True says that
+    # out loud, so a scale stage that ever filters fails here instead of quietly letting the
+    # two LoD2 numbers stop partitioning — a subtraction could even go negative.
+    bodies_dropped = sum(
+        1
+        for b, p in zip(prepared.buildings, scaled.buildings, strict=True)
+        if b.solid_m is not None and p.solid_mm is None
+    )
     stats: dict[str, float | str] = {
         # `buildings` stays the headline number the API, the frontend and the Playwright test
         # already read; buildings_individual is the same count under the spec's name.
@@ -93,7 +101,7 @@ def run(
         # status line promise roof geometry. lod2_rejected carries the rest.
         "lod2_buildings": bodies_printed,
         "lod2_source": lod2_source,
-        "lod2_rejected": prepared.lod2_rejected + bodies_prepared - bodies_printed,
+        "lod2_rejected": prepared.lod2_rejected + bodies_dropped,
         "lod2_triangles": sum(p.solid_mm.num_tri() for p in scaled.buildings if p.solid_mm is not None),
         "stl_bytes": paths.stl.stat().st_size,
         "threemf_bytes": paths.threemf.stat().st_size,

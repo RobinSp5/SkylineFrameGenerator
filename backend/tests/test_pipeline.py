@@ -160,3 +160,7 @@ def test_lod2_off_gives_the_same_model_as_no_lod2_data(tmp_path, frankfurt_spec,
     )
     assert with_flag_off.paths.stl.read_bytes() == plain.paths.stl.read_bytes()
     assert with_flag_off.stats["lod2_buildings"] == 0
+    # The reported source and SOURCES.txt have to go quiet as well: the data was in the fetch
+    # result, and naming Hessen next to a model that carries none of it is a false attribution.
+    assert with_flag_off.stats["lod2_source"] == ""
+    assert "Hessen" not in with_flag_off.paths.sources.read_text(encoding="utf-8")
