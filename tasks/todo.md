@@ -187,6 +187,20 @@ Spec: docs/superpowers/specs/2026-09-23-lod2-import-design.md
 - [x] Task 4: lod2/provider.py und lod2/hessen.py — Protokoll, Registry, WFS
 - [x] Task 5: Pipeline-Einbau — fetch holt, prepare verdrängt und verkörpert
 - [x] Task 6: scale und mesh — Körper statt Prisma plus Dach
-- [ ] Task 7: Statistik, SOURCES.txt, CLI, API und UI
-- [ ] Task 8: README und Abnahme (Frankfurt mit und ohne LoD2; Bambu Studio manuell)
+- [x] Task 7: Statistik, SOURCES.txt, CLI, API und UI
+- [x] Task 8: README und Abnahme (Frankfurt mit und ohne LoD2; Bambu Studio manuell)
 (Bayern-Provider auf eine spätere Phase verschoben, siehe Spec 3.2)
+
+Abnahmemessung der vier Läufe: docs/superpowers/plans/2026-09-23-lod2-import.md, Step 5.
+
+### Bambu Studio Phase 3 (manuell, offen)
+
+Vergleich `out/skyline_lod2/model.3mf` gegen `out/skyline_osm/model.3mf`:
+
+- [ ] Alle vier Teile (`base`, `buildings`, `water`, `roads`) sind da; „Select all → Rechtsklick → Assemble" funktioniert wie bisher.
+- [ ] Die automatische Reparatur wird **abgelehnt**; das Modell bleibt vollständig.
+- [ ] Im LoD2-Modell sitzen echte Dächer (Sattel-, Walm- und Turmformen) auf den Häusern, keine Nadeln über ihnen, und nichts schwebt.
+- [ ] Die Türme des Bankenviertels sind sichtbar höher und unterschiedlich hoch — im OSM-Modell sind sie eine gleichförmige Kistenreihe.
+- [ ] Kein Gebäude ragt über den Plattenrand und keines sackt unter die Plattenoberkante.
+- [ ] Die Straßenrillen laufen im LoD2-Modell genauso durch wie im OSM-Modell.
+- [ ] `SOURCES.txt` liegt neben dem Modell und nennt Hessen **und** OpenStreetMap.

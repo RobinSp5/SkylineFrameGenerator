@@ -40,8 +40,12 @@ After that http://localhost:8000 is all you need; no Vite server required. For d
 
 `--side` and `--plate` override the preset. For comparisons, `--no-roofs` keeps every roof flat and
 `--no-parts` renders one box per outline instead of the `building:part` setbacks (both are on by
-default). The output reports buildings, blocks, parts, roofs, roads (count and groove area in mm²)
-and the footprint coverage (building area in the model divided by building area in the square).
+default). `--no-lod2` switches off the official LoD2 building models and falls back to OpenStreetMap
+heights everywhere; `--no-roofs` does not touch LoD2 buildings, because their roof shape is part of
+the body rather than a separate solid. The output reports buildings, blocks, parts, roofs, roads
+(count and groove area in mm²), the footprint coverage (building area in the model divided by
+building area in the square) and, where official data was used, the LoD2 source with the number of
+buildings taken from it, the number of models whose body would not close, and their triangle count.
 
 ## Printing (Bambu Studio)
 
@@ -55,6 +59,9 @@ and the footprint coverage (building area in the model divided by building area 
 - Visual check after import: roofs sit on the houses rather than as needles above them, `building:part`
   setbacks do not hang freely above the model (floating parts are extended down to the plate), and the
   street grooves run through: the merged blocks end at the streets instead of bridging them.
+- In an area with LoD2 coverage (currently Hessen) the roofs are the real ones from the official model
+  rather than a shape guessed from `roof:shape`; the ridges are where they are in the city, and towers
+  hit their real height instead of an estimate.
 
 ## Tests
 
@@ -66,14 +73,37 @@ and the footprint coverage (building area in the model divided by building area 
 OpenStreetMap via the Overpass API (responses are cached under `backend/.cache/overpass`),
 place search via Nominatim. Please respect the usage policies of both services.
 
+Where official LoD2 building models are openly available, they replace the OpenStreetMap buildings:
+real heights and real roof shapes instead of estimates. Two sources are wired up:
+
+| Source | Coverage | Service |
+|---|---|---|
+| LoD2 Hessen | 7.777–10.224 E, 49.396–51.655 N | INSPIRE WFS 2.0.0, one request per square |
+
+A square has to lie entirely inside a coverage; on a state border the run stays on OpenStreetMap
+rather than mixing real and estimated heights inside one model. More states plug into the same
+provider layer without touching the pipeline; Bavaria is verified but deferred until its required
+attribution wording is available in machine-readable form. Everything else — roads, water and
+the footprints outside the LoD2 stock — always comes from OpenStreetMap.
+
+LoD2 responses are cached under `backend/.cache/overpass/lod2`, keyed per bounding box. They are
+large: a 1500 m square in Frankfurt is about 152 MB (6 119 buildings, 114 672 polygons, 52 s to
+download). Deleting the directory only costs the next run its download.
+
+If no source covers the square, the service is unreachable, or `--no-lod2` is given, the result is
+exactly the OpenStreetMap-only model — a LoD2 outage never fails a run.
+
 `SKYLINE_OVERPASS_URL` points the generator at a different Overpass endpoint (for example your own instance).
 
-Soft limit: responses with more than 250,000 OSM elements are rejected; choose a smaller square or the
-simple mode in that case.
+Soft limit: Overpass responses with more than 250,000 OSM elements are rejected, and a LoD2 response
+above 256 MB is abandoned; choose a smaller square or the simple mode in that case.
 
 ## Data licence
 
-The geometry comes from OpenStreetMap and is licensed under the [Open Database License (ODbL)](https://opendatacommons.org/licenses/odbl/).
+Every run writes `SOURCES.txt` next to the model, naming each source it actually used. That file is
+what has to travel with a print or a download.
+
+The OpenStreetMap geometry is licensed under the [Open Database License (ODbL)](https://opendatacommons.org/licenses/odbl/).
 A printed model is a "Produced Work" in the sense of the ODbL: it may be sold, and the database itself
 does not have to be published for that. Attribution is mandatory:
 
@@ -81,3 +111,8 @@ does not have to be published for that. Attribution is mandatory:
 
 visibly on the product page, on an insert, or on the base plate. The generator does **not** write this
 notice into the model itself; anyone selling prints has to add it.
+
+The LoD2 models carry their own terms:
+
+- **Hessen:** [Datenlizenz Deutschland – Zero – Version 2.0](https://www.govdata.de/dl-de/zero-2-0) — no conditions,
+  attribution not required. `SOURCES.txt` names the source anyway.
