@@ -29,7 +29,7 @@ OSM = Attribution(
     name="osm",
     text=(
         "Straßen, Wasser, Grundrisse: © OpenStreetMap-Mitwirkende, ODbL (https://www.openstreetmap.org/copyright).\n"
-        "Beim Verkauf von Drucken ist die OpenStreetMap-Namensnennung anzubringen."
+        "Bei Verkauf, Weitergabe oder Veröffentlichung von Drucken und Dateien ist die OpenStreetMap-Namensnennung anzubringen."
     ),
 )
 

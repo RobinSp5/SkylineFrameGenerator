@@ -12,7 +12,7 @@ def test_osm_only_text():
     text = sources_text("2026-09-23")
     assert text.startswith("Geometrie erzeugt mit Skyline Frame Generator am 2026-09-23.\n")
     assert "© OpenStreetMap-Mitwirkende, ODbL (https://www.openstreetmap.org/copyright)." in text
-    assert "Beim Verkauf von Drucken ist die OpenStreetMap-Namensnennung anzubringen." in text
+    assert "Bei Verkauf, Weitergabe oder Veröffentlichung von Drucken und Dateien ist die OpenStreetMap-Namensnennung anzubringen." in text
     assert "LoD2" not in text
     assert text.endswith("\n")
 
@@ -24,7 +24,7 @@ def test_hessen_text_is_the_block_from_the_spec():
         "Gebäude: 3D-Gebäudemodell LoD2 Hessen, Hessische Verwaltung für Bodenmanagement und Geoinformation,\n"
         "         Datenlizenz Deutschland – Zero – Version 2.0 (https://www.govdata.de/dl-de/zero-2-0).\n"
         "Straßen, Wasser, Grundrisse: © OpenStreetMap-Mitwirkende, ODbL (https://www.openstreetmap.org/copyright).\n"
-        "Beim Verkauf von Drucken ist die OpenStreetMap-Namensnennung anzubringen.\n"
+        "Bei Verkauf, Weitergabe oder Veröffentlichung von Drucken und Dateien ist die OpenStreetMap-Namensnennung anzubringen.\n"
     )
 
 

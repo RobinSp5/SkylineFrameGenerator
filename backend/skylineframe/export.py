@@ -83,7 +83,8 @@ def export_all(meshset: MeshSet, spec: FrameSpec, out_dir: Path, sources: str | 
     trimesh.Scene(parts).export(str(paths.glb), file_type="glb")
 
     # Provenance travels with the model (spec §7). Written unconditionally: the ODbL notice is
-    # mandatory for anyone selling prints, and a caller that forgets the argument must still get it.
+    # mandatory for anyone who sells, passes on or publishes a print, and a caller that forgets the
+    # argument must still get it.
     paths.sources = out_dir / SOURCES_FILENAME
     text = sources if sources is not None else sources_text(date.today().isoformat())
     paths.sources.write_text(text, encoding="utf-8")

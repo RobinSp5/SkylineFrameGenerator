@@ -113,8 +113,10 @@ does not have to be published for that. Attribution is mandatory:
 
 > Contains data from © OpenStreetMap contributors (ODbL)
 
-visibly on the product page, on an insert, or on the base plate. The generator does **not** write this
-notice into the model itself; anyone selling prints has to add it.
+visibly on the product page, on an insert, or on the base plate. ODbL section 4.3 ties that notice to
+any public use of the Produced Work, not to sale: giving a print away, exhibiting it or uploading the
+STL to a model-sharing site all require it. The generator does **not** write the notice into the
+model itself; whoever sells, passes on or publishes a print has to add it.
 
 The LoD2 models carry their own terms:
 
