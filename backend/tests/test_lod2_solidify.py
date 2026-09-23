@@ -93,6 +93,37 @@ def test_a_flat_model_has_no_height_and_is_rejected():
     assert to_solid((((0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)),)) is None
 
 
+def test_a_point_that_is_not_a_triple_is_skipped_rather_than_raised_on():
+    # A bulk run counts a malformed model as discarded; it must not stop on it (spec §5.5).
+    assert faces_of((((0, 0), (1, 0), (1, 1), (0, 1)),)) == []
+    assert to_solid((((0, 0), (1, 0), (1, 1)),)) is None
+
+
+# --- overlapping upward faces (the tents are unioned, not concatenated) -
+
+
+def test_overlapping_roof_faces_are_not_counted_twice():
+    # A 2x2x2 m building with a 0.5x0.5 m dormer 1 m above its roof: the dormer's top face and
+    # the main roof overlap in plan. Concatenating the tents measured 8.75 m³ — the dormer's
+    # column was counted on top of the main body instead of inside it.
+    dormer = (
+        ((0, 0, 2), (2, 0, 2), (2, 2, 2), (0, 2, 2)),
+        ((0.5, 0.5, 3), (1.0, 0.5, 3), (1.0, 1.0, 3), (0.5, 1.0, 3)),
+        ((0, 0, 0), (2, 0, 0), (2, 0, 2), (0, 0, 2)),
+        ((2, 0, 0), (2, 2, 0), (2, 2, 2), (2, 0, 2)),
+        ((2, 2, 0), (0, 2, 0), (0, 2, 2), (2, 2, 2)),
+        ((0, 2, 0), (0, 0, 0), (0, 0, 2), (0, 2, 2)),
+    )
+    solid = to_solid(dormer)
+    assert solid.volume() == pytest.approx(8.25, abs=1e-3)  # 2*2*2 plus 0.5*0.5*1
+    assert solid.genus() == 0
+
+
+def test_a_duplicated_roof_face_does_not_double_the_volume():
+    # Measured with concatenated tents: 1.999999 for a unit cube.
+    assert to_solid(CUBE + (CUBE[1],)).volume() == pytest.approx(1.0, abs=1e-5)
+
+
 # --- the simplify guard (spec §5) --------------------------------------
 
 
@@ -112,8 +143,8 @@ def test_simplify_refuses_a_tolerance_that_dissolves_the_body():
 
 
 def test_the_simplify_guard_holds_on_a_recorded_building(lod2_local):
-    # The Schirn at the skyline preset: 100 mm on 1500 m, z exaggeration 1.5. Measured before
-    # this ran: 842 triangles and 9.331 mm³ scaled, 676 triangles and 9.005 mm³ simplified.
+    # The Schirn at the skyline preset: 100 mm on 1500 m, z exaggeration 1.5. Measured: 776
+    # triangles scaled, fewer after simplify, and the volume holds to well inside the guard.
     s = 100.0 / 1500.0
     solid = to_solid(lod2_local[0].surfaces).scale((s, s, s * 1.5))
     reduced = simplified(solid, SOLID_SIMPLIFY_MM)
@@ -133,14 +164,16 @@ def test_simplify_is_a_no_op_for_a_non_positive_tolerance():
 
 
 @pytest.mark.parametrize(
-    "index,name,area_m2,height_m",
+    "index,name,area_m2,height_m,volume_m3,tris",
     [
-        (0, "(1:Kulturschirn)", 1014.0, 24.21),
-        (1, "(1:Paulskirche)", 1324.0, 56.51),
-        (2, None, 50.0, 3.84),
+        (0, "(1:Kulturschirn)", 1014.0, 24.21, 20995.0, 776),
+        (1, "(1:Paulskirche)", 1324.0, 56.51, 40709.0, 1120),
+        (2, None, 50.0, 3.84, 194.0, 48),
     ],
 )
-def test_recorded_buildings_become_watertight_solids(lod2_local, index, name, area_m2, height_m):
+def test_recorded_buildings_become_watertight_solids(
+    lod2_local, index, name, area_m2, height_m, volume_m3, tris
+):
     building = lod2_local[index]
     assert building.name == name
     footprint = footprint_of(building.surfaces)
@@ -150,15 +183,24 @@ def test_recorded_buildings_become_watertight_solids(lod2_local, index, name, ar
 
     solid = to_solid(building.surfaces)
     assert solid is not None and solid.status() == m3d.Error.NoError
-    assert as_trimesh(solid).is_watertight
+    mesh = as_trimesh(solid)
+    assert mesh.is_watertight
+    # Watertight alone is also true of a heap of disconnected shells — a concatenation of the
+    # roof tents measured genus -81 over 82 shells here and was still "watertight". One body.
+    assert mesh.body_count == 1
+    assert solid.genus() == 0
     assert solid.bounding_box()[2] == pytest.approx(0.0, abs=1e-3)
     assert solid.bounding_box()[5] == pytest.approx(height_m, abs=0.1)
     # The body is the cut of a prism with the roof, so it never spreads beyond its footprint.
     assert solid.volume() <= footprint.area * (span[1] - span[0]) * 1.001
+    # ... and a lower bound too: an inflated volume is exactly what the concatenated tents gave.
+    assert solid.volume() == pytest.approx(volume_m3, rel=0.02)
+    assert solid.num_tri() == pytest.approx(tris, abs=25)
 
 
 def test_a_recorded_building_stays_inside_the_triangle_budget(lod2_local):
     # Spec §5: an LoD2 body costs one to two orders of magnitude more than a prism with a roof.
-    # The Paulskirche is the worst case in the fixture with 217 faces.
+    # The Paulskirche is the worst case in the fixture with 217 faces: 1120 triangles unioned,
+    # where a concatenation of the tents kept 1622 of them on coincident interior walls.
     solid = to_solid(lod2_local[1].surfaces)
-    assert 1000 < solid.num_tri() < 3000
+    assert 900 < solid.num_tri() < 2000
