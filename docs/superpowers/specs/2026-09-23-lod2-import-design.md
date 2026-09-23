@@ -40,7 +40,7 @@ Nicht im Scope: Gelände, Vegetation, LiDAR-Punktwolken und Höhenraster (eigene
 - Abdeckung 7,777 bis 10,224 Ost und 49,396 bis 51,655 Nord.
 - Antwort: GML 3.2, je Gebäude ein `gml:MultiSurface` aus `gml:Polygon`-Flächen mit `posList` in `lat lon z`, z absolut in Metern über NN.
 - Messung: 3 Gebäude, 388 KB, 0,25 s; die Schirn Kunsthalle besteht aus 137 Flächen und reicht von 96,42 bis 120,63 m.
-- Lizenz: Datenlizenz Deutschland Zero 2.0. Keine Bedingungen, Namensnennung nicht erforderlich. Wir nennen die Quelle trotzdem.
+- Lizenz: Datenlizenz Deutschland – Zero – Version 2.0. Keine Bedingungen, Namensnennung nicht erforderlich. Wir nennen die Quelle trotzdem.
 
 ### 3.2 Bayern (verifiziert, aber auf eine spätere Phase verschoben)
 
@@ -155,7 +155,7 @@ Die Pipeline meldet `lod2_triangles` in der Statistik, damit die Abnahme das Bud
 ```
 Geometrie erzeugt mit Skyline Frame Generator am 2026-09-23.
 Gebäude: 3D-Gebäudemodell LoD2 Hessen, Hessische Verwaltung für Bodenmanagement und Geoinformation,
-         Datenlizenz Deutschland Zero 2.0 (https://www.govdata.de/dl-de/zero-2-0).
+         Datenlizenz Deutschland – Zero – Version 2.0 (https://www.govdata.de/dl-de/zero-2-0).
 Straßen, Wasser, Grundrisse: © OpenStreetMap-Mitwirkende, ODbL (https://www.openstreetmap.org/copyright).
 Beim Verkauf von Drucken ist die OpenStreetMap-Namensnennung anzubringen.
 ```

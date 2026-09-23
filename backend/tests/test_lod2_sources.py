@@ -22,7 +22,7 @@ def test_hessen_text_is_the_block_from_the_spec():
     assert text == (
         "Geometrie erzeugt mit Skyline Frame Generator am 2026-09-23.\n"
         "Gebäude: 3D-Gebäudemodell LoD2 Hessen, Hessische Verwaltung für Bodenmanagement und Geoinformation,\n"
-        "         Datenlizenz Deutschland Zero 2.0 (https://www.govdata.de/dl-de/zero-2-0).\n"
+        "         Datenlizenz Deutschland – Zero – Version 2.0 (https://www.govdata.de/dl-de/zero-2-0).\n"
         "Straßen, Wasser, Grundrisse: © OpenStreetMap-Mitwirkende, ODbL (https://www.openstreetmap.org/copyright).\n"
         "Beim Verkauf von Drucken ist die OpenStreetMap-Namensnennung anzubringen.\n"
     )

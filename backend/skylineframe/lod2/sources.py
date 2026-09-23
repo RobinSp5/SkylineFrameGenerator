@@ -20,7 +20,7 @@ HESSEN = Attribution(
     name="hessen",
     text=(
         "Gebäude: 3D-Gebäudemodell LoD2 Hessen, Hessische Verwaltung für Bodenmanagement und Geoinformation,\n"
-        "         Datenlizenz Deutschland Zero 2.0 (https://www.govdata.de/dl-de/zero-2-0)."
+        "         Datenlizenz Deutschland – Zero – Version 2.0 (https://www.govdata.de/dl-de/zero-2-0)."
     ),
 )
 
