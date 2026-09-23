@@ -34,7 +34,13 @@ ROOF_HEIGHT_MIN_M = 2.0
 ROOF_HEIGHT_MAX_M = 6.0
 DOME_HEIGHT_FACTOR = 0.5
 ROUND_ROOF_SHAPES = ("dome", "round")
-LOD2_DISPLACE_FRACTION = 0.5  # spec §6.3: an OSM footprint covered by more than this is dropped
+LOD2_DISPLACE_FRACTION = 0.5  # spec §6.3: an OSM footprint covered by more than this is replaced
+# Floor under the remainder an LoD2 model leaves of an OSM footprint. Two outlines that describe
+# the same wall never agree to the micrometre, so their difference leaves corner triangles of a
+# few square micrometres; those are round-off, not buildings, and must not become footprints.
+# Anything a map or an LoD2 model really describes is orders of magnitude above 100 cm², and
+# anything real but small still reaches the model through its block (spec §6.5).
+LOD2_REMAINDER_MIN_AREA_M2 = 0.01
 
 
 @dataclass
@@ -139,17 +145,24 @@ def lod2_buildings(features: Features) -> list[Building]:
 def drop_covered(
     osm: list[Building], lod2: list[Building]
 ) -> tuple[list[Building], list[BaseGeometry]]:
-    """Split OSM footprints into (kept, displaced geometry) at LOD2_DISPLACE_FRACTION (spec §6.3/§6.4).
+    """Subtract the LoD2 footprints from the OSM ones they take over (spec §6.3/§6.4).
 
-    A footprint more than LOD2_DISPLACE_FRACTION covered by LoD2 is dropped. One rule for outlines
-    and for building:part alike: a part over a LoD2 building is a setback that the body already
-    has, and keeping it would put a second tower inside the first. What is only grazed survives —
-    LoD2 stock ends at state borders and misses new buildings.
+    A footprint LOD2_DISPLACE_FRACTION covered or less survives untouched: LoD2 stock ends at
+    state borders and misses new buildings, so what is only grazed must not move. Above that
+    share the LoD2 model is the building, and the OSM footprint is replaced — but only where the
+    LoD2 model actually covers it. Whatever sticks out is a wing, an extension or a garage the
+    LoD2 stock does not know about, and it stays as a footprint of its own. Slivers among those
+    remainders are not printable and reach the model through their block, which is how the rest
+    of the pipeline already recovers small geometry (spec §6.5). Discarding the whole footprint
+    instead threw 21 023 m² away in a 1500 m Frankfurt square — 2.2 % of its building area.
 
-    The displaced geometry is handed back because a dropped footprint is usually a little larger
-    than the LoD2 model that replaces it, and the difference is building area that the model no
-    longer carries. It belongs in the denominator of footprint_coverage, which is the acceptance
-    gate for this feature — measured against the survivors alone the metric could never see it.
+    One rule for outlines and for building:part alike: a part over a LoD2 building is a setback
+    that the body already has, and keeping it would put a second tower inside the first.
+
+    Returns (kept, displaced): the displaced geometry is the area the LoD2 models genuinely took
+    over. It belongs in the denominator of footprint_coverage, which is the acceptance gate for
+    this feature, so that the metric describes the building area that stood in the square rather
+    than the area that survived this stage.
     """
     if not lod2:
         return osm, []
@@ -165,11 +178,21 @@ def drop_covered(
         if len(hits) == 0:
             kept.append(b)
             continue
-        covered = unary_union([lod2[int(i)].geom for i in hits]).intersection(b.geom).area
-        if covered / area <= LOD2_DISPLACE_FRACTION:
+        cover = unary_union([lod2[int(i)].geom for i in hits])
+        taken = cover.intersection(b.geom)
+        if taken.area / area <= LOD2_DISPLACE_FRACTION:
             kept.append(b)
-        else:
-            displaced.append(b.geom)
+            continue
+        displaced.extend(polygons_of(taken))
+        # polygons_of rather than a bare difference: the remainder of a building the LoD2 model
+        # cuts in two is a MultiPolygon, and a footprint is one polygon everywhere else in this
+        # module.
+        for piece in polygons_of(b.geom.difference(cover)):
+            if piece.area < LOD2_REMAINDER_MIN_AREA_M2:
+                continue
+            # No roof on the remainder, exactly as in assign_parts: roof:shape described the whole
+            # building, and over a leftover strip the roof body would be a spike.
+            kept.append(replace(b, geom=piece, roof=None, rect=()))
     return kept, displaced
 
 

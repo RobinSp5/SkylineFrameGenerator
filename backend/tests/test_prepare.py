@@ -647,32 +647,50 @@ def test_drop_covered_keeps_everything_without_lod2():
     assert drop_covered(osm, []) == (osm, [])
 
 
-def test_drop_covered_hands_back_what_it_displaced():
+def test_drop_covered_keeps_the_uncovered_remainder():
+    # A 40x30 m OSM building with a 40x20 m LoD2 model over it: 67 % covered, so the LoD2 model
+    # takes over — but only the part it actually covers. The 40x10 m the LoD2 stock does not know
+    # about is still a building and stays (spec §6.3).
     osm = [
-        Building(box(-20, -15, 20, 15), height_m=8.0, osm_id="way/1", kind="yes"),
+        Building(box(-20, -15, 20, 15), height_m=8.0, osm_id="way/1", kind="yes", roof=RoofSpec("gabled")),
         Building(box(100, 100, 120, 120), height_m=8.0, osm_id="way/2", kind="yes"),
     ]
     kept, displaced = drop_covered(osm, lod2_buildings(Features(lod2=[lod2_box(-20, -15, 20, 5, 100.0, 130.0)])))
-    assert [b.osm_id for b in kept] == ["way/2"]
-    # The caller needs the geometry, not the Building: it only ever lands in the coverage
-    # denominator, and the footprint it stood on is what was lost.
-    assert [g.area for g in displaced] == [pytest.approx(1200)]
+    # One remainder, not three: the two outlines describe the same wall to different precision,
+    # and the square-micrometre corner triangles their difference leaves are round-off.
+    assert [b.osm_id for b in kept] == ["way/1", "way/2"]
+    remainder = kept[0]
+    assert remainder.geom.bounds == pytest.approx((-20, 5, 20, 15), abs=0.2)
+    assert remainder.geom.area == pytest.approx(400, rel=0.05)
+    assert remainder.height_m == 8.0
+    # Like the remainder of an outline with parts: the roof described the whole building, and on
+    # a leftover strip it would be a spike.
+    assert remainder.roof is None and remainder.rect == ()
+    # Only what the LoD2 model genuinely replaced is displaced; the remainder is not lost.
+    assert [g.area for g in displaced] == [pytest.approx(800, rel=0.05)]
 
 
-def test_coverage_counts_the_area_that_displacement_deleted():
-    # A 40x30 m OSM building with a 40x20 m LoD2 model over it: 67 % covered, so the whole OSM
-    # footprint goes and 400 m² of building area simply disappears from the model. The metric is
-    # the acceptance gate for this feature (spec §6), so it has to see that loss instead of
-    # measuring itself against the survivors.
+def test_drop_covered_splits_a_remainder_that_falls_into_two_pieces():
+    # The LoD2 model runs through the middle of the OSM footprint, so the remainder is a
+    # MultiPolygon and both ends have to survive it.
+    osm = [Building(box(-30, -10, 30, 10), height_m=8.0, osm_id="way/1", kind="yes")]
+    kept, _ = drop_covered(osm, lod2_buildings(Features(lod2=[lod2_box(-20, -10, 20, 10, 100.0, 130.0)])))
+    assert len(kept) == 2
+    assert all(b.osm_id == "way/1" and b.height_m == 8.0 for b in kept)
+    assert all(b.geom.geom_type == "Polygon" for b in kept)
+    assert all(b.geom.area == pytest.approx(200, rel=0.05) for b in kept)
+
+
+def test_the_uncovered_remainder_stays_in_the_model():
+    # The same 40x30 m probe through the whole pipeline: nothing is lost any more, because the
+    # 40x10 m remainder is a printable footprint of its own (spec §6.5).
     feats = Features(
         buildings=[Building(box(-20, -15, 20, 15), height_m=8.0, osm_id="way/1", kind="yes")],
         lod2=[lod2_box(-20, -15, 20, 5, 100.0, 130.0)],
     )
     out = prepare(feats, spec())
-    assert [b.osm_id for b in out.buildings] == ["lod2/hessen/B1"]
-    assert out.footprint_coverage < 1.0
-    # 800 m² of the 1200 m² that stood here are modelled; abs covers the hair the block adds.
-    assert out.footprint_coverage == pytest.approx(800 / 1200, abs=0.02)
+    assert {b.osm_id for b in out.buildings} == {"way/1", "lod2/hessen/B1"}
+    assert out.footprint_coverage == pytest.approx(1.0, abs=1e-3)
 
 
 def test_a_lod2_building_that_only_reaches_a_block_is_never_solidified(monkeypatch):
