@@ -147,6 +147,34 @@ def test_run_without_lod2_data_reports_an_empty_source(tmp_path, frankfurt_spec,
     assert "LoD2" not in result.paths.sources.read_text(encoding="utf-8")
 
 
+def test_lod2_data_that_never_reaches_the_model_does_not_name_the_source(
+    tmp_path, frankfurt_spec, frankfurt_data
+):
+    # The provider answered, but nothing of it is in the model, so SOURCES.txt must not name it
+    # (spec §7). Both ways that happens in practice are here: the query box carries a 100 m margin,
+    # so a model can sit entirely outside the square (the 400 m fixture square reaches to about
+    # 50.1108, this box starts at 50.1115); and a model without a usable footprint — a 2D response,
+    # here a box with zero height — never becomes a Building at all.
+    boxes = [
+        wgs84_box(50.1115, 8.6820, 0.0005, 100.0, 140.0, "lod2/hessen/OUTSIDE"),
+        wgs84_box(50.1090, 8.6826, 0.0005, 100.0, 100.0, "lod2/hessen/FLAT"),
+    ]
+    result = run(
+        frankfurt_spec,
+        tmp_path / "out",
+        tmp_path / "cache",
+        fetch=lambda s, c: lod2_features(s, frankfurt_data, boxes),
+    )
+    assert result.stats["lod2_source"] == ""
+    assert result.stats["lod2_buildings"] == 0
+    assert "Hessen" not in result.paths.sources.read_text(encoding="utf-8")
+    # And it really is the OpenStreetMap-only model, not just a quieter label on a different one.
+    plain = run(
+        frankfurt_spec, tmp_path / "plain", tmp_path / "cache", fetch=lambda s, c: parse_overpass(frankfurt_data, s)
+    )
+    assert result.paths.stl.read_bytes() == plain.paths.stl.read_bytes()
+
+
 def test_lod2_off_gives_the_same_model_as_no_lod2_data(tmp_path, frankfurt_spec, frankfurt_data):
     # Spec §11: with the flag off the result is bit-identical to the OSM-only run, even when the
     # data is right there.

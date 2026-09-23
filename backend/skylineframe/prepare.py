@@ -51,6 +51,12 @@ class Prepared:
     water: list[Polygon] = field(default_factory=list)
     footprint_coverage: float = 0.0  # building area in the model / building area in the square
     lod2_rejected: int = 0  # LoD2 models whose body would not close (spec §5.5)
+    # LoD2 footprints that actually reached the model, blocks included. The provider answering at
+    # all is not the same thing: the query box carries a 100 m margin, so a square over a park can
+    # come back full of models that all clip away, and a model without a usable footprint (a 2D
+    # response, say) never becomes a Building either. Naming the source then would be a false
+    # attribution in SOURCES.txt, so the pipeline gates the source name on this count (spec §7/§8).
+    lod2_footprints: int = 0
 
 
 def polygons_of(geom: BaseGeometry | None) -> list[Polygon]:
@@ -574,6 +580,9 @@ def prepare(features: Features, spec: FrameSpec) -> Prepared:
         for b in clipped:
             b.roof = None
     footprints = assign_parts(clipped, spec.default_building_height_m)
+    # Counted on footprints, not on `buildings` below: a LoD2 footprint that only feeds a block
+    # still puts official geometry into the model, so the source is truthfully named for it.
+    lod2_footprints = sum(1 for b in footprints if b.lod2)
     for b in footprints:
         resolve_roof(b, spec.rotation_deg)
 
@@ -590,7 +599,11 @@ def prepare(features: Features, spec: FrameSpec) -> Prepared:
     coverage = _coverage(footprints, blocks, buildings, displaced)
     if not full:
         return Prepared(
-            buildings=buildings, blocks=blocks, footprint_coverage=coverage, lod2_rejected=lod2_rejected
+            buildings=buildings,
+            blocks=blocks,
+            footprint_coverage=coverage,
+            lod2_rejected=lod2_rejected,
+            lod2_footprints=lod2_footprints,
         )
 
     recess_min_area_m2 = MIN_FEATURE_MM**2 / scale**2
@@ -609,4 +622,5 @@ def prepare(features: Features, spec: FrameSpec) -> Prepared:
         water=water,
         footprint_coverage=coverage,
         lod2_rejected=lod2_rejected,
+        lod2_footprints=lod2_footprints,
     )

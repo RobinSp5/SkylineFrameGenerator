@@ -53,9 +53,13 @@ def run(
     meshes = build_meshes(scaled, spec)
 
     report("export", "Writing STL, 3MF and preview")
-    # The flag decides as well: a caller may hand in LoD2 data with lod2=False (prepare then
-    # ignores it), and SOURCES.txt must not claim a source that is not in the model.
-    lod2_source = raw.lod2_source if spec.lod2 else ""
+    # Not raw.lod2_source on its own: the provider answering is not the same as official geometry
+    # reaching the model. The flag may be off (prepare then ignores the data), and every model may
+    # clip away — the query box carries a 100 m margin, so a square over a park or a river bend
+    # comes back full of models that all fall outside it, and a 2D response yields no footprint at
+    # all. In both cases the result is byte-identical to the OpenStreetMap-only run, and naming
+    # Hessen next to it would be a false attribution in SOURCES.txt and in the status line.
+    lod2_source = raw.lod2_source if spec.lod2 and prepared.lod2_footprints else ""
     paths = export_all(
         meshes,
         spec,
