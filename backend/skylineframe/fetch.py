@@ -12,7 +12,8 @@ import osm2geojson
 from shapely.geometry import shape
 
 from .errors import FetchError
-from .features import Building, Features, Road, RoofSpec, Water
+from .features import Building, Features, Lod2Building, Road, RoofSpec, Water
+from .lod2.provider import select_provider
 from .project import query_bbox
 from .spec import LEVEL_HEIGHT_M, ROAD_CLASSES, FrameSpec, Mode
 
@@ -26,6 +27,9 @@ MAX_LEVELS = 300.0
 # Soft limit on one Overpass answer. Beyond this the run would spend minutes in osm2geojson and
 # shapely before the mesh stage ever starts, so the area is rejected up front.
 MAX_ELEMENTS = 250_000
+# The LoD2 cache lives beside the Overpass cache in its own directory, keyed per bounding box.
+# One 1500 m Frankfurt square is about 128 MB in there.
+LOD2_CACHE_DIRNAME = "lod2"
 WATER_SELECTORS = (
     '["natural"="water"]',
     '["waterway"="riverbank"]',
@@ -322,11 +326,38 @@ def overpass_url() -> str:
     return os.environ.get("SKYLINE_OVERPASS_URL", DEFAULT_OVERPASS_URL)
 
 
+def fetch_lod2(
+    spec: FrameSpec,
+    cache_dir: Path,
+    client: httpx.Client | None = None,
+) -> tuple[list[Lod2Building], str]:
+    """The official LoD2 models for this square plus the provider name, or ([], "").
+
+    A missing provider, a switched-off flag and an unreachable service are all the same thing
+    here: the run continues on OpenStreetMap alone and says so through the empty source name
+    (spec §9). Nothing in this function may raise.
+    """
+    if not spec.lod2:
+        return [], ""
+    provider = select_provider(query_bbox(spec))
+    if provider is None:
+        return [], ""
+    buildings = provider.fetch(query_bbox(spec), cache_dir / LOD2_CACHE_DIRNAME, client=client)
+    return (buildings, provider.name) if buildings else ([], "")
+
+
 def fetch_features(
     spec: FrameSpec,
     cache_dir: Path,
     url: str | None = None,
     client: httpx.Client | None = None,
+    lod2_client: httpx.Client | None = None,
 ) -> Features:
     query = build_query(query_bbox(spec), spec.mode)
-    return parse_overpass(fetch_overpass(query, cache_dir, url=url or overpass_url(), client=client), spec)
+    feats = parse_overpass(
+        fetch_overpass(query, cache_dir, url=url or overpass_url(), client=client), spec
+    )
+    # LoD2 is fetched raw here and turned into geometry in prepare: only the buildings that end
+    # up printed individually are ever solidified (spec §5).
+    feats.lod2, feats.lod2_source = fetch_lod2(spec, cache_dir, client=lod2_client)
+    return feats

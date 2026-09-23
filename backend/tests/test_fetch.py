@@ -1,4 +1,5 @@
 import json
+import logging
 
 import httpx
 import pytest
@@ -11,6 +12,8 @@ from skylineframe.fetch import (
     USER_AGENT,
     _cache_path,
     build_query,
+    fetch_features,
+    fetch_lod2,
     fetch_overpass,
     overpass_url,
     parse_direction,
@@ -410,3 +413,61 @@ def test_parse_roof(tags, shape, height):
 @pytest.mark.parametrize("tags", [{}, {"roof:shape": "flat"}, {"roof:shape": "something"}])
 def test_parse_roof_returns_none_for_flat_and_unknown(tags):
     assert parse_roof(tags) is None
+
+
+# --- LoD2 ---------------------------------------------------------------
+
+
+def lod2_client(body: bytes, calls: list) -> httpx.Client:
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(str(request.url))
+        return httpx.Response(200, content=body, headers={"content-type": "application/gml+xml"})
+
+    return httpx.Client(transport=httpx.MockTransport(handler))
+
+
+def test_fetch_lod2_is_skipped_when_the_flag_is_off(tmp_path):
+    frankfurt = FrameSpec(center_lat=50.1106, center_lon=8.6821, side_m=400, lod2=False)
+    assert fetch_lod2(frankfurt, tmp_path) == ([], "")
+    assert not (tmp_path / "lod2").exists()
+
+
+def test_fetch_lod2_is_skipped_where_no_provider_covers(tmp_path):
+    berlin = FrameSpec(center_lat=52.5163, center_lon=13.3777, side_m=400)
+    assert fetch_lod2(berlin, tmp_path) == ([], "")
+
+
+def test_fetch_lod2_names_the_source_and_caches_per_bbox(tmp_path, lod2_xml_path):
+    calls: list[str] = []
+    client = lod2_client(lod2_xml_path.read_bytes(), calls)
+    frankfurt = FrameSpec(center_lat=50.1106, center_lon=8.6821, side_m=400)
+    buildings, source = fetch_lod2(frankfurt, tmp_path, client=client)
+    assert source == "hessen"
+    assert [b.name for b in buildings] == ["(1:Kulturschirn)", "(1:Paulskirche)", None]
+    assert len(calls) == 1
+    # The LoD2 cache lives next to the Overpass cache, in its own directory (spec §3.1).
+    assert len(list((tmp_path / "lod2").glob("*.xml"))) == 1
+
+
+def test_fetch_lod2_reports_an_empty_source_when_the_service_fails(tmp_path, caplog):
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("boom", request=request)
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    frankfurt = FrameSpec(center_lat=50.1106, center_lon=8.6821, side_m=400)
+    with caplog.at_level(logging.WARNING):
+        assert fetch_lod2(frankfurt, tmp_path, client=client) == ([], "")
+
+
+def test_fetch_features_attaches_lod2(tmp_path, lod2_xml_path):
+    calls: list[str] = []
+    frankfurt = FrameSpec(center_lat=50.1106, center_lon=8.6821, side_m=400)
+    feats = fetch_features(
+        frankfurt,
+        tmp_path,
+        client=make_client([SAMPLE], []),
+        lod2_client=lod2_client(lod2_xml_path.read_bytes(), calls),
+    )
+    assert feats.lod2_source == "hessen"
+    assert len(feats.lod2) == 3
+    assert len(calls) == 1

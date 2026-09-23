@@ -17,6 +17,7 @@ from shapely.validation import make_valid
 
 from .features import Block, Building, Features, Road, Water
 from .heights import estimate_height_m
+from .lod2.solidify import faces_of, footprint_of_faces, height_of_faces, to_solid
 from .project import square_local
 from .spec import MIN_FEATURE_MM, FrameSpec, Mode
 
@@ -33,6 +34,7 @@ ROOF_HEIGHT_MIN_M = 2.0
 ROOF_HEIGHT_MAX_M = 6.0
 DOME_HEIGHT_FACTOR = 0.5
 ROUND_ROOF_SHAPES = ("dome", "round")
+LOD2_DISPLACE_FRACTION = 0.5  # spec §6.3: an OSM footprint covered by more than this is dropped
 
 
 @dataclass
@@ -42,6 +44,7 @@ class Prepared:
     roads: list[Polygon] = field(default_factory=list)
     water: list[Polygon] = field(default_factory=list)
     footprint_coverage: float = 0.0  # building area in the model / building area in the square
+    lod2_rejected: int = 0  # LoD2 models whose body would not close (spec §5.5)
 
 
 def polygons_of(geom: BaseGeometry | None) -> list[Polygon]:
@@ -73,14 +76,21 @@ def _clip(buildings: list[Building], square: Polygon, tol_m: float) -> list[Buil
 
     Nothing is dropped for being small here — the printability split happens after the blocks
     are formed, so a small footprint still contributes its area to its block (spec §6.5).
+
+    A LoD2 footprint that the square cuts in two keeps its faces on the larger piece only: the
+    body is built once and clipped to the plate later, so a second copy would solidify the same
+    building twice and put two identical bodies into the union.
     """
     out: list[Building] = []
     for b in buildings:
+        pieces: list[Polygon] = []
         for poly in polygons_of(b.geom.intersection(square)):
             # Simplification is not guaranteed to preserve validity (notably for rings with holes),
             # so its result goes back through the same repair/flatten choke point.
-            for piece in polygons_of(poly.simplify(tol_m, preserve_topology=True)):
-                out.append(replace(b, geom=piece))
+            pieces.extend(polygons_of(poly.simplify(tol_m, preserve_topology=True)))
+        keep = max(range(len(pieces)), key=lambda i: pieces[i].area) if pieces else 0
+        for i, piece in enumerate(pieces):
+            out.append(replace(b, geom=piece, surfaces=b.surfaces if i == keep else ()))
     return out
 
 
@@ -94,6 +104,81 @@ def estimate_missing_heights(buildings: list[Building]) -> None:
             b.height_m = estimate_height_m(b.kind, b.geom.area)
 
 
+def lod2_buildings(features: Features) -> list[Building]:
+    """One Building per LoD2 model: footprint, ground-to-ridge height, faces kept for later.
+
+    Only the cheap half of spec §5 runs here. The body costs two orders of magnitude more and is
+    built in solidify_buildings, for the footprints that survive the printability check — a
+    1500 m Frankfurt square delivers 5 302 models and most of them end up inside a block.
+    """
+    out: list[Building] = []
+    for raw in features.lod2:
+        # Walk the rings once: this loop runs for every model the provider delivered (5 302 in a
+        # 1500 m Frankfurt square), not only for the ones that end up with a body.
+        faces = faces_of(raw.surfaces)
+        footprint = footprint_of_faces(faces)
+        span = height_of_faces(faces)
+        if footprint is None or span is None or span[1] - span[0] <= 0:
+            continue
+        out.append(
+            Building(
+                geom=footprint,
+                # The model is levelled onto the plate, so the height is ridge minus ground and
+                # never metres above sea level (spec §5.6). height_is_top: the roof is in the body.
+                height_m=span[1] - span[0],
+                height_is_top=True,
+                roof=None,
+                osm_id=raw.osm_id,
+                lod2=True,
+                surfaces=raw.surfaces,
+            )
+        )
+    return out
+
+
+def drop_covered(osm: list[Building], lod2: list[Building]) -> list[Building]:
+    """Drop OSM footprints more than LOD2_DISPLACE_FRACTION covered by LoD2 (spec §6.3/§6.4).
+
+    One rule for outlines and for building:part alike: a part over a LoD2 building is a setback
+    that the body already has, and keeping it would put a second tower inside the first. What is
+    only grazed survives — LoD2 stock ends at state borders and misses new buildings.
+    """
+    if not lod2:
+        return osm
+    tree = STRtree([b.geom for b in lod2])
+    kept: list[Building] = []
+    for b in osm:
+        area = b.geom.area
+        if area <= 0:
+            kept.append(b)
+            continue
+        hits = tree.query(b.geom, predicate="intersects")
+        if len(hits) == 0:
+            kept.append(b)
+            continue
+        covered = unary_union([lod2[int(i)].geom for i in hits]).intersection(b.geom).area
+        if covered / area <= LOD2_DISPLACE_FRACTION:
+            kept.append(b)
+    return kept
+
+
+def solidify_buildings(buildings: list[Building]) -> int:
+    """Build the LoD2 body of every building that is printed on its own (spec §5). In place.
+
+    Returns the number of models whose body would not close. Those keep their footprint and their
+    height and are extruded like any other building: the OSM footprint under them is already gone,
+    so dropping them as well would leave a hole where a house stands.
+    """
+    rejected = 0
+    for b in buildings:
+        if not b.surfaces:
+            continue
+        b.solid_m = to_solid(b.surfaces)
+        if b.solid_m is None:
+            rejected += 1
+    return rejected
+
+
 def assign_parts(buildings: list[Building], default_height_m: float) -> list[Building]:
     """Turn outlines with parts into (parts + remainder) and return the footprint list (spec §6.3).
 
@@ -102,7 +187,12 @@ def assign_parts(buildings: list[Building], default_height_m: float) -> list[Bui
     of the outline becomes one remainder footprint per polygon at the outline's own height.
     A part with no outline is treated as a building of its own, height estimate included.
     """
-    outlines = [b for b in buildings if not b.is_part]
+    # A LoD2 outline is never a part owner: its setbacks are already inside the body, and turning
+    # it into remainder polygons would hand a copy of its faces to every remainder and solidify
+    # the same building once per piece (spec §6.4). Parts over a LoD2 building are usually gone by
+    # now; one that survived drop_covered simply stands beside it, like a part without an outline.
+    outlines = [b for b in buildings if not b.is_part and not b.lod2]
+    lod2_outlines = [b for b in buildings if not b.is_part and b.lod2]
     parts = [b for b in buildings if b.is_part]
     if not parts:
         return list(buildings)
@@ -133,7 +223,7 @@ def assign_parts(buildings: list[Building], default_height_m: float) -> list[Bui
             p.height_is_top = owner.height_is_top
         covered.setdefault(hit, []).append(p.geom)
 
-    footprints: list[Building] = list(parts)
+    footprints: list[Building] = list(parts) + lod2_outlines
     for i, owner in enumerate(outlines):
         if i not in covered:
             footprints.append(owner)
@@ -422,7 +512,12 @@ def prepare(features: Features, spec: FrameSpec) -> Prepared:
     # shallow copies and leaves the caller's Buildings alone.
     buildings = [replace(b) for b in features.buildings]
     estimate_missing_heights(buildings)
-    clipped = _clip(buildings, square, tol_m)
+    # spec.lod2 is checked in fetch as well; checking it here too means a caller that hands in
+    # LoD2 data with the flag off (the pipeline tests do exactly that) gets the OSM-only model.
+    lod2 = lod2_buildings(features) if spec.lod2 else []
+    if lod2:
+        buildings = drop_covered(buildings, lod2)
+    clipped = _clip(buildings + lod2, square, tol_m)
     if not spec.parts:
         clipped = [b for b in clipped if not b.is_part]
     if not spec.roofs:
@@ -439,9 +534,14 @@ def prepare(features: Features, spec: FrameSpec) -> Prepared:
     waters = water_area(features.water, square) if full else Polygon()
     blocks = build_blocks(footprints, spec, close_m, min_area_m2, half_feature_m, corridors, waters, square)
     buildings = [b for b in footprints if _is_printable(b.geom, min_area_m2, half_feature_m)]
+    # Only now is it clear which footprints get their own solid; everything else goes into a
+    # block and would never use a body (spec §5).
+    lod2_rejected = solidify_buildings(buildings)
     coverage = _coverage(footprints, blocks, buildings)
     if not full:
-        return Prepared(buildings=buildings, blocks=blocks, footprint_coverage=coverage)
+        return Prepared(
+            buildings=buildings, blocks=blocks, footprint_coverage=coverage, lod2_rejected=lod2_rejected
+        )
 
     recess_min_area_m2 = MIN_FEATURE_MM**2 / scale**2
     weld_m = SIMPLIFY_TOLERANCE_MM / scale
@@ -453,5 +553,10 @@ def prepare(features: Features, spec: FrameSpec) -> Prepared:
     blocked_for_water = unary_union([blocked, *roads])
     water = _water_areas(waters, blocked_for_water, recess_min_area_m2, weld_m)
     return Prepared(
-        buildings=buildings, blocks=blocks, roads=roads, water=water, footprint_coverage=coverage
+        buildings=buildings,
+        blocks=blocks,
+        roads=roads,
+        water=water,
+        footprint_coverage=coverage,
+        lod2_rejected=lod2_rejected,
     )

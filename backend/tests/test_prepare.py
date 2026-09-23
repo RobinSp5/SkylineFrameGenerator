@@ -1,17 +1,22 @@
 import pytest
-from shapely.geometry import LineString, Polygon, box
+from shapely.geometry import LineString, MultiPolygon, Polygon, box
 from shapely.ops import unary_union
 
-from skylineframe.features import Building, Features, Road, RoofSpec, Water
+from skylineframe.features import Building, Features, Lod2Building, Road, RoofSpec, Water
 from skylineframe.prepare import (
+    LOD2_DISPLACE_FRACTION,
     SIMPLIFY_TOLERANCE_MM,
+    _clip,
     assign_parts,
     default_roof_height_m,
+    drop_covered,
+    lod2_buildings,
     minimum_rect,
     polygons_of,
     prepare,
     weighted_percentile,
 )
+from skylineframe.project import square_local
 from skylineframe.scale import building_height_mm
 from skylineframe.spec import FrameSpec, Mode
 
@@ -545,3 +550,183 @@ def test_roof_direction_is_rotated_into_the_local_frame():
     feats = Features(buildings=[Building(box(0, 0, 20, 10), height_m=12.0, roof=RoofSpec("gabled", 3.0, 90.0), kind="yes")])
     out = prepare(feats, spec(rotation_deg=30))
     assert out.buildings[0].roof.direction_deg == pytest.approx(60.0)
+
+
+# --- LoD2 ---------------------------------------------------------------
+
+
+def lod2_box(x0, y0, x1, y1, z0, z1, osm_id="lod2/hessen/B1", closed=True) -> Lod2Building:
+    """A box as separate faces in local metres, wound the way an LoD2 model is.
+
+    closed=False leaves the roof off: the footprint and the height are still there, but nothing
+    can be cut out of it — that is the rejection path of spec §5.5.
+    """
+    bottom = ((x0, y0, z0), (x0, y1, z0), (x1, y1, z0), (x1, y0, z0))
+    top = ((x0, y0, z1), (x1, y0, z1), (x1, y1, z1), (x0, y1, z1))
+    walls = (
+        ((x0, y0, z0), (x1, y0, z0), (x1, y0, z1), (x0, y0, z1)),
+        ((x1, y0, z0), (x1, y1, z0), (x1, y1, z1), (x1, y0, z1)),
+        ((x1, y1, z0), (x0, y1, z0), (x0, y1, z1), (x1, y1, z1)),
+        ((x0, y1, z0), (x0, y0, z0), (x0, y0, z1), (x0, y1, z1)),
+    )
+    surfaces = (bottom, top, *walls) if closed else (bottom, *walls)
+    return Lod2Building(osm_id=osm_id, surfaces=surfaces)
+
+
+def test_lod2_model_becomes_a_building_with_its_real_height():
+    out = prepare(Features(lod2=[lod2_box(-10, -10, 10, 10, 100.0, 130.0)]), spec())
+    assert len(out.buildings) == 1
+    got = out.buildings[0]
+    assert got.lod2 is True
+    assert got.geom.area == pytest.approx(400, rel=0.02)
+    # The ground is levelled: the height is ridge minus ground, not metres above sea level.
+    assert got.height_m == pytest.approx(30.0, abs=0.1)
+    assert got.height_is_top is True and got.roof is None
+    assert got.eaves_m == got.ridge_m == got.height_m
+    assert got.osm_id == "lod2/hessen/B1"
+    assert got.solid_m is not None
+    assert got.solid_m.volume() == pytest.approx(400 * 30, rel=0.02)
+    assert out.lod2_rejected == 0
+
+
+def test_lod2_buildings_skips_a_model_without_a_usable_footprint():
+    # Vertical walls only: every face projects to a line, so there is no ground plan at all.
+    wall = Lod2Building(osm_id="lod2/hessen/W", surfaces=(((0, 0, 0), (10, 0, 0), (10, 0, 5), (0, 0, 5)),))
+    assert lod2_buildings(Features(lod2=[wall])) == []
+
+
+def test_an_unclosable_model_keeps_its_prism_and_is_counted():
+    out = prepare(Features(lod2=[lod2_box(-10, -10, 10, 10, 100.0, 130.0, closed=False)]), spec())
+    assert out.lod2_rejected == 1
+    assert len(out.buildings) == 1
+    kept = out.buildings[0]
+    assert kept.lod2 is True and kept.solid_m is None
+    # The run never stops and never leaves a hole (spec §5.5/§9).
+    assert kept.height_m == pytest.approx(30.0, abs=0.1)
+    assert out.footprint_coverage == pytest.approx(1.0)
+
+
+def test_an_osm_building_under_a_lod2_footprint_is_dropped():
+    feats = Features(
+        buildings=[Building(box(-10, -10, 10, 10), height_m=8.0, osm_id="way/1", kind="yes")],
+        lod2=[lod2_box(-10, -10, 10, 10, 100.0, 130.0)],
+    )
+    out = prepare(feats, spec())
+    assert [b.osm_id for b in out.buildings] == ["lod2/hessen/B1"]
+
+
+def test_an_osm_building_that_only_touches_the_lod2_footprint_survives():
+    # The OSM footprint is 1000 m² and the 400 m² LoD2 box sits inside it: 40 % covered, below
+    # the 50 % threshold of spec §6.3, so it stays.
+    assert LOD2_DISPLACE_FRACTION == 0.5
+    feats = Features(
+        buildings=[Building(box(-10, -10, 40, 10), height_m=8.0, osm_id="way/1", kind="yes")],
+        lod2=[lod2_box(-10, -10, 10, 10, 100.0, 130.0)],
+    )
+    out = prepare(feats, spec())
+    assert {b.osm_id for b in out.buildings} == {"way/1", "lod2/hessen/B1"}
+
+
+def test_a_building_part_over_a_lod2_building_is_ignored():
+    # The setbacks are already in the LoD2 body; a part on top of it would be a second tower
+    # inside the first one (spec §6.4).
+    feats = Features(
+        buildings=[
+            Building(box(-10, -10, 10, 10), height_m=20.0, height_is_top=True, osm_id="way/1", kind="yes"),
+            Building(box(-6, -6, 6, 6), height_m=40.0, height_is_top=True, osm_id="way/2", is_part=True, kind="yes"),
+        ],
+        lod2=[lod2_box(-10, -10, 10, 10, 100.0, 130.0)],
+    )
+    out = prepare(feats, spec())
+    assert [b.osm_id for b in out.buildings] == ["lod2/hessen/B1"]
+    assert not any(b.is_part for b in out.buildings)
+
+
+def test_drop_covered_keeps_everything_without_lod2():
+    osm = [Building(box(0, 0, 10, 10), height_m=8.0, osm_id="way/1")]
+    assert drop_covered(osm, []) is osm
+
+
+def test_a_lod2_building_that_only_reaches_a_block_is_never_solidified(monkeypatch):
+    # 5x5 m: the area passes, but eroding by 4 m leaves nothing, so it is not printable on its
+    # own. It stands 1 m from a 20x20 house, so the close (radius 4 m) welds both into one block
+    # and none of its area is lost. Solidifying it would be two orders of magnitude of work for
+    # geometry that is thrown away (spec §5).
+    calls = []
+    import skylineframe.prepare as prepare_module
+
+    original = prepare_module.to_solid
+
+    def spy(surfaces):
+        calls.append(surfaces)
+        return original(surfaces)
+
+    monkeypatch.setattr(prepare_module, "to_solid", spy)
+    feats = Features(
+        buildings=[Building(box(6, 0, 26, 20), height_m=10.0, osm_id="way/9", kind="yes")],
+        lod2=[lod2_box(0, 0, 5, 5, 100.0, 110.0)],
+    )
+    out = prepare(feats, spec())
+    assert calls == []
+    assert [b.osm_id for b in out.buildings] == ["way/9"]
+    assert all(b.solid_m is None for b in out.buildings)
+    # It still reaches the model through its block, exactly like a small OSM footprint: one block
+    # around both footprints, and no area lost.
+    assert len(out.blocks) == 1
+    assert out.blocks[0].geom.area > 425  # 400 m² house + 25 m² shed + the 1 m the close filled
+    assert out.footprint_coverage == pytest.approx(1.0)
+
+
+def test_only_the_largest_clipped_piece_keeps_the_surfaces():
+    # A LoD2 footprint cut into two by the square would otherwise be solidified twice; the body
+    # is clipped to the plate later and covers both pieces anyway.
+    surfaces = lod2_box(0, 0, 10, 10, 0.0, 5.0).surfaces
+    building = Building(
+        geom=MultiPolygon([box(0, 0, 10, 10), box(20, 20, 25, 25)]),
+        height_m=5.0,
+        lod2=True,
+        surfaces=surfaces,
+    )
+    pieces = _clip([building], square_local(spec()), 0.0)
+    by_area = sorted(pieces, key=lambda b: b.geom.area)
+    assert [round(b.geom.area) for b in by_area] == [25, 100]
+    assert by_area[0].surfaces == ()
+    assert by_area[1].surfaces == surfaces
+
+
+def test_a_surviving_osm_part_never_shreds_a_lod2_building():
+    # The part covers 41 % of the LoD2 footprint, so drop_covered keeps it — but its
+    # representative point lands inside the LoD2 outline. Were the LoD2 building treated as the
+    # owner, it would be replaced by remainder polygons and each of them would carry a copy of
+    # the faces, so the same body would be built again per piece (spec §6.4).
+    feats = Features(
+        buildings=[
+            Building(box(-8, -8, 20, 20), height_m=30.0, height_is_top=True, osm_id="way/2", is_part=True, kind="yes")
+        ],
+        lod2=[lod2_box(-10, -10, 10, 10, 100.0, 130.0)],
+    )
+    out = prepare(feats, spec())
+    kept = [b for b in out.buildings if b.lod2]
+    assert len(kept) == 1
+    assert kept[0].geom.area == pytest.approx(400, rel=0.02)
+    assert not kept[0].geom.interiors  # no hole punched by the part
+    assert kept[0].outline_id is None
+    assert kept[0].solid_m is not None
+
+
+def test_the_flag_is_honoured_even_when_lod2_data_is_handed_in():
+    feats = Features(
+        buildings=[Building(box(-10, -10, 10, 10), height_m=8.0, osm_id="way/1", kind="yes")],
+        lod2=[lod2_box(-10, -10, 10, 10, 100.0, 130.0)],
+    )
+    out = prepare(feats, spec(lod2=False))
+    assert [b.osm_id for b in out.buildings] == ["way/1"]
+    assert out.buildings[0].height_m == 8.0
+
+
+def test_without_lod2_data_nothing_changes():
+    feats = Features(buildings=[Building(box(0, 0, 20, 20), height_m=12.0, osm_id="way/1", kind="yes")])
+    out = prepare(feats, spec())
+    assert [b.osm_id for b in out.buildings] == ["way/1"]
+    assert out.lod2_rejected == 0
+    assert all(b.solid_m is None and b.surfaces == () for b in out.buildings)
