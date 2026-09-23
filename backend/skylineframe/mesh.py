@@ -106,10 +106,11 @@ def _roof_body(p: Prism) -> m3d.Manifold | None:
 
 def _roof_bodies(prisms: list[Prism]) -> list[m3d.Manifold]:
     """All roofs of a list of prisms. Built once and reused by the flush and the sunk union:
-    a roof sits above the plate, so sinking the bodies never moves it."""
+    a roof sits above the plate, so sinking the bodies never moves it. A LoD2 building has no
+    ScaledRoof at all — its roof shape is already inside its body."""
     roofs = []
     for p in prisms:
-        if not _is_solid(p):
+        if p.solid_mm is not None or not _is_solid(p):
             continue
         roof = _roof_body(p)
         if roof is not None:
@@ -120,6 +121,10 @@ def _roof_bodies(prisms: list[Prism]) -> list[m3d.Manifold]:
 def _bodies(prisms: list[Prism], sink: float) -> list[m3d.Manifold]:
     """Vertical bodies. `sink` pulls a footprint that stands on the plate below it.
 
+    A LoD2 body is finished geometry and is only moved: sinking it costs 0.2 mm of ridge height
+    in the single-colour union, two orders of magnitude below what a nozzle resolves, and it
+    saves a boolean per building compared with welding a skirt underneath.
+
     A body that carries a roof is raised by EPS into it: the roof starts exactly at the eaves,
     so without the overlap the two solids would only touch face to face at that plane and the
     union would have to resolve coincident faces. EPS is 0.01 mm, well below what a nozzle can
@@ -127,6 +132,9 @@ def _bodies(prisms: list[Prism], sink: float) -> list[m3d.Manifold]:
     """
     out: list[m3d.Manifold] = []
     for p in prisms:
+        if p.solid_mm is not None:
+            out.append(p.solid_mm.translate((0.0, 0.0, -sink)) if sink else p.solid_mm)
+            continue
         if not _is_solid(p):
             continue
         bottom = p.z0_mm - sink if p.z0_mm <= 0 else p.z0_mm

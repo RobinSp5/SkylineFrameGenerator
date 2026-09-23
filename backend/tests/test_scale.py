@@ -3,6 +3,7 @@ from shapely.geometry import box
 
 from skylineframe.features import Block, Building, RoofSpec
 from skylineframe.fetch import parse_overpass
+from skylineframe.lod2.solidify import to_solid
 from skylineframe.prepare import Prepared, prepare
 from skylineframe.project import project_features
 from skylineframe.scale import building_height_mm, raw_height_mm, scale_features
@@ -186,3 +187,90 @@ def test_raw_height_has_no_minimum_but_keeps_the_cap():
     assert raw_height_mm(0.0, spec()) == 0.0
     assert raw_height_mm(2.0, spec()) == pytest.approx(0.3)  # building_height_mm would return 0.8
     assert raw_height_mm(5000.0, spec()) == pytest.approx(100.0)
+
+
+# --- LoD2 bodies --------------------------------------------------------
+
+
+def lod2_solid_building(x0, y0, x1, y1, height_m) -> Building:
+    """A box body in local metres, exactly as prepare hands it on."""
+    z0, z1 = 0.0, height_m
+    surfaces = (
+        ((x0, y0, z0), (x0, y1, z0), (x1, y1, z0), (x1, y0, z0)),
+        ((x0, y0, z1), (x1, y0, z1), (x1, y1, z1), (x0, y1, z1)),
+        ((x0, y0, z0), (x1, y0, z0), (x1, y0, z1), (x0, y0, z1)),
+        ((x1, y0, z0), (x1, y1, z0), (x1, y1, z1), (x1, y0, z1)),
+        ((x1, y1, z0), (x0, y1, z0), (x0, y1, z1), (x1, y1, z1)),
+        ((x0, y1, z0), (x0, y0, z0), (x0, y0, z1), (x0, y1, z1)),
+    )
+    b = Building(box(x0, y0, x1, y1), height_m=height_m, height_is_top=True, lod2=True, surfaces=surfaces)
+    b.eaves_m = b.ridge_m = height_m
+    b.solid_m = to_solid(surfaces)
+    assert b.solid_m is not None
+    return b
+
+
+def test_the_body_is_scaled_in_x_y_by_scale_and_in_z_by_scale_times_exaggeration():
+    s = spec(z_exaggeration=2.0)  # scale = 0.1 mm per metre
+    prepared = Prepared(buildings=[lod2_solid_building(-10, -10, 10, 10, 30.0)])
+    prism = scale_features(prepared, s).buildings[0]
+    assert prism.solid_mm is not None
+    x0, y0, z0, x1, y1, z1 = prism.solid_mm.bounding_box()
+    assert (x0, x1) == pytest.approx((-1.0, 1.0), abs=1e-3)
+    assert (y0, y1) == pytest.approx((-1.0, 1.0), abs=1e-3)
+    assert z0 == pytest.approx(0.0, abs=1e-3)
+    assert z1 == pytest.approx(30.0 * 0.1 * 2.0, abs=1e-3)
+
+
+def test_the_body_is_capped_at_the_plate_size():
+    # 4000 m at scale 0.1 and z 1.5 would be 600 mm on a 100 mm plate — an unprintable spike.
+    s = spec()
+    prepared = Prepared(buildings=[lod2_solid_building(-10, -10, 10, 10, 4000.0)])
+    prism = scale_features(prepared, s).buildings[0]
+    assert prism.solid_mm.bounding_box()[5] == pytest.approx(s.plate_size_mm, abs=1e-3)
+
+
+def test_the_body_is_clipped_to_the_plate_square():
+    # The footprint reaches past the edge of the 1000 m square; the plate is exactly 100 mm.
+    s = spec()
+    prepared = Prepared(buildings=[lod2_solid_building(400, -50, 700, 50, 20.0)])
+    prism = scale_features(prepared, s).buildings[0]
+    assert prism.solid_mm.bounding_box()[3] <= s.plate_size_mm / 2 + 1e-6
+
+
+def test_a_body_inside_the_plate_keeps_its_volume():
+    s = spec()
+    building = lod2_solid_building(-10, -10, 10, 10, 30.0)
+    prism = scale_features(Prepared(buildings=[building]), s).buildings[0]
+    expected = building.solid_m.scale((s.scale, s.scale, s.scale * s.z_exaggeration))
+    # Trimmed to its own footprint and simplified, but nothing of the building is lost.
+    assert prism.solid_mm.volume() == pytest.approx(expected.volume(), rel=0.05)
+    assert prism.solid_mm.bounding_box() == pytest.approx(expected.bounding_box(), abs=0.01)
+
+
+def test_the_body_is_trimmed_to_the_simplified_footprint():
+    # prepare simplifies the outline by SIMPLIFY_TOLERANCE_MM / scale and the recess clearance is
+    # grown by exactly that much, so a wall outside the simplified outline would eat the gap.
+    s = spec()
+    building = lod2_solid_building(-10, -10, 10, 10, 30.0)
+    building.geom = box(-10, -10, 0, 10)  # what _clip would have left of it
+    prism = scale_features(Prepared(buildings=[building]), s).buildings[0]
+    assert prism.solid_mm.bounding_box()[3] <= 0.0 + 1e-6
+    assert prism.solid_mm.volume() == pytest.approx(200 * 30 * s.scale**2 * s.scale * s.z_exaggeration, rel=0.05)
+
+
+def test_a_body_below_the_printable_minimum_falls_back_to_the_prism():
+    # 2 m at scale 0.1 and z 1.5 is 0.3 mm, below min_building_height_mm of 0.8: a real building
+    # would print as a bump. The prism path clamps, the body cannot.
+    s = spec()
+    prism = scale_features(Prepared(buildings=[lod2_solid_building(-10, -10, 10, 10, 2.0)]), s).buildings[0]
+    assert prism.solid_mm is None
+    assert prism.height_mm == pytest.approx(s.min_building_height_mm)
+
+
+def test_a_building_without_a_body_still_becomes_a_plain_prism():
+    plain = Building(box(0, 0, 20, 20), height_m=10.0)
+    plain.eaves_m = plain.ridge_m = 10.0
+    prism = scale_features(Prepared(buildings=[plain]), spec()).buildings[0]
+    assert prism.solid_mm is None
+    assert prism.height_mm == pytest.approx(building_height_mm(10.0, spec()))

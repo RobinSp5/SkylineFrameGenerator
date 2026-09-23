@@ -2,11 +2,13 @@
 
 from dataclasses import dataclass, field
 
+import manifold3d as m3d
 import shapely.affinity
 from shapely.geometry import Polygon
 from shapely.ops import unary_union
 
 from .features import Building
+from .lod2.solidify import SOLID_SIMPLIFY_MM, simplified
 from .prepare import Prepared
 from .roofs import MIN_ROOF_MM
 from .spec import FrameSpec
@@ -33,6 +35,10 @@ class Prism:
     height_mm: float  # top of the vertical body (the eaves, when there is a roof)
     z0_mm: float = 0.0  # bottom of the body; > 0 only for a part that stands on something
     roof: ScaledRoof | None = None
+    # A ready-made LoD2 body in print millimetres, standing on z = 0. When this is set, mesh.py
+    # ignores geom/height_mm/roof and uses the body (spec §6). Last field on purpose: every
+    # existing positional Prism(...) call stays valid.
+    solid_mm: m3d.Manifold | None = None
 
 
 @dataclass
@@ -117,6 +123,57 @@ def _roof_of(b: Building, eaves_mm: float, spec: FrameSpec) -> ScaledRoof | None
     )
 
 
+def _fit_to_plate(solid: m3d.Manifold, spec: FrameSpec) -> m3d.Manifold | None:
+    """Cut the body down to the plate square and to plate_size_mm of height (spec §6).
+
+    The bounding box is checked first: almost every building is well inside the plate, and a
+    boolean per building would cost more than the whole LoD2 import. The height cap is the same
+    last line of defence building_height_mm applies to a prism.
+    """
+    half = spec.plate_size_mm / 2
+    top = spec.plate_size_mm
+    x0, y0, _z0, x1, y1, z1 = solid.bounding_box()
+    if -half <= x0 and -half <= y0 and x1 <= half and y1 <= half and z1 <= top:
+        return solid
+    box_mm = m3d.Manifold.cube((spec.plate_size_mm, spec.plate_size_mm, top), center=True)
+    cut = solid ^ box_mm.translate((0.0, 0.0, top / 2))
+    if cut.status() != m3d.Error.NoError or cut.is_empty() or cut.volume() <= 0:
+        return None
+    return cut
+
+
+def _footprint_prism(poly_mm: Polygon, height_mm: float) -> m3d.Manifold:
+    rings = [list(poly_mm.exterior.coords)[:-1]] + [list(r.coords)[:-1] for r in poly_mm.interiors]
+    rings = [ring for ring in rings if len(set(ring)) >= 3]
+    return m3d.CrossSection(rings, m3d.FillRule.EvenOdd).extrude(height_mm)
+
+
+def _scaled_solid(b: Building, spec: FrameSpec) -> m3d.Manifold | None:
+    """The LoD2 body in print millimetres, or None when the prism path has to take over (spec §6)."""
+    if b.solid_m is None:
+        return None
+    s = spec.scale
+    solid = b.solid_m.scale((s, s, s * spec.z_exaggeration))
+    # The body was cut from the raw LoD2 outline, but prepare simplified b.geom by
+    # SIMPLIFY_TOLERANCE_MM / scale (0.5 m at the skyline preset) and prepare._clearance grows the
+    # road and water blockers by exactly that much. A wall left outside the simplified outline
+    # would eat that hairline gap and put a pocket wall in the same plane as a building wall, so
+    # the body is trimmed to the outline the rest of the pipeline reasons about.
+    solid = solid ^ _footprint_prism(_scale_geom(b.geom, s), spec.plate_size_mm + 1.0)
+    if solid.status() != m3d.Error.NoError or solid.is_empty() or solid.volume() <= 0:
+        return None
+    solid = _fit_to_plate(solid, spec)
+    if solid is None:
+        return None
+    # A body carries its own height and never passes through building_height_mm, so nothing else
+    # would lift a real 2 m building off the 0.3 mm it scales to. Below the printable minimum the
+    # prism path takes over, which clamps — a bump that vanishes in the first layer is worse than
+    # a box at the right minimum height.
+    if solid.bounding_box()[5] < spec.min_building_height_mm:
+        return None
+    return simplified(solid, SOLID_SIMPLIFY_MM)
+
+
 def _building_prism(b: Building, groups: dict[str, list[Building]], spec: FrameSpec) -> Prism:
     eaves_mm = building_height_mm(b.eaves_m, spec)
     z0_mm = 0.0
@@ -129,6 +186,7 @@ def _building_prism(b: Building, groups: dict[str, list[Building]], spec: FrameS
         height_mm=eaves_mm,
         z0_mm=z0_mm,
         roof=_roof_of(b, eaves_mm, spec),
+        solid_mm=_scaled_solid(b, spec),
     )
 
 

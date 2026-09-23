@@ -1,3 +1,4 @@
+import manifold3d as m3d
 import pytest
 from shapely.geometry import Polygon, box
 
@@ -177,3 +178,40 @@ def test_everything_together_stays_watertight():
     assert tm.is_watertight and tm.is_volume
     assert tm.volume == pytest.approx(ms.single.volume(), rel=1e-6)
     assert list(ms.parts()) == ["base", "buildings", "water", "roads"]
+
+
+# --- LoD2 bodies --------------------------------------------------------
+
+
+def lod2_prism(size_mm: float, height_mm: float) -> Prism:
+    """A Prism whose geometry is a ready-made body, the way scale hands LoD2 buildings on."""
+    solid = m3d.Manifold.cube((size_mm, size_mm, height_mm), center=True).translate(
+        (0.0, 0.0, height_mm / 2)
+    )
+    return Prism(geom=box(-size_mm / 2, -size_mm / 2, size_mm / 2, size_mm / 2), height_mm=height_mm, solid_mm=solid)
+
+
+def test_a_body_is_used_instead_of_the_extrusion():
+    meshes = build_meshes(Scaled(buildings=[lod2_prism(10.0, 4.0)]), spec())
+    # The plain extrusion would reach from z = 0 to height_mm as well, so the proof is the
+    # triangle count: a cube has 12, an extruded square with a separate roof body has more.
+    assert meshes.buildings.volume() == pytest.approx(10.0 * 10.0 * 4.0, rel=1e-6)
+    assert meshes.buildings.bounding_box()[2] == pytest.approx(0.0, abs=1e-9)
+
+
+def test_the_body_is_sunk_for_the_single_colour_union_only():
+    prism = lod2_prism(10.0, 4.0)
+    meshes = build_meshes(Scaled(buildings=[prism]), spec())
+    # The exported part stays flush with the plate top so the 3MF parts never overlap.
+    assert meshes.buildings.bounding_box()[2] == pytest.approx(0.0, abs=1e-9)
+    # The single-colour union sinks it by BUILDING_SINK_MM, so the boolean never relies on a
+    # pure face contact at z = 0.
+    assert meshes.single.volume() > meshes.base.volume()
+    assert to_trimesh(meshes.single).is_watertight
+
+
+def test_a_body_and_a_prism_live_side_by_side():
+    scaled = Scaled(buildings=[lod2_prism(10.0, 4.0), Prism(box(20, 20, 30, 30), 6.0)])
+    meshes = build_meshes(scaled, spec())
+    assert to_trimesh(meshes.buildings).is_watertight
+    assert meshes.buildings.volume() == pytest.approx(10 * 10 * 4 + 10 * 10 * 6, rel=1e-6)
