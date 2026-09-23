@@ -3,7 +3,7 @@ import pytest
 from shapely.geometry import Polygon, box
 
 from skylineframe.errors import MeshError
-from skylineframe.mesh import build_meshes, to_trimesh
+from skylineframe.mesh import BUILDING_SINK_MM, _bodies, build_meshes, to_trimesh
 from skylineframe.scale import Prism, Scaled, ScaledRoof
 from skylineframe.spec import FrameSpec, Mode
 
@@ -184,29 +184,53 @@ def test_everything_together_stays_watertight():
 
 
 def lod2_prism(size_mm: float, height_mm: float) -> Prism:
-    """A Prism whose geometry is a ready-made body, the way scale hands LoD2 buildings on."""
-    solid = m3d.Manifold.cube((size_mm, size_mm, height_mm), center=True).translate(
+    """A Prism whose geometry is a ready-made body, the way scale hands LoD2 buildings on.
+
+    The body deliberately disagrees with geom and height_mm: it is one and a half times as wide
+    and it carries a tower that doubles its height. The prism path can only extrude geom to
+    height_mm, so every assertion on this body's volume or bounding box fails unless mesh really
+    reads solid_mm.
+    """
+    base = m3d.Manifold.cube((size_mm * 1.5, size_mm * 1.5, height_mm), center=True).translate(
         (0.0, 0.0, height_mm / 2)
     )
-    return Prism(geom=box(-size_mm / 2, -size_mm / 2, size_mm / 2, size_mm / 2), height_mm=height_mm, solid_mm=solid)
+    tower = m3d.Manifold.cube((size_mm / 2, size_mm / 2, height_mm), center=True).translate(
+        (0.0, 0.0, height_mm * 1.5)
+    )
+    return Prism(
+        geom=box(-size_mm / 2, -size_mm / 2, size_mm / 2, size_mm / 2),
+        height_mm=height_mm,
+        solid_mm=base + tower,
+    )
+
+
+# The fixture at (10, 4): a 15 x 15 x 4 base plus a 5 x 5 x 4 tower, reaching z = 8. The prism
+# path would build 10 x 10 x 4 = 400 mm³ reaching z = 4 instead.
+BODY_VOLUME = 15 * 15 * 4 + 5 * 5 * 4
+BODY_BOX = (-7.5, -7.5, 0.0, 7.5, 7.5, 8.0)
 
 
 def test_a_body_is_used_instead_of_the_extrusion():
-    meshes = build_meshes(Scaled(buildings=[lod2_prism(10.0, 4.0)]), spec())
-    # The plain extrusion would reach from z = 0 to height_mm as well, so the proof is the
-    # triangle count: a cube has 12, an extruded square with a separate roof body has more.
-    assert meshes.buildings.volume() == pytest.approx(10.0 * 10.0 * 4.0, rel=1e-6)
-    assert meshes.buildings.bounding_box()[2] == pytest.approx(0.0, abs=1e-9)
+    prism = lod2_prism(10.0, 4.0)
+    meshes = build_meshes(Scaled(buildings=[prism]), spec())
+    # Both the volume and the bounding box are the body's, not the extrusion's.
+    assert meshes.buildings.volume() == pytest.approx(BODY_VOLUME, rel=1e-6)
+    assert meshes.buildings.bounding_box() == pytest.approx(BODY_BOX, abs=1e-6)
+    assert meshes.buildings.volume() == pytest.approx(prism.solid_mm.volume(), rel=1e-6)
 
 
 def test_the_body_is_sunk_for_the_single_colour_union_only():
     prism = lod2_prism(10.0, 4.0)
+    # The exported part stays flush with the plate top so the 3MF parts never overlap; the
+    # single-colour union gets the same body sunk by BUILDING_SINK_MM, so the boolean never
+    # relies on a pure face contact at z = 0. The displacement itself is the assertion.
+    assert _bodies([prism], 0.0)[0].bounding_box()[2] == pytest.approx(0.0, abs=1e-6)
+    assert _bodies([prism], BUILDING_SINK_MM)[0].bounding_box()[2] == pytest.approx(-BUILDING_SINK_MM, abs=1e-6)
     meshes = build_meshes(Scaled(buildings=[prism]), spec())
-    # The exported part stays flush with the plate top so the 3MF parts never overlap.
-    assert meshes.buildings.bounding_box()[2] == pytest.approx(0.0, abs=1e-9)
-    # The single-colour union sinks it by BUILDING_SINK_MM, so the boolean never relies on a
-    # pure face contact at z = 0.
-    assert meshes.single.volume() > meshes.base.volume()
+    assert meshes.buildings.bounding_box() == pytest.approx(BODY_BOX, abs=1e-6)
+    # The sunk body loses exactly the slab that now sits inside the plate: 15 x 15 x 0.2.
+    sunk_into_plate = 15 * 15 * BUILDING_SINK_MM
+    assert meshes.single.volume() == pytest.approx(PLATE_VOLUME + BODY_VOLUME - sunk_into_plate, rel=1e-6)
     assert to_trimesh(meshes.single).is_watertight
 
 
@@ -214,4 +238,5 @@ def test_a_body_and_a_prism_live_side_by_side():
     scaled = Scaled(buildings=[lod2_prism(10.0, 4.0), Prism(box(20, 20, 30, 30), 6.0)])
     meshes = build_meshes(scaled, spec())
     assert to_trimesh(meshes.buildings).is_watertight
-    assert meshes.buildings.volume() == pytest.approx(10 * 10 * 4 + 10 * 10 * 6, rel=1e-6)
+    assert meshes.buildings.volume() == pytest.approx(BODY_VOLUME + 10 * 10 * 6, rel=1e-6)
+    assert meshes.buildings.bounding_box()[5] == pytest.approx(BODY_BOX[5], abs=1e-6)
