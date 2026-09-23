@@ -1,7 +1,7 @@
 """Hessen LoD2 provider: INSPIRE WFS 2.0.0, one GetFeature per bounding box (spec §3.1).
 
 The response is streamed to a cache file and parsed from there: a 1500 m Frankfurt square is
-5 302 buildings in 128 MB of GML, which has no business sitting in memory twice.
+6 119 buildings in 145 MB of GML, which has no business sitting in memory twice.
 """
 
 import hashlib
@@ -122,7 +122,10 @@ def _download(url: str, path: Path, client: httpx.Client | None) -> bool:
         # this bounding box for as long as the cache lives.
         os.replace(staged, path)
         return True
-    except httpx.HTTPError as exc:
+    except (httpx.HTTPError, OSError) as exc:
+        # OSError as well as HTTPError: the body is streamed to disk, so a full volume, a quota
+        # or a read-only cache fails here long after the request itself succeeded. Losing the
+        # height model is the right price for that; losing the run is not (spec §9).
         log.warning("LoD2 Hessen: %s; continuing with OpenStreetMap", exc)
         return False
     finally:

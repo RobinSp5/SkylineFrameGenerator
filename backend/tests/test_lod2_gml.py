@@ -212,6 +212,6 @@ def test_streaming_and_one_shot_agree(lod2_xml_path, lod2_frankfurt):
 
 
 def test_iter_buildings_is_lazy(lod2_xml_path):
-    # A 1500 m square is a 128 MB document with 5302 buildings; the caller must be able to stop.
+    # A 1500 m square is a 145 MB document with 6119 buildings; the caller must be able to stop.
     first = next(iter_buildings(str(lod2_xml_path), "hessen"))
     assert first.name == "(1:Kulturschirn)"

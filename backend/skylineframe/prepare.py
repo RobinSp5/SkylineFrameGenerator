@@ -109,11 +109,11 @@ def lod2_buildings(features: Features) -> list[Building]:
 
     Only the cheap half of spec §5 runs here. The body costs two orders of magnitude more and is
     built in solidify_buildings, for the footprints that survive the printability check — a
-    1500 m Frankfurt square delivers 5 302 models and most of them end up inside a block.
+    1500 m Frankfurt square delivers 6 119 models and most of them end up inside a block.
     """
     out: list[Building] = []
     for raw in features.lod2:
-        # Walk the rings once: this loop runs for every model the provider delivered (5 302 in a
+        # Walk the rings once: this loop runs for every model the provider delivered (6 119 in a
         # 1500 m Frankfurt square), not only for the ones that end up with a body.
         faces = faces_of(raw.surfaces)
         footprint = footprint_of_faces(faces)
@@ -136,17 +136,26 @@ def lod2_buildings(features: Features) -> list[Building]:
     return out
 
 
-def drop_covered(osm: list[Building], lod2: list[Building]) -> list[Building]:
-    """Drop OSM footprints more than LOD2_DISPLACE_FRACTION covered by LoD2 (spec §6.3/§6.4).
+def drop_covered(
+    osm: list[Building], lod2: list[Building]
+) -> tuple[list[Building], list[BaseGeometry]]:
+    """Split OSM footprints into (kept, displaced geometry) at LOD2_DISPLACE_FRACTION (spec §6.3/§6.4).
 
-    One rule for outlines and for building:part alike: a part over a LoD2 building is a setback
-    that the body already has, and keeping it would put a second tower inside the first. What is
-    only grazed survives — LoD2 stock ends at state borders and misses new buildings.
+    A footprint more than LOD2_DISPLACE_FRACTION covered by LoD2 is dropped. One rule for outlines
+    and for building:part alike: a part over a LoD2 building is a setback that the body already
+    has, and keeping it would put a second tower inside the first. What is only grazed survives —
+    LoD2 stock ends at state borders and misses new buildings.
+
+    The displaced geometry is handed back because a dropped footprint is usually a little larger
+    than the LoD2 model that replaces it, and the difference is building area that the model no
+    longer carries. It belongs in the denominator of footprint_coverage, which is the acceptance
+    gate for this feature — measured against the survivors alone the metric could never see it.
     """
     if not lod2:
-        return osm
+        return osm, []
     tree = STRtree([b.geom for b in lod2])
     kept: list[Building] = []
+    displaced: list[BaseGeometry] = []
     for b in osm:
         area = b.geom.area
         if area <= 0:
@@ -159,7 +168,9 @@ def drop_covered(osm: list[Building], lod2: list[Building]) -> list[Building]:
         covered = unary_union([lod2[int(i)].geom for i in hits]).intersection(b.geom).area
         if covered / area <= LOD2_DISPLACE_FRACTION:
             kept.append(b)
-    return kept
+        else:
+            displaced.append(b.geom)
+    return kept, displaced
 
 
 def solidify_buildings(buildings: list[Building]) -> int:
@@ -430,16 +441,26 @@ def build_blocks(
     return blocks
 
 
-def _coverage(footprints: list[Building], blocks: list[Block], buildings: list[Building]) -> float:
+def _coverage(
+    footprints: list[Building],
+    blocks: list[Block],
+    buildings: list[Building],
+    displaced: list[BaseGeometry],
+) -> float:
     """Share of the building area in the square that the model still carries (spec §6).
 
     The model is the union of the blocks and the individually printable buildings: a footprint
     whose block was dropped, or trimmed away by a road corridor, still counts when it is a
     solid of its own.
+
+    `displaced` are the OSM footprints that LoD2 replaced, already clipped to the square. They go
+    into the denominator and never into the numerator: the area they held stood in the square and
+    is what the model has to account for, so the part of it no LoD2 model covers shows up as the
+    loss it is instead of vanishing with the footprint.
     """
-    if not footprints:
+    if not footprints and not displaced:
         return 0.0
-    total = unary_union([b.geom for b in footprints])
+    total = unary_union([*(b.geom for b in footprints), *displaced])
     if total.is_empty or total.area <= 0:
         return 0.0
     modelled = unary_union([*(b.geom for b in blocks), *(b.geom for b in buildings)])
@@ -515,8 +536,12 @@ def prepare(features: Features, spec: FrameSpec) -> Prepared:
     # spec.lod2 is checked in fetch as well; checking it here too means a caller that hands in
     # LoD2 data with the flag off (the pipeline tests do exactly that) gets the OSM-only model.
     lod2 = lod2_buildings(features) if spec.lod2 else []
+    displaced: list[BaseGeometry] = []
     if lod2:
-        buildings = drop_covered(buildings, lod2)
+        buildings, dropped = drop_covered(buildings, lod2)
+        # Clipped to the square like every other footprint, so the coverage denominator only ever
+        # holds building area that was inside the model in the first place.
+        displaced = [g for g in (d.intersection(square) for d in dropped) if not g.is_empty]
     clipped = _clip(buildings + lod2, square, tol_m)
     if not spec.parts:
         clipped = [b for b in clipped if not b.is_part]
@@ -537,7 +562,7 @@ def prepare(features: Features, spec: FrameSpec) -> Prepared:
     # Only now is it clear which footprints get their own solid; everything else goes into a
     # block and would never use a body (spec §5).
     lod2_rejected = solidify_buildings(buildings)
-    coverage = _coverage(footprints, blocks, buildings)
+    coverage = _coverage(footprints, blocks, buildings, displaced)
     if not full:
         return Prepared(
             buildings=buildings, blocks=blocks, footprint_coverage=coverage, lod2_rejected=lod2_rejected

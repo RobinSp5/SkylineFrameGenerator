@@ -644,7 +644,35 @@ def test_a_building_part_over_a_lod2_building_is_ignored():
 
 def test_drop_covered_keeps_everything_without_lod2():
     osm = [Building(box(0, 0, 10, 10), height_m=8.0, osm_id="way/1")]
-    assert drop_covered(osm, []) is osm
+    assert drop_covered(osm, []) == (osm, [])
+
+
+def test_drop_covered_hands_back_what_it_displaced():
+    osm = [
+        Building(box(-20, -15, 20, 15), height_m=8.0, osm_id="way/1", kind="yes"),
+        Building(box(100, 100, 120, 120), height_m=8.0, osm_id="way/2", kind="yes"),
+    ]
+    kept, displaced = drop_covered(osm, lod2_buildings(Features(lod2=[lod2_box(-20, -15, 20, 5, 100.0, 130.0)])))
+    assert [b.osm_id for b in kept] == ["way/2"]
+    # The caller needs the geometry, not the Building: it only ever lands in the coverage
+    # denominator, and the footprint it stood on is what was lost.
+    assert [g.area for g in displaced] == [pytest.approx(1200)]
+
+
+def test_coverage_counts_the_area_that_displacement_deleted():
+    # A 40x30 m OSM building with a 40x20 m LoD2 model over it: 67 % covered, so the whole OSM
+    # footprint goes and 400 m² of building area simply disappears from the model. The metric is
+    # the acceptance gate for this feature (spec §6), so it has to see that loss instead of
+    # measuring itself against the survivors.
+    feats = Features(
+        buildings=[Building(box(-20, -15, 20, 15), height_m=8.0, osm_id="way/1", kind="yes")],
+        lod2=[lod2_box(-20, -15, 20, 5, 100.0, 130.0)],
+    )
+    out = prepare(feats, spec())
+    assert [b.osm_id for b in out.buildings] == ["lod2/hessen/B1"]
+    assert out.footprint_coverage < 1.0
+    # 800 m² of the 1200 m² that stood here are modelled; abs covers the hair the block adds.
+    assert out.footprint_coverage == pytest.approx(800 / 1200, abs=0.02)
 
 
 def test_a_lod2_building_that_only_reaches_a_block_is_never_solidified(monkeypatch):

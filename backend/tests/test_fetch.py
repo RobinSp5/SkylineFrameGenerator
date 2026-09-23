@@ -4,6 +4,7 @@ import logging
 import httpx
 import pytest
 
+import skylineframe.fetch
 from skylineframe.errors import FetchError
 from skylineframe.features import RoofSpec
 from skylineframe.fetch import (
@@ -471,3 +472,27 @@ def test_fetch_features_attaches_lod2(tmp_path, lod2_xml_path):
     assert feats.lod2_source == "hessen"
     assert len(feats.lod2) == 3
     assert len(calls) == 1
+
+
+def test_fetch_lod2_survives_a_provider_that_raises(tmp_path, monkeypatch, caplog):
+    """A full disk or an unwritable cache must degrade to OpenStreetMap, not end the run.
+
+    The provider handles its own network errors, but mkdir and the 152 MB write to the cache are
+    outside every handler it has — and this used to propagate out of fetch_lod2 (spec §9).
+    """
+
+    class Exploding:
+        name = "exploding"
+
+        def covers(self, bbox):
+            return True
+
+        def fetch(self, bbox, cache_dir, client=None):
+            raise OSError("No space left on device")
+
+    monkeypatch.setattr(skylineframe.fetch, "select_provider", lambda bbox: Exploding())
+    frankfurt = FrameSpec(center_lat=50.1106, center_lon=8.6821, side_m=400)
+    with caplog.at_level(logging.WARNING, logger="skylineframe.fetch"):
+        assert fetch_lod2(frankfurt, tmp_path) == ([], "")
+    assert "exploding" in caplog.text
+    assert "No space left on device" in caplog.text

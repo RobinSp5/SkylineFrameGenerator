@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import logging
 import os
 import time
 from collections.abc import Callable
@@ -17,6 +18,8 @@ from .lod2.provider import select_provider
 from .project import query_bbox
 from .spec import LEVEL_HEIGHT_M, ROAD_CLASSES, FrameSpec, Mode
 
+log = logging.getLogger(__name__)
+
 DEFAULT_OVERPASS_URL = "https://overpass-api.de/api/interpreter"
 # overpass-api.de rejects unidentified clients with HTTP 406 (both the httpx default UA and
 # browser UA strings), so identify the application as the Overpass usage policy asks.
@@ -28,7 +31,7 @@ MAX_LEVELS = 300.0
 # shapely before the mesh stage ever starts, so the area is rejected up front.
 MAX_ELEMENTS = 250_000
 # The LoD2 cache lives beside the Overpass cache in its own directory, keyed per bounding box.
-# One 1500 m Frankfurt square is about 128 MB in there.
+# One 1500 m Frankfurt square is about 145 MB in there.
 LOD2_CACHE_DIRNAME = "lod2"
 WATER_SELECTORS = (
     '["natural"="water"]',
@@ -336,13 +339,23 @@ def fetch_lod2(
     A missing provider, a switched-off flag and an unreachable service are all the same thing
     here: the run continues on OpenStreetMap alone and says so through the empty source name
     (spec §9). Nothing in this function may raise.
+
+    The bare `except` is deliberate and is what makes that promise true. A provider handles its
+    own network errors, but creating the cache directory and streaming 152 MB into it are plain
+    filesystem work: a full volume, a quota or a read-only cache raises OSError right past every
+    handler the provider has, and a missing height model must never cost the run the model.
     """
     if not spec.lod2:
         return [], ""
-    provider = select_provider(query_bbox(spec))
+    bbox = query_bbox(spec)
+    provider = select_provider(bbox)
     if provider is None:
         return [], ""
-    buildings = provider.fetch(query_bbox(spec), cache_dir / LOD2_CACHE_DIRNAME, client=client)
+    try:
+        buildings = provider.fetch(bbox, cache_dir / LOD2_CACHE_DIRNAME, client=client)
+    except Exception as exc:  # noqa: BLE001 - degrading to OSM is always better than failing
+        log.warning("LoD2 %s: %s; continuing with OpenStreetMap", provider.name, exc)
+        return [], ""
     return (buildings, provider.name) if buildings else ([], "")
 
 

@@ -3,6 +3,7 @@ import logging
 import httpx
 import pytest
 
+import skylineframe.lod2.hessen as hessen
 from skylineframe.lod2.hessen import (
     MAX_RESPONSE_BYTES,
     OUTPUT_CRS,
@@ -103,7 +104,7 @@ def test_fetch_uses_the_disk_cache_on_the_second_call(tmp_path, lod2_xml_path):
     second = provider.fetch(FRANKFURT, tmp_path, client=client)
     assert [b.osm_id for b in first] == [b.osm_id for b in second]
     assert len(calls) == 1
-    # Keyed per bbox, like the Overpass cache; a 1500 m Frankfurt square is ~128 MB in here.
+    # Keyed per bbox, like the Overpass cache; a 1500 m Frankfurt square is ~145 MB in here.
     assert len(list(tmp_path.glob("*.xml"))) == 1
 
 
@@ -178,5 +179,22 @@ def test_a_corrupt_cache_entry_is_fetched_again_in_the_same_run(tmp_path, lod2_x
 
 
 def test_the_size_limit_is_generous_enough_for_a_real_square():
-    # Measured: a 1500 m Frankfurt square is 128 MB.
+    # Measured: a 1500 m Frankfurt square is 145 MB.
     assert MAX_RESPONSE_BYTES >= 256 * 1024 * 1024
+
+
+def test_a_failed_write_falls_back_to_openstreetmap(tmp_path, lod2_xml_path, monkeypatch, caplog):
+    # Streaming 152 MB to disk can fail on a full volume or a quota long after the request
+    # succeeded. That is an OSError, not an HTTPError, and it must cost the run its heights
+    # rather than the run itself (spec §9).
+    calls: list[httpx.Request] = []
+    client = make_client(lod2_xml_path.read_bytes(), calls)
+
+    def no_space(src, dst):
+        raise OSError("No space left on device")
+
+    monkeypatch.setattr(hessen.os, "replace", no_space)
+    with caplog.at_level(logging.WARNING, logger="skylineframe.lod2.hessen"):
+        assert HessenProvider().fetch(FRANKFURT, tmp_path, client=client) == []
+    assert "No space left on device" in caplog.text
+    assert list(tmp_path.iterdir()) == []  # the staged file is cleaned up

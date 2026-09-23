@@ -77,7 +77,7 @@ def footprint_of_faces(faces: list[list[Point3]]) -> Polygon | None:
     edge; without it the union falls apart into slivers and the largest part is a single wall.
 
     Takes faces rather than raw rings so that a caller who also needs the height range walks the
-    rings once. At 97 614 polygons per square that is the difference between one pass and three.
+    rings once. At 114 672 polygons per square that is the difference between one pass and three.
     """
     polygons = []
     for face in faces:

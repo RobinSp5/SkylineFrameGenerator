@@ -5,7 +5,7 @@ Pure parsing: no network, no shapely, no projection. Two rules carry the whole m
 * Rings come only from <gml:Polygon> -> <gml:exterior> -> <gml:posList>. A scan for posList alone
   also collects the <gml:LineString> curve members of the terrain intersection (212 of them in the
   recorded three-building response against 360 faces), and those are not faces at all.
-* The parse streams. A 1500 m Frankfurt square is a 128 MB document with 97 614 polygons, so
+* The parse streams. A 1500 m Frankfurt square is a 145 MB document with 114 672 polygons, so
   iterparse yields one building at a time and the root is cleared after each one; the resident set
   stays flat no matter how large the document is.
 """
