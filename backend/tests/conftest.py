@@ -43,3 +43,13 @@ def lod2_frankfurt(lod2_xml_path) -> list:
     from skylineframe.lod2.gml import parse_buildings
 
     return parse_buildings(str(lod2_xml_path), "hessen")
+
+
+@pytest.fixture
+def lod2_local(lod2_frankfurt) -> list:
+    """The recorded buildings projected into the local metric frame of the Römer square."""
+    from skylineframe.project import local_transformer, project_lod2
+
+    spec = FrameSpec(center_lat=50.1106, center_lon=8.6821, side_m=400, mode=Mode.full)
+    tr = local_transformer(spec)
+    return [project_lod2(b, tr, spec.rotation_deg) for b in lod2_frankfurt]
