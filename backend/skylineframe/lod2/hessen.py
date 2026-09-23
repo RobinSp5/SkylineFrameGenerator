@@ -7,6 +7,7 @@ The response is streamed to a cache file and parsed from there: a 1500 m Frankfu
 import hashlib
 import logging
 import os
+import uuid
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
@@ -90,7 +91,10 @@ def _download(url: str, path: Path, client: httpx.Client | None) -> bool:
     """Stream the response into `path`. False (with a warning) when anything went wrong."""
     owns_client = client is None
     client = client or httpx.Client(timeout=TIMEOUT_S, follow_redirects=True)
-    staged = path.with_name(path.name + f".{os.getpid()}.tmp")
+    # uuid4, not the pid: the API runs the pipeline on a thread pool inside one process, so two
+    # jobs for the same square would stage under the same name, truncate each other mid-stream and
+    # delete each other's file in the finally block — costing both a 152 MB download for nothing.
+    staged = path.with_name(path.name + f".{uuid.uuid4().hex}.tmp")
     try:
         with client.stream("GET", url) as response:
             if response.status_code != 200:

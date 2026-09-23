@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import time
+import uuid
 from collections.abc import Callable
 from pathlib import Path
 
@@ -263,7 +264,9 @@ def _read_cache(path: Path) -> dict | None:
 
 def _write_cache(path: Path, data: dict) -> None:
     """Write atomically: a reader either sees the previous entry or the complete new one."""
-    tmp = path.with_name(path.name + f".{os.getpid()}.tmp")
+    # uuid4, not the pid: the API runs the pipeline on a thread pool inside one process, so two
+    # jobs for the same square would otherwise stage under the same name and truncate each other.
+    tmp = path.with_name(path.name + f".{uuid.uuid4().hex}.tmp")
     tmp.write_text(json.dumps(data))
     os.replace(tmp, path)
 
