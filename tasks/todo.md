@@ -188,5 +188,5 @@ Spec: docs/superpowers/specs/2026-09-23-lod2-import-design.md
 - [ ] Task 5: Pipeline-Einbau — fetch holt, prepare verdrängt und verkörpert
 - [ ] Task 6: scale und mesh — Körper statt Prisma plus Dach
 - [ ] Task 7: Statistik, SOURCES.txt, CLI, API und UI
-- [ ] Task 8: lod2/bayern.py — Kachelindex und CityGML
-- [ ] Task 9: README und Abnahme (Frankfurt mit und ohne LoD2; Bambu Studio manuell)
+- [ ] Task 8: README und Abnahme (Frankfurt mit und ohne LoD2; Bambu Studio manuell)
+(Bayern-Provider auf eine spätere Phase verschoben, siehe Spec 3.2)
