@@ -13,7 +13,7 @@ from pathlib import Path
 import httpx
 
 from ..features import Lod2Building
-from .gml import parse_buildings
+from .gml import local_name, parse_buildings
 from .sources import HESSEN, Attribution
 
 log = logging.getLogger(__name__)
@@ -29,6 +29,8 @@ OUTPUT_CRS = "urn:ogc:def:crs:EPSG::7423"
 COVERAGE = (49.396, 7.777, 51.655, 10.224)
 MAX_RESPONSE_BYTES = 256 * 1024 * 1024  # ~a 2000 m square; beyond that we fall back to OSM
 TIMEOUT_S = 120.0
+# The document element of a successful GetFeature. Anything else is an error document.
+FEATURE_COLLECTION_TAG = "FeatureCollection"
 
 
 def covers_bbox(bbox: tuple[float, float, float, float]) -> bool:
@@ -49,7 +51,10 @@ def build_url(bbox: tuple[float, float, float, float]) -> str:
         "version": "2.0.0",
         "request": "GetFeature",
         "typeNames": TYPE_NAMES,
-        "bbox": f"{south:g},{west:g},{north:g},{east:g},{QUERY_CRS}",
+        # .10g keeps the full precision of a query_bbox corner while dropping trailing zeros;
+        # plain %g would round to six significant digits, which is metres on the ground and the
+        # 100 m margin of query_bbox is only a default, not a guarantee.
+        "bbox": f"{south:.10g},{west:.10g},{north:.10g},{east:.10g},{QUERY_CRS}",
         "srsName": OUTPUT_CRS,
     }
     return str(httpx.URL(WFS_URL, params=params))
@@ -57,6 +62,28 @@ def build_url(bbox: tuple[float, float, float, float]) -> str:
 
 def _cache_path(cache_dir: Path, url: str) -> Path:
     return cache_dir / (hashlib.sha256(url.encode()).hexdigest() + ".xml")
+
+
+def _document_element(path: Path) -> str:
+    """Local name of the document element, or "" when the file is not readable XML.
+
+    Only the first start event is pulled, so this costs one tag no matter how large the file is.
+    """
+    try:
+        for _event, element in ET.iterparse(path, events=("start",)):
+            return local_name(element.tag)
+    except (ET.ParseError, OSError):
+        return ""
+    return ""
+
+
+def _parse(path: Path, provider: str, what: str) -> list[Lod2Building] | None:
+    """The buildings in `path`, or None (with a warning) when it cannot be read."""
+    try:
+        return parse_buildings(str(path), provider)
+    except (ET.ParseError, OSError) as exc:
+        log.warning("LoD2 Hessen: unreadable %s (%s)", what, exc)
+        return None
 
 
 def _download(url: str, path: Path, client: httpx.Client | None) -> bool:
@@ -80,6 +107,17 @@ def _download(url: str, path: Path, client: httpx.Client | None) -> bool:
                         )
                         return False
                     handle.write(chunk)
+        root = _document_element(staged)
+        if root != FEATURE_COLLECTION_TAG:
+            # A WFS is free to answer an <ows:ExceptionReport> with HTTP 200. It is well-formed
+            # XML holding zero buildings, so without this check it would be cached as a perfectly
+            # good empty answer and this bounding box would quietly stay on estimated heights for
+            # the whole life of the cache, with nothing in the log to say why.
+            log.warning(
+                "LoD2 Hessen: response is %s, not a FeatureCollection; continuing with OpenStreetMap",
+                root or "not readable XML",
+            )
+            return False
         # Move into place only once the body is complete: a truncated cache entry would poison
         # this bounding box for as long as the cache lives.
         os.replace(staged, path)
@@ -111,11 +149,19 @@ class HessenProvider:
         cache_dir.mkdir(parents=True, exist_ok=True)
         url = build_url(bbox)
         path = _cache_path(cache_dir, url)
-        if not path.is_file() and not _download(url, path, client):
+        if path.is_file():
+            cached = _parse(path, self.name, "cache entry")
+            if cached is not None:
+                return cached
+            # A crash mid-write leaves a truncated entry. Like the Overpass cache, that counts as
+            # a miss and is fetched again in this very run, instead of costing the run its heights.
+            path.unlink(missing_ok=True)
+        if not _download(url, path, client):
             return []
-        try:
-            return parse_buildings(str(path), self.name)
-        except ET.ParseError as exc:
-            log.warning("LoD2 Hessen: unreadable response (%s); continuing with OpenStreetMap", exc)
+        buildings = _parse(path, self.name, "response")
+        if buildings is None:
+            # The server just answered with something unreadable; asking it again straight away
+            # would only repeat it, so this run continues on OpenStreetMap.
             path.unlink(missing_ok=True)
             return []
+        return buildings

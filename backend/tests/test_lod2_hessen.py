@@ -19,6 +19,13 @@ from skylineframe.lod2.sources import HESSEN
 FRANKFURT = (50.1080, 8.6790, 50.1130, 8.6850)  # (south, west, north, east)
 BERLIN = (52.5100, 13.3800, 52.5200, 13.4000)
 BORDER = (49.9000, 7.5000, 49.9500, 7.8500)  # half of it is west of the Hessen coverage
+# What a WFS sends when it dislikes a parameter — sometimes with HTTP 400, sometimes with 200.
+EXCEPTION_REPORT = (
+    b'<?xml version="1.0" encoding="UTF-8"?>\n'
+    b'<ows:ExceptionReport xmlns:ows="http://www.opengis.net/ows/1.1" version="2.0.0">'
+    b'<ows:Exception exceptionCode="InvalidParameterValue" locator="srsName">'
+    b"<ows:ExceptionText>Unknown CRS</ows:ExceptionText></ows:Exception></ows:ExceptionReport>"
+)
 
 
 def make_client(body: bytes | int, calls: list[httpx.Request]) -> httpx.Client:
@@ -118,7 +125,7 @@ def test_a_network_error_gives_an_empty_list_and_a_warning(tmp_path, caplog):
     with caplog.at_level(logging.WARNING, logger="skylineframe.lod2.hessen"):
         assert HessenProvider().fetch(FRANKFURT, tmp_path, client=client) == []
     assert "LoD2" in caplog.text
-    assert list(tmp_path.glob("*.xml")) == []  # nothing half-written is left behind
+    assert list(tmp_path.iterdir()) == []  # nothing half-written is left behind
 
 
 def test_an_http_error_gives_an_empty_list(tmp_path, caplog):
@@ -126,7 +133,7 @@ def test_an_http_error_gives_an_empty_list(tmp_path, caplog):
     with caplog.at_level(logging.WARNING, logger="skylineframe.lod2.hessen"):
         assert HessenProvider().fetch(FRANKFURT, tmp_path, client=client) == []
     assert "503" in caplog.text
-    assert list(tmp_path.glob("*.xml")) == []
+    assert list(tmp_path.iterdir()) == []
 
 
 def test_an_oversized_response_is_abandoned(tmp_path, caplog, monkeypatch):
@@ -135,7 +142,7 @@ def test_an_oversized_response_is_abandoned(tmp_path, caplog, monkeypatch):
     with caplog.at_level(logging.WARNING, logger="skylineframe.lod2.hessen"):
         assert HessenProvider().fetch(FRANKFURT, tmp_path, client=client) == []
     assert "too large" in caplog.text
-    assert list(tmp_path.glob("*.xml")) == []
+    assert list(tmp_path.iterdir()) == []
 
 
 def test_an_unreadable_body_gives_an_empty_list_and_drops_the_cache_entry(tmp_path, caplog):
@@ -143,7 +150,31 @@ def test_an_unreadable_body_gives_an_empty_list_and_drops_the_cache_entry(tmp_pa
     with caplog.at_level(logging.WARNING, logger="skylineframe.lod2.hessen"):
         assert HessenProvider().fetch(FRANKFURT, tmp_path, client=client) == []
     # A broken answer must not be served from the cache for the rest of the day.
-    assert list(tmp_path.glob("*.xml")) == []
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_a_200_exception_report_is_not_taken_for_an_empty_answer(tmp_path, caplog):
+    # A WFS may return an error document with HTTP 200. It is well-formed XML with zero buildings,
+    # so caching it would leave this bbox silently on estimated heights for the life of the cache.
+    client = make_client(EXCEPTION_REPORT, [])
+    with caplog.at_level(logging.WARNING, logger="skylineframe.lod2.hessen"):
+        assert HessenProvider().fetch(FRANKFURT, tmp_path, client=client) == []
+    assert "ExceptionReport" in caplog.text
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_a_corrupt_cache_entry_is_fetched_again_in_the_same_run(tmp_path, lod2_xml_path, caplog):
+    calls: list[httpx.Request] = []
+    client = make_client(lod2_xml_path.read_bytes(), calls)
+    provider = HessenProvider()
+    provider.fetch(FRANKFURT, tmp_path, client=client)
+    next(iter(tmp_path.glob("*.xml"))).write_bytes(b"<truncated")  # e.g. a crash mid-write
+    with caplog.at_level(logging.WARNING, logger="skylineframe.lod2.hessen"):
+        buildings = provider.fetch(FRANKFURT, tmp_path, client=client)
+    # A bad entry is a miss, like in the Overpass cache: this run recovers instead of the next one.
+    assert [b.name for b in buildings] == ["(1:Kulturschirn)", "(1:Paulskirche)", None]
+    assert len(calls) == 2
+    assert "cache entry" in caplog.text
 
 
 def test_the_size_limit_is_generous_enough_for_a_real_square():
