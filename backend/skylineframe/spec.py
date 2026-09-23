@@ -74,6 +74,9 @@ class FrameSpec(BaseModel):
     min_footprint_area_mm2: float = Field(default=0.25, ge=0)
     roofs: bool = True  # build roof solids from roof:shape (spec §7)
     parts: bool = True  # render building:part instead of one box per outline (spec §6.3)
+    # Use an official LoD2 model where one is available; without a provider, without network or
+    # with lod2=False the result is bit-identical to the OSM-only run (spec §8/§11).
+    lod2: bool = True
     road_depth_mm: float = Field(default=0.4, gt=0)
     water_depth_mm: float = Field(default=0.6, gt=0)
     road_width_mm: dict[str, float] = Field(default_factory=lambda: dict(DEFAULT_ROAD_WIDTH_MM))

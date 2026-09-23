@@ -80,3 +80,16 @@ def test_presets_match_the_spec_table():
     assert PRESETS[Preset.detail] == (800.0, 100.0)
     assert PRESETS[Preset.gross] == (1500.0, 200.0)
     assert set(PRESETS) == {"skyline", "detail", "gross"}
+
+
+def test_lod2_is_on_by_default_and_can_be_switched_off():
+    assert FrameSpec(center_lat=50, center_lon=8).lod2 is True
+    assert FrameSpec(center_lat=50, center_lon=8, lod2=False).lod2 is False
+
+
+def test_unknown_field_is_still_forbidden():
+    import pytest
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        FrameSpec(center_lat=50, center_lon=8, lod3=True)

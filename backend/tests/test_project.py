@@ -106,3 +106,51 @@ def test_project_features_keeps_building_detail_fields():
     assert (got.osm_id, got.is_part, got.outline_id, got.kind) == ("way/123", True, "relation/456", "office")
     assert got.geom.geom_type == "Polygon"
     assert got.geom is not building.geom  # projected, not the original
+
+
+def test_project_features_projects_lod2_surfaces_and_keeps_the_source():
+    from skylineframe.features import Features, Lod2Building
+
+    spec = FrameSpec(center_lat=50.0, center_lon=8.0, side_m=1000)
+    raw = Lod2Building(
+        osm_id="lod2/hessen/Building_1",
+        surfaces=(((8.0, 50.0, 100.0), (8.001, 50.0, 100.0), (8.001, 50.001, 110.0)),),
+        name="Test",
+    )
+    out = project_features(Features(lod2=[raw], lod2_source="hessen"), spec)
+    assert out.lod2_source == "hessen"
+    got = out.lod2[0]
+    assert got.osm_id == "lod2/hessen/Building_1" and got.name == "Test"
+    x0, y0, z0 = got.surfaces[0][0]
+    # The centre of the spec projects to the origin, and z is carried through untouched.
+    assert (x0, y0, z0) == pytest.approx((0.0, 0.0, 100.0), abs=1e-6)
+    x1, _y1, _z1 = got.surfaces[0][1]
+    assert x1 == pytest.approx(71.6, abs=1.0)  # 0.001 deg of longitude at 50 N
+
+
+def test_project_lod2_rotates_like_to_local():
+    from shapely.geometry import Point
+
+    from skylineframe.features import Lod2Building
+    from skylineframe.project import local_transformer, project_lod2, to_local
+
+    spec = FrameSpec(center_lat=50.0, center_lon=8.0, side_m=1000, rotation_deg=30)
+    raw = Lod2Building(osm_id="lod2/hessen/x", surfaces=(((8.002, 50.002, 5.0),) * 3,))
+    got = project_lod2(raw, local_transformer(spec), spec.rotation_deg)
+    reference = to_local(Point(8.002, 50.002), spec)
+    assert got.surfaces[0][0][:2] == pytest.approx((reference.x, reference.y), abs=1e-6)
+
+
+def test_project_features_keeps_the_lod2_fields_of_a_building():
+    from shapely.geometry import box
+
+    from skylineframe.features import Building, Features
+
+    spec = FrameSpec(center_lat=50.0, center_lon=8.0, side_m=1000)
+    surfaces = (((8.0, 50.0, 1.0), (8.001, 50.0, 1.0), (8.001, 50.001, 2.0)),)
+    building = Building(geom=box(8.0, 50.0, 8.001, 50.001), height_m=12.0, lod2=True, surfaces=surfaces)
+    got = project_features(Features(buildings=[building]), spec).buildings[0]
+    assert got.lod2 is True
+    # Building.surfaces is not projected here: prepare reads them from Features.lod2, and
+    # projecting the same rings twice would silently double the transform.
+    assert got.surfaces == surfaces
