@@ -30,3 +30,16 @@ def bankenviertel_spec() -> FrameSpec:
 @pytest.fixture
 def bankenviertel_data() -> dict:
     return json.loads((FIXTURES / "frankfurt_bankenviertel.json").read_text())
+
+
+@pytest.fixture
+def lod2_xml_path() -> Path:
+    """The recorded Hessen WFS response: three buildings around the Frankfurt Römer."""
+    return FIXTURES / "lod2_frankfurt.xml"
+
+
+@pytest.fixture
+def lod2_frankfurt(lod2_xml_path) -> list:
+    from skylineframe.lod2.gml import parse_buildings
+
+    return parse_buildings(str(lod2_xml_path), "hessen")
