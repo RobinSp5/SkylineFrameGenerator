@@ -181,8 +181,8 @@ Körpern. Die Zahlen decken sich exakt mit der CLI-Diagnose (127 + 13 + 3 = 143)
 ## Phase 3 – LoD2 Import
 Plan: docs/superpowers/plans/2026-09-23-lod2-import.md
 Spec: docs/superpowers/specs/2026-09-23-lod2-import-design.md
-- [ ] Task 1: Spec-Flag, Container, Projektion und Quellentexte
-- [ ] Task 2: lod2/gml.py — streamender Parser, Fixture, Aufzeichnungsskript
+- [x] Task 1: Spec-Flag, Container, Projektion und Quellentexte
+- [x] Task 2: lod2/gml.py — streamender Parser, Fixture, Aufzeichnungsskript
 - [ ] Task 3: lod2/solidify.py — Flächenmodell zu wasserdichtem Körper
 - [ ] Task 4: lod2/provider.py und lod2/hessen.py — Protokoll, Registry, WFS
 - [ ] Task 5: Pipeline-Einbau — fetch holt, prepare verdrängt und verkörpert
