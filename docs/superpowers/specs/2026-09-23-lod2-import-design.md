@@ -166,7 +166,7 @@ Der Text je Quelle steht in `sources.py` und wird dort gepflegt, nicht im Code v
 
 - `FrameSpec.lod2: bool = True` (nutzen, wenn verfügbar). `extra="forbid"` bleibt.
 - CLI: `--lod2/--no-lod2`; die Ausgabe nennt die genutzte Quelle und die Zahl der LoD2-Gebäude.
-- Statistik: `lod2_buildings`, `lod2_source` (Name oder leer), `lod2_rejected` (nicht geschlossene Körper).
+- Statistik: `lod2_buildings` (Gebäude mit echtem Körper im Modell), `lod2_source` (Name oder leer; leer auch dann, wenn ein Provider zwar geantwortet hat, aber keine seiner Geometrien ins Modell gelangt ist), `lod2_rejected` (auf ein Prisma zurückgefallene Modelle — **zwei Ursachen in einer Zahl**, die die Ausgabe nicht auseinanderhält: Modelle, deren Körper sich nicht schließen ließ, **und** geschlossene Körper, die die Druckbarkeitsprüfung anschließend verworfen hat, weil sie unter `min_building_height_mm` bleiben oder die Platte verlassen; gemessen 2026-09-23 am 1500-m-Quadrat Frankfurt: 8 + 38 = 46).
 - UI: Statuszeile nennt die Quelle, zum Beispiel „Fertig: 851 Gebäude, 164 Blöcke, 612 davon aus LoD2 Hessen".
 
 ## 9. Verhalten ohne LoD2
