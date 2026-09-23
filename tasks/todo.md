@@ -204,3 +204,35 @@ Vergleich `out/skyline_lod2/model.3mf` gegen `out/skyline_osm/model.3mf`:
 - [ ] Kein Gebäude ragt über den Plattenrand und keines sackt unter die Plattenoberkante.
 - [ ] Die Straßenrillen laufen im LoD2-Modell genauso durch wie im OSM-Modell.
 - [ ] `SOURCES.txt` liegt neben dem Modell und nennt Hessen **und** OpenStreetMap.
+
+### Review Phase 3 (LoD2)
+
+**Was sich für den Druck ändert.** In Hessen kommen Höhen und Dachformen jetzt aus dem amtlichen
+LoD2-Bestand statt aus Schätzungen. Im 1500-m-Quadrat Frankfurt tragen 662 Gebäude einen echten
+Körper, 46 fallen auf ein Prisma zurück (8 Modelle schließen nicht, 38 bleiben unter der
+Mindesthöhe). Die Türme des Bankenviertels haben damit ihre echte, unterschiedliche Höhe; vorher
+war jeder über 40 m eine Schätzung.
+
+**Abnahme.** Vier Läufe (Skyline und Detail, je mit und ohne LoD2) in Step 5 des Plans. Alle Budgets
+halten außer der Laufzeit: der warme LoD2-Lauf braucht 23–26 s gegen 5 s ohne, also das 4,7-Fache
+statt der geplanten 3. Begründet verworfen — die späte Verkörperung arbeitet wie entworfen (sie
+spart rund 11 s), die Mehrkosten stammen daher, dass der amtliche Bestand 6 119 Baukörper führt,
+wo OSM 3 548 Grundrisse kennt. Das ist mehr Substanz, keine verschwendete Arbeit.
+
+**Nicht-mannigfaltige Kanten.** 4 130 statt 163. Angenommen, nachdem die Abschlussprüfung den
+exportierten STL auf allen 116 echten Druckschichten gegen die Ground-Truth-Querschnittsfläche
+gerechnet hat: Übereinstimmung besser als 1e-4, Volumen exakt einfach umschlossen. Die einzigen
+Abweichungen liegen auf exakt koplanaren Schnittebenen und verschwinden bei 1e-4 mm Versatz — das
+OSM-Modell zeigt denselben Effekt stärker. Die automatische Reparatur in Bambu Studio bleibt
+**abzulehnen**.
+
+**Sicherheitseigenschaft.** Bei LoD2-Ausfall ist die Ausgabe byteidentisch mit dem Stand vor dem
+Branch (md5 gegen einen temporären Checkout von main geprüft). Elf Ausfallarten durchgespielt,
+jede fällt still auf OpenStreetMap zurück und nennt dann keine LoD2-Quelle mehr.
+
+**Rechtliches.** `SOURCES.txt` liegt bei jedem Lauf neben dem Modell. Die OSM-Namensnennung gilt bei
+Verkauf **und** Veröffentlichung (ODbL §4.3), nicht nur beim Verkauf — das stand zuerst falsch drin.
+Hessen steht unter Datenlizenz Deutschland – Zero – Version 2.0, also ohne Bedingungen.
+
+**Offen:** die Bambu-Studio-Sichtprüfung oben; der Bayern-Provider (Spec §3.2); Gelände und
+Vegetation aus LiDAR/DSM.
