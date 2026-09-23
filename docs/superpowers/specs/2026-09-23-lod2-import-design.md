@@ -23,13 +23,13 @@ Zielzustand für Gebiete mit LoD2: 0 % geschätzte Höhen, 0 % ohne Dachform.
 
 Im Scope:
 1. Provider-Schicht für Gebäudedaten mit OSM als Default und LoD2 als optionaler Quelle.
-2. Provider „Hessen" (INSPIRE-WFS, verifiziert) und „Bayern" (Kachel-Download, verifiziert).
+2. Provider „Hessen" (INSPIRE-WFS, verifiziert). Die Provider-Schicht ist so gebaut, dass weitere Quellen ohne Eingriff in die Pipeline dazukommen.
 3. Umwandlung von GML-Flächenmodellen in wasserdichte Körper, vereinfacht auf Druckauflösung.
 4. Integration in die bestehende Pipeline: LoD2-Körper ersetzen die extrudierten OSM-Gebäude; Blöcke, Straßen, Wasser und Vorrangregeln bleiben unverändert.
 5. Herkunfts- und Lizenzangabe je Lauf als Datei neben dem Modell.
 6. CLI-, API- und UI-Schalter.
 
-Nicht im Scope: Gelände, Vegetation, LiDAR-Punktwolken und Höhenraster (eigene Phase), weitere Bundesländer über Hessen und Bayern hinaus (die Architektur trägt sie, der Einbau ist Folgearbeit), LoD3, Texturen.
+Nicht im Scope: Gelände, Vegetation, LiDAR-Punktwolken und Höhenraster (eigene Phase), weitere Bundesländer über Hessen hinaus einschließlich Bayern (siehe 3.2), LoD3, Texturen.
 
 ## 3. Verifizierte Quellen
 
@@ -42,11 +42,21 @@ Nicht im Scope: Gelände, Vegetation, LiDAR-Punktwolken und Höhenraster (eigene
 - Messung: 3 Gebäude, 388 KB, 0,25 s; die Schirn Kunsthalle besteht aus 137 Flächen und reicht von 96,42 bis 120,63 m.
 - Lizenz: Datenlizenz Deutschland Zero 2.0. Keine Bedingungen, Namensnennung nicht erforderlich. Wir nennen die Quelle trotzdem.
 
-### 3.2 Bayern
+### 3.2 Bayern (verifiziert, aber auf eine spätere Phase verschoben)
 
-- Kachelindex: `https://geodaten.bayern.de/odd/a/lod2/citygml/meta/metalink/{gemeindeschluessel}.meta4`, darin Dateinamen, Größen, SHA-256 und zwei Spiegel.
-- Daten: `https://download{1,2}.bayernwolke.de/a/lod2/citygml/{kachel}.gml`, CityGML, 43 bis 129 MB je Kachel.
-- Lizenz: Open Data der Bayerischen Vermessungsverwaltung; die genaue Lizenzformel und die geforderte Quellenangabe werden beim Einbau aus dem Portal übernommen und in `sources.py` hinterlegt (Abnahmekriterium von Task „Bayern").
+Verifiziert am 2026-09-23:
+
+- Kachelindex `https://geodaten.bayern.de/odd/a/lod2/citygml/meta/metalink/{ags}.meta4` mit Dateiname, Größe, SHA-256 und zwei Spiegeln.
+- Kachelnamen `{Ostwert_km}_{Nordwert_km}.gml` in UTM32 (EPSG:25832), Rasterweite **2 km** (nicht 1 km).
+- Daten unter `https://download{1,2}.bayernwolke.de/a/lod2/citygml/{kachel}.gml`.
+- München (AGS 09162): 109 Kacheln, zusammen 6,5 GB, je Kachel 0,6 bis 161,6 MB, Median 59,3 MB.
+
+Zurückgestellt, weil die geforderte Lizenz- und Quellenangabe nicht maschinell auslesbar ist (die Portalseiten
+werden erst im Browser aufgebaut). Bei einer Namensnennungslizenz ist eine falsche Quellenangabe ein
+rechtlicher Mangel, kein Schönheitsfehler. Der Einbau erfolgt, sobald die Formel wörtlich vorliegt. Die
+Abdeckung wird dann nicht aus einer geratenen Stadt-Bounding-Box bestimmt, sondern aus der Vereinigung der
+Kachel-Bounding-Boxen des jeweiligen Kachelindex; deckt der Index den Ausschnitt nicht vollständig ab, fällt
+der Lauf ganz auf OpenStreetMap zurück statt halb.
 
 ### 3.3 Weitere (nur Architektur, kein Einbau in dieser Phase)
 
