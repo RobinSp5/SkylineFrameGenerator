@@ -177,3 +177,16 @@ Körpern. Die Zahlen decken sich exakt mit der CLI-Diagnose (127 + 13 + 3 = 143)
 - [ ] `out/frankfurt-skyline/model.3mf` importieren, alle Objekte markieren → Rechtsklick → „Assemble“, je Teil ein Filament. Erwartung: `base`, `buildings`, `water`, `roads` wie bisher.
 - [ ] Sichtprüfung: keine schwebenden Teile über dem Modell, keine Nadeln auf Dächern, Türme des Bankenviertels mit Rücksprüngen, Straßenrillen laufen durch (Blöcke enden an den Straßen).
 - [ ] Die automatische Reparatur beim 3MF **ablehnen** — sie füllt die Vertiefungen auf.
+
+## Phase 3 – LoD2 Import
+Plan: docs/superpowers/plans/2026-09-23-lod2-import.md
+Spec: docs/superpowers/specs/2026-09-23-lod2-import-design.md
+- [ ] Task 1: Spec-Flag, Container, Projektion und Quellentexte
+- [ ] Task 2: lod2/gml.py — streamender Parser, Fixture, Aufzeichnungsskript
+- [ ] Task 3: lod2/solidify.py — Flächenmodell zu wasserdichtem Körper
+- [ ] Task 4: lod2/provider.py und lod2/hessen.py — Protokoll, Registry, WFS
+- [ ] Task 5: Pipeline-Einbau — fetch holt, prepare verdrängt und verkörpert
+- [ ] Task 6: scale und mesh — Körper statt Prisma plus Dach
+- [ ] Task 7: Statistik, SOURCES.txt, CLI, API und UI
+- [ ] Task 8: lod2/bayern.py — Kachelindex und CityGML
+- [ ] Task 9: README und Abnahme (Frankfurt mit und ohne LoD2; Bambu Studio manuell)
