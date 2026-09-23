@@ -74,7 +74,7 @@ OpenStreetMap via the Overpass API (responses are cached under `backend/.cache/o
 place search via Nominatim. Please respect the usage policies of both services.
 
 Where official LoD2 building models are openly available, they replace the OpenStreetMap buildings:
-real heights and real roof shapes instead of estimates. Two sources are wired up:
+real heights and real roof shapes instead of estimates. One source is wired up so far:
 
 | Source | Coverage | Service |
 |---|---|---|
