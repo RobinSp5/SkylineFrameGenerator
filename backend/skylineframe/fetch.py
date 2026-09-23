@@ -267,8 +267,14 @@ def _write_cache(path: Path, data: dict) -> None:
     # uuid4, not the pid: the API runs the pipeline on a thread pool inside one process, so two
     # jobs for the same square would otherwise stage under the same name and truncate each other.
     tmp = path.with_name(path.name + f".{uuid.uuid4().hex}.tmp")
-    tmp.write_text(json.dumps(data))
-    os.replace(tmp, path)
+    try:
+        tmp.write_text(json.dumps(data))
+        os.replace(tmp, path)
+    finally:
+        # A unique name means a failed write leaves a fresh orphan every time instead of one file
+        # per path that the next attempt overwrote, so the cleanup that the LoD2 download already
+        # does is no longer optional. After os.replace there is nothing left to unlink.
+        tmp.unlink(missing_ok=True)
 
 
 def fetch_overpass(

@@ -69,11 +69,14 @@ def lod2_features(spec, data, boxes):
     return feats
 
 
-def wgs84_box(lat, lon, size_deg, z0, z1, osm_id, closed=True):
-    """A box as separate faces in WGS84; closed=False leaves the roof off and cannot be solidified."""
+def wgs84_box(lat, lon, size_deg, z0, z1, osm_id, closed=True, size_deg_lat=None):
+    """A box as separate faces in WGS84; closed=False leaves the roof off and cannot be solidified.
+
+    size_deg is the extent in longitude and, unless size_deg_lat says otherwise, in latitude too.
+    """
     from skylineframe.features import Lod2Building
 
-    x0, y0, x1, y1 = lon, lat, lon + size_deg, lat + size_deg
+    x0, y0, x1, y1 = lon, lat, lon + size_deg, lat + (size_deg if size_deg_lat is None else size_deg_lat)
     bottom = ((x0, y0, z0), (x0, y1, z0), (x1, y1, z0), (x1, y0, z0))
     top = ((x0, y0, z1), (x1, y0, z1), (x1, y1, z1), (x0, y1, z1))
     walls = (
@@ -151,13 +154,19 @@ def test_lod2_data_that_never_reaches_the_model_does_not_name_the_source(
     tmp_path, frankfurt_spec, frankfurt_data
 ):
     # The provider answered, but nothing of it is in the model, so SOURCES.txt must not name it
-    # (spec §7). Both ways that happens in practice are here: the query box carries a 100 m margin,
-    # so a model can sit entirely outside the square (the 400 m fixture square reaches to about
-    # 50.1108, this box starts at 50.1115); and a model without a usable footprint — a 2D response,
-    # here a box with zero height — never becomes a Building at all.
+    # (spec §7). The three ways a model falls out, one box each:
+    #   OUTSIDE  the query box carries a 100 m margin, so a model can sit entirely outside the
+    #            square and be clipped away (the 400 m fixture square reaches to about 50.1108,
+    #            this box starts at 50.1115);
+    #   FLAT     a footprint is fine but the height span is zero, so lod2_buildings skips it;
+    #   FLAT_2D  a 2D response: the parser drops every ring on srsDimension="2", so the model
+    #            arrives with no surfaces and has no footprint to derive at all.
+    from skylineframe.features import Lod2Building
+
     boxes = [
         wgs84_box(50.1115, 8.6820, 0.0005, 100.0, 140.0, "lod2/hessen/OUTSIDE"),
         wgs84_box(50.1090, 8.6826, 0.0005, 100.0, 100.0, "lod2/hessen/FLAT"),
+        Lod2Building(osm_id="lod2/hessen/FLAT_2D", surfaces=()),
     ]
     result = run(
         frankfurt_spec,
@@ -173,6 +182,27 @@ def test_lod2_data_that_never_reaches_the_model_does_not_name_the_source(
         frankfurt_spec, tmp_path / "plain", tmp_path / "cache", fetch=lambda s, c: parse_overpass(frankfurt_data, s)
     )
     assert result.paths.stl.read_bytes() == plain.paths.stl.read_bytes()
+
+
+def test_lod2_geometry_that_only_feeds_a_block_still_names_the_source(
+    tmp_path, frankfurt_spec, frankfurt_data
+):
+    # The source is named for LoD2 geometry that reaches the model at all, not only for the
+    # buildings that get their own body (spec §7). A sliver about 2 m wide fails the printability
+    # check — eroding by half the minimum feature empties it — so it carries no body and goes into
+    # a block instead. Its geometry is still in the print, so naming Hessen is truthful, and
+    # leaving it unnamed would be the false negative: on the real 1500 m square 4 737 LoD2
+    # footprints reach the model against only 708 that are even tried for a body.
+    sliver = wgs84_box(50.1090, 8.6822, 0.000028, 100.0, 118.0, "lod2/hessen/SLIVER", size_deg_lat=0.00027)
+    result = run(
+        frankfurt_spec,
+        tmp_path / "out",
+        tmp_path / "cache",
+        fetch=lambda s, c: lod2_features(s, frankfurt_data, [sliver]),
+    )
+    assert result.stats["lod2_buildings"] == 0
+    assert result.stats["lod2_source"] == "hessen"
+    assert "LoD2 Hessen" in result.paths.sources.read_text(encoding="utf-8")
 
 
 def test_lod2_off_gives_the_same_model_as_no_lod2_data(tmp_path, frankfurt_spec, frankfurt_data):
