@@ -9,6 +9,7 @@ export interface FrameSpecInput {
   plate_thickness_mm: number;
   mode: "simple" | "full";
   z_exaggeration: number;
+  lod2: boolean;
 }
 
 export type JobStatus = "queued" | "running" | "done" | "error";
@@ -18,7 +19,8 @@ export interface JobState {
   status: JobStatus;
   stage: string;
   message: string;
-  stats: Record<string, number>;
+  // lod2_source is a provider name, everything else is a number (backend spec §8).
+  stats: Record<string, number | string>;
 }
 
 export interface GeocodeHit {
@@ -27,7 +29,9 @@ export interface GeocodeHit {
   lon: number;
 }
 
-export type JobFile = "model.stl" | "model.3mf" | "preview.glb";
+// SOURCES.txt names every source the model used; the README says it has to travel with a
+// download, so it is offered next to the model files rather than only through the API.
+export type JobFile = "model.stl" | "model.3mf" | "preview.glb" | "SOURCES.txt";
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, init);

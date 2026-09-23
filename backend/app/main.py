@@ -26,6 +26,7 @@ MEDIA_TYPES = {
     "model.stl": "model/stl",
     "model.3mf": "model/3mf",
     "preview.glb": "model/gltf-binary",
+    "SOURCES.txt": "text/plain; charset=utf-8",
 }
 
 

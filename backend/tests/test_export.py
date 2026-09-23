@@ -94,3 +94,27 @@ def test_export_all_reports_diagnostics(tmp_path, meshset):
     paths = export_all(meshset, spec(), tmp_path)
     assert paths.diagnostics["nonmanifold_edges"] == 0
     assert paths.diagnostics["degenerate_faces"] == 0
+
+
+def test_export_writes_sources_txt(tmp_path, meshset):
+    paths = export_all(meshset, spec(), tmp_path, sources="Zeile eins.\nZeile zwei.\n")
+    assert paths.sources == tmp_path / "SOURCES.txt"
+    assert paths.sources.read_text(encoding="utf-8") == "Zeile eins.\nZeile zwei.\n"
+
+
+def test_export_writes_the_osm_notice_even_without_an_argument(tmp_path, meshset):
+    paths = export_all(meshset, spec(), tmp_path)
+    text = paths.sources.read_text(encoding="utf-8")
+    assert "© OpenStreetMap-Mitwirkende, ODbL" in text
+    assert "LoD2" not in text
+
+
+def test_sources_txt_is_written_only_after_verification(tmp_path, meshset, monkeypatch):
+    def boom(tm, name):
+        raise ExportError("boom")
+
+    monkeypatch.setattr("skylineframe.export.verify_part", boom)
+    out_dir = tmp_path / "job"
+    with pytest.raises(ExportError):
+        export_all(meshset, spec(), out_dir, sources="x\n")
+    assert list(out_dir.iterdir()) == []

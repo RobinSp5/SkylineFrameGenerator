@@ -10,7 +10,13 @@ test("page loads, square is drawn, generation flow shows downloads", async ({ pa
     const body =
       polls < 2
         ? { id: "job1", status: "running", stage: "fetch", message: "Loading", stats: {} }
-        : { id: "job1", status: "done", stage: "export", message: "Ready", stats: { buildings: 42, blocks: 3, roofs: 5 } };
+        : {
+            id: "job1",
+            status: "done",
+            stage: "export",
+            message: "Ready",
+            stats: { buildings: 42, blocks: 3, roofs: 5, lod2_buildings: 12, lod2_source: "hessen" },
+          };
     route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
   });
   await page.route("**/api/jobs/job1/preview.glb", (route) => route.fulfill({ status: 404, body: "" }));
@@ -32,10 +38,13 @@ test("page loads, square is drawn, generation flow shows downloads", async ({ pa
   await page.selectOption("#mode", "full");
   await page.click("#generate");
 
-  await expect(page.locator("#status")).toContainText("42 Gebäude, 3 Blöcke, 5 Dächer", { timeout: 10_000 });
+  await expect(page.locator("#status")).toContainText("42 Gebäude, 3 Blöcke, 5 Dächer, 12 davon aus LoD2 Hessen", {
+    timeout: 10_000,
+  });
   await expect(page.locator("#downloads")).toBeVisible();
   await expect(page.locator("#dl-stl")).toHaveAttribute("href", "/api/jobs/job1/model.stl");
   await expect(page.locator("#dl-3mf")).toHaveAttribute("href", "/api/jobs/job1/model.3mf");
+  await expect(page.locator("#dl-sources")).toHaveAttribute("href", "/api/jobs/job1/SOURCES.txt");
 });
 
 test("backend error is shown to the user", async ({ page }) => {

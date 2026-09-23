@@ -37,6 +37,7 @@ def generate(
     z: Annotated[float, typer.Option(help="Height exaggeration factor")] = 1.5,
     roofs: Annotated[bool, typer.Option("--roofs/--no-roofs", help="Build roof bodies from roof:shape")] = True,
     parts: Annotated[bool, typer.Option("--parts/--no-parts", help="Render building:part instead of one box per outline")] = True,
+    lod2: Annotated[bool, typer.Option("--lod2/--no-lod2", help="Use official LoD2 building models where available")] = True,
     out: Annotated[Path, typer.Option(help="Output directory")] = Path("out"),
     cache: Annotated[Path, typer.Option(help="Overpass cache directory")] = Path(".cache/overpass"),
 ) -> None:
@@ -56,6 +57,7 @@ def generate(
             z_exaggeration=z,
             roofs=roofs,
             parts=parts,
+            lod2=lod2,
         )
         result = run(spec, out, cache, progress=lambda stage, msg: typer.echo(f"[{stage}] {msg}"))
     except (SkylineError, ValidationError) as exc:
@@ -68,6 +70,18 @@ def generate(
     typer.echo(f"Roofs: {int(stats.get('roofs', 0))}")
     typer.echo(f"Roads: {int(stats.get('roads', 0))} ({stats.get('road_area_mm2', 0.0):.0f} mm²)")
     typer.echo(f"Footprint coverage: {stats.get('footprint_coverage', 0.0):.2%}")
+    source = str(stats.get("lod2_source", "") or "")
+    if source:
+        typer.echo(f"LoD2 source: {source}")
+        # Both numbers on one line: "buildings" is the count that really carries roof geometry,
+        # and the rest fell back to an extruded footprint at the same height.
+        typer.echo(
+            f"LoD2 buildings: {int(stats.get('lod2_buildings', 0))} with a body, "
+            f"{int(stats.get('lod2_rejected', 0))} fell back to a prism"
+        )
+        typer.echo(f"LoD2 triangles: {int(stats.get('lod2_triangles', 0))}")
+    else:
+        typer.echo("LoD2 source: none (OpenStreetMap only)")
     typer.echo(f"Non-manifold edges after vertex merge: {int(stats.get('nonmanifold_edges', 0))}")
     typer.echo(f"Degenerate faces after vertex merge: {int(stats.get('degenerate_faces', 0))}")
     typer.echo(f"STL: {result.paths.stl}")

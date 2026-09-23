@@ -2,12 +2,14 @@
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 
 from .errors import PipelineError
 from .export import ExportPaths, export_all
 from .features import Features
 from .fetch import fetch_features
+from .lod2.sources import ATTRIBUTIONS, sources_text
 from .mesh import build_meshes
 from .prepare import prepare
 from .project import project_features
@@ -21,7 +23,8 @@ FetchFn = Callable[[FrameSpec, Path], Features]
 @dataclass
 class RunResult:
     paths: ExportPaths
-    stats: dict[str, float]  # counts are ints, footprint_coverage is a ratio
+    # Counts are ints, footprint_coverage is a ratio, lod2_source is a provider name (spec §8).
+    stats: dict[str, float | str]
 
 
 def run(
@@ -50,10 +53,24 @@ def run(
     meshes = build_meshes(scaled, spec)
 
     report("export", "Writing STL, 3MF and preview")
-    paths = export_all(meshes, spec, out_dir)
+    # The flag decides as well: a caller may hand in LoD2 data with lod2=False (prepare then
+    # ignores it), and SOURCES.txt must not claim a source that is not in the model.
+    lod2_source = raw.lod2_source if spec.lod2 else ""
+    paths = export_all(
+        meshes,
+        spec,
+        out_dir,
+        sources=sources_text(date.today().isoformat(), ATTRIBUTIONS.get(lod2_source)),
+    )
 
     individual = len(prepared.buildings)
-    stats: dict[str, float] = {
+    # Counted on the scaled prisms for the same reason as `roofs` below: prepare decides which
+    # LoD2 models close into a body, and scale still drops one that stays below the printable
+    # minimum or leaves the plate. Such a building prints as a prism, so it belongs with the
+    # rejected ones — the two numbers together are every LoD2 model that reached the print.
+    bodies_prepared = sum(1 for b in prepared.buildings if b.lod2 and b.solid_m is not None)
+    bodies_printed = sum(1 for p in scaled.buildings if p.solid_mm is not None)
+    stats: dict[str, float | str] = {
         # `buildings` stays the headline number the API, the frontend and the Playwright test
         # already read; buildings_individual is the same count under the spec's name.
         "buildings": individual,
@@ -70,6 +87,14 @@ def run(
         # intact (spec §6.4). prepared.roads is in metres, so it is scaled here.
         "road_area_mm2": round(sum(p.area for p in prepared.roads) * spec.scale**2, 1),
         "water": len(prepared.water),
+        # LoD2 (spec §5/§8). lod2_source is empty whenever no official model reached the model,
+        # including a provider outage — the run itself never fails for it (spec §9).
+        # Only bodies: a model whose body would not close prints as a prism, and the CLI and the
+        # status line promise roof geometry. lod2_rejected carries the rest.
+        "lod2_buildings": bodies_printed,
+        "lod2_source": lod2_source,
+        "lod2_rejected": prepared.lod2_rejected + bodies_prepared - bodies_printed,
+        "lod2_triangles": sum(p.solid_mm.num_tri() for p in scaled.buildings if p.solid_mm is not None),
         "stl_bytes": paths.stl.stat().st_size,
         "threemf_bytes": paths.threemf.stat().st_size,
         **paths.diagnostics,

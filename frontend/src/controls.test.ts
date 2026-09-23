@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 // Set per-file so vite.config.ts can stay on the fast `environment: "node"` default.
 import { beforeEach, describe, expect, it } from "vitest";
-import { setupControls } from "./controls";
+import { setupControls, summarize } from "./controls";
 import { PRESETS, presetFor } from "./presets";
 
 const SIDEBAR = `
@@ -21,9 +21,10 @@ const SIDEBAR = `
   <input id="thickness" type="number" value="3" />
   <input id="zfactor" type="number" value="1.5" />
   <select id="mode"><option value="simple">simple</option><option value="full">full</option></select>
+  <input id="lod2" type="checkbox" checked />
   <button id="generate"></button>
   <p id="status"></p>
-  <div id="downloads" hidden><a id="dl-stl"></a><a id="dl-3mf"></a></div>
+  <div id="downloads" hidden><a id="dl-stl"></a><a id="dl-3mf"></a><a id="dl-sources"></a></div>
 `;
 
 function field<T extends HTMLElement>(id: string): T {
@@ -125,5 +126,48 @@ describe("setupControls", () => {
     rotation.value = "30";
     fire(rotation, "input");
     expect(field<HTMLSelectElement>("preset").value).toBe("skyline");
+  });
+});
+
+describe("summarize", () => {
+  it("names the LoD2 source when one was used", () => {
+    expect(summarize({ buildings: 851, blocks: 164, roofs: 300, lod2_buildings: 612, lod2_source: "hessen" })).toBe(
+      "Fertig: 851 Gebäude, 164 Blöcke, 300 Dächer, 612 davon aus LoD2 Hessen",
+    );
+  });
+
+  it("stays on the OSM wording without a source", () => {
+    expect(summarize({ buildings: 42, blocks: 3, roofs: 5, lod2_source: "" })).toBe(
+      "Fertig: 42 Gebäude, 3 Blöcke, 5 Dächer",
+    );
+  });
+
+  it("says nothing about LoD2 when the source delivered no individual building", () => {
+    expect(summarize({ buildings: 42, blocks: 3, roofs: 5, lod2_source: "hessen", lod2_buildings: 0 })).toBe(
+      "Fertig: 42 Gebäude, 3 Blöcke, 5 Dächer",
+    );
+  });
+
+  it("survives an empty stats object", () => {
+    expect(summarize({})).toBe("Fertig: 0 Gebäude, 0 Blöcke, 0 Dächer");
+  });
+});
+
+describe("setupControls lod2", () => {
+  beforeEach(() => {
+    document.body.innerHTML = `<div id="app">${SIDEBAR}</div>`;
+  });
+
+  it("sends the checkbox state", () => {
+    const controls = setupControls(document.getElementById("app")!);
+    expect(controls.read().lod2).toBe(true);
+    field<HTMLInputElement>("lod2").checked = false;
+    expect(controls.read().lod2).toBe(false);
+  });
+
+  it("offers SOURCES.txt next to the model files", () => {
+    const controls = setupControls(document.getElementById("app")!);
+    controls.showDownloads("job1");
+    expect(field<HTMLAnchorElement>("dl-sources").getAttribute("href")).toBe("/api/jobs/job1/SOURCES.txt");
   });
 });

@@ -31,11 +31,13 @@ export function setupControls(root: HTMLElement): Controls {
   const thickness = el<HTMLInputElement>(root, "thickness");
   const zfactor = el<HTMLInputElement>(root, "zfactor");
   const mode = el<HTMLSelectElement>(root, "mode");
+  const lod2 = el<HTMLInputElement>(root, "lod2");
   const generate = el<HTMLButtonElement>(root, "generate");
   const status = el<HTMLParagraphElement>(root, "status");
   const downloads = el<HTMLDivElement>(root, "downloads");
   const dlStl = el<HTMLAnchorElement>(root, "dl-stl");
   const dl3mf = el<HTMLAnchorElement>(root, "dl-3mf");
+  const dlSources = el<HTMLAnchorElement>(root, "dl-sources");
 
   // The centre lives on the map, not in a form field; writeSquare keeps this copy in sync.
   let square: SquareParams = { lat: 50.1106, lon: 8.6821, sideM: Number(side.value), rotationDeg: Number(rotation.value) };
@@ -82,6 +84,7 @@ export function setupControls(root: HTMLElement): Controls {
       plate_thickness_mm: Number(thickness.value),
       mode: mode.value as "simple" | "full",
       z_exaggeration: Number(zfactor.value),
+      lod2: lod2.checked,
     }),
     writeSquare(p) {
       square = { ...p };
@@ -102,6 +105,7 @@ export function setupControls(root: HTMLElement): Controls {
       if (id) {
         dlStl.href = jobFileUrl(id, "model.stl");
         dl3mf.href = jobFileUrl(id, "model.3mf");
+        dlSources.href = jobFileUrl(id, "SOURCES.txt");
       }
     },
     onGenerate(cb) {
@@ -112,4 +116,17 @@ export function setupControls(root: HTMLElement): Controls {
     },
     elements: { search: el<HTMLInputElement>(root, "search"), searchResults: el<HTMLElement>(root, "search-results") },
   };
+}
+
+/** The status line of a finished run (spec §8), e.g. "Fertig: 851 Gebäude, 164 Blöcke, 300 Dächer,
+ * 612 davon aus LoD2 Hessen". Exported so it can be tested without a DOM. */
+export function summarize(stats: Record<string, number | string>): string {
+  const count = (key: string) => Number(stats[key] ?? 0);
+  let text = `Fertig: ${count("buildings")} Gebäude, ${count("blocks")} Blöcke, ${count("roofs")} Dächer`;
+  const source = typeof stats.lod2_source === "string" ? stats.lod2_source : "";
+  const fromLod2 = count("lod2_buildings");
+  if (source && fromLod2 > 0) {
+    text += `, ${fromLod2} davon aus LoD2 ${source.charAt(0).toUpperCase()}${source.slice(1)}`;
+  }
+  return text;
 }

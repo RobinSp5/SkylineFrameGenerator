@@ -71,6 +71,10 @@ def run_cli(monkeypatch, tmp_path, args: list[str]) -> tuple[object, object]:
                 "roads": 5,
                 "road_area_mm2": 1234.5,
                 "footprint_coverage": 0.97,
+                "lod2_buildings": 612,
+                "lod2_source": "hessen",
+                "lod2_rejected": 3,
+                "lod2_triangles": 412000,
             },
         )
 
@@ -111,3 +115,30 @@ def test_generate_prints_the_detail_stats(monkeypatch, tmp_path):
     assert "Roofs: 4" in result.output
     assert "Roads: 5 (1234 mm²)" in result.output  # .0f rounds 1234.5 to even
     assert "Footprint coverage: 97.00%" in result.output
+
+
+def test_lod2_is_on_by_default_and_can_be_switched_off(monkeypatch, tmp_path):
+    spec, _ = run_cli(monkeypatch, tmp_path, [])
+    assert spec.lod2 is True
+    spec, _ = run_cli(monkeypatch, tmp_path, ["--no-lod2"])
+    assert spec.lod2 is False
+
+
+def test_generate_prints_the_lod2_source(monkeypatch, tmp_path):
+    _, result = run_cli(monkeypatch, tmp_path, [])
+    assert "LoD2 source: hessen" in result.output
+    assert "LoD2 buildings: 612 with a body, 3 fell back to a prism" in result.output
+    assert "LoD2 triangles: 412000" in result.output
+
+
+def test_generate_says_so_when_no_lod2_source_was_used(monkeypatch, tmp_path):
+    def fake_run(spec, out_dir, cache_dir, progress=None):
+        return RunResult(
+            ExportPaths(out_dir / "model.stl", out_dir / "model.3mf", out_dir / "preview.glb"),
+            {"buildings": 3, "lod2_source": ""},
+        )
+
+    monkeypatch.setattr(cli, "run", fake_run)
+    result = runner.invoke(cli.app, ["--lat", "50.1", "--lon", "8.6", "--out", str(tmp_path)])
+    assert result.exit_code == 0, result.output
+    assert "LoD2 source: none (OpenStreetMap only)" in result.output

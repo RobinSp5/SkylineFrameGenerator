@@ -45,12 +45,17 @@
             <option value="full">Full (+ Straßen + Wasser)</option>
           </select>
         </label>
+        <label class="checkbox">
+          <input id="lod2" type="checkbox" checked />
+          Amtliche LoD2-Gebäude nutzen, wo verfügbar
+        </label>
 
         <button id="generate" type="button">Generieren</button>
         <p id="status" role="status"></p>
         <div id="downloads" hidden>
           <a id="dl-stl" download>STL (einfarbig)</a>
           <a id="dl-3mf" download>3MF (mehrfarbig)</a>
+          <a id="dl-sources" download>Quellen und Lizenz (SOURCES.txt)</a>
         </div>
       </aside>
       <div id="viewer"></div>

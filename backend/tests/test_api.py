@@ -107,3 +107,16 @@ def test_create_job_still_rejects_unknown_fields(client):
     # FrameSpec forbids extras, so the frontend may only send fields the backend knows.
     r = client.post("/api/jobs", json={**SPEC, "preset": "detail"})
     assert r.status_code == 422
+
+
+def test_spec_accepts_the_lod2_flag(client):
+    response = client.post("/api/jobs", json={"center_lat": 50.11, "center_lon": 8.68, "lod2": False})
+    assert response.status_code == 202
+
+
+def test_sources_txt_is_downloadable():
+    from app.jobs import JOB_FILES
+    from app.main import MEDIA_TYPES
+
+    assert "SOURCES.txt" in JOB_FILES
+    assert MEDIA_TYPES["SOURCES.txt"].startswith("text/plain")

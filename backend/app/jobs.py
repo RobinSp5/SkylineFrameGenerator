@@ -17,7 +17,7 @@ from skylineframe.spec import FrameSpec
 
 log = logging.getLogger(__name__)
 
-JOB_FILES: tuple[str, ...] = ("model.stl", "model.3mf", "preview.glb")
+JOB_FILES: tuple[str, ...] = ("model.stl", "model.3mf", "preview.glb", "SOURCES.txt")
 MAX_ACTIVE_JOBS = 8  # queued + running; one browser must not be able to fill the machine
 ACTIVE_STATUSES: tuple[str, ...] = ("queued", "running")
 JobStatus = Literal["queued", "running", "done", "error"]
@@ -36,7 +36,7 @@ class Job:
     status: JobStatus = "queued"
     stage: str = ""
     message: str = ""
-    stats: dict[str, float] = field(default_factory=dict)  # counts plus footprint_coverage
+    stats: dict[str, float | str] = field(default_factory=dict)  # counts, coverage, lod2_source
     created_at: float = field(default_factory=time.time)
 
     def to_dict(self) -> dict:

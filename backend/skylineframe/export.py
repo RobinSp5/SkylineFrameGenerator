@@ -1,12 +1,14 @@
 """Write STL (single colour), 3MF (named parts) and GLB (coloured preview) after verifying the solid."""
 
 from dataclasses import dataclass, field
+from datetime import date
 from pathlib import Path
 
 import numpy as np
 import trimesh
 
 from .errors import ExportError
+from .lod2.sources import SOURCES_FILENAME, sources_text
 from .mesh import MeshSet, to_trimesh
 from .spec import FrameSpec
 
@@ -26,6 +28,7 @@ class ExportPaths:
     threemf: Path
     glb: Path
     diagnostics: dict = field(default_factory=dict)
+    sources: Path | None = None  # SOURCES.txt, written next to the model (spec §7)
 
 
 def verify_single(tm: trimesh.Trimesh, spec: FrameSpec) -> None:
@@ -60,7 +63,7 @@ def verify_part(tm: trimesh.Trimesh, name: str) -> None:
         raise ExportError(f"Part '{name}' is not watertight; please try a slightly different area.")
 
 
-def export_all(meshset: MeshSet, spec: FrameSpec, out_dir: Path) -> ExportPaths:
+def export_all(meshset: MeshSet, spec: FrameSpec, out_dir: Path, sources: str | None = None) -> ExportPaths:
     out_dir.mkdir(parents=True, exist_ok=True)
     paths = ExportPaths(stl=out_dir / "model.stl", threemf=out_dir / "model.3mf", glb=out_dir / "preview.glb")
 
@@ -78,5 +81,12 @@ def export_all(meshset: MeshSet, spec: FrameSpec, out_dir: Path) -> ExportPaths:
     for name, tm in parts.items():
         tm.visual.face_colors = PART_COLORS[name]
     trimesh.Scene(parts).export(str(paths.glb), file_type="glb")
+
+    # Provenance travels with the model (spec §7). Written unconditionally: the ODbL notice is
+    # mandatory for anyone selling prints, and a caller that forgets the argument must still get it.
+    paths.sources = out_dir / SOURCES_FILENAME
+    text = sources if sources is not None else sources_text(date.today().isoformat())
+    paths.sources.write_text(text, encoding="utf-8")
+
     paths.diagnostics = mesh_diagnostics(single)
     return paths

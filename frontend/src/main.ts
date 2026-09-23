@@ -1,7 +1,7 @@
 // Entry point: wires the map, the sidebar, the job API and the 3D preview together.
 import "./style.css";
 import { createJob, waitForJob, jobFileUrl } from "./api";
-import { setupControls } from "./controls";
+import { setupControls, summarize } from "./controls";
 import { createMap } from "./map";
 import { setupSearch } from "./search";
 import { createViewer } from "./viewer";
@@ -42,8 +42,7 @@ controls.onGenerate(async () => {
       controls.setStatus(job.message || "Generierung fehlgeschlagen", true);
       return;
     }
-    const stats = job.stats ?? {};
-    const summary = `Fertig: ${stats.buildings ?? 0} Gebäude, ${stats.blocks ?? 0} Blöcke, ${stats.roofs ?? 0} Dächer`;
+    const summary = summarize(job.stats ?? {});
     controls.setStatus(summary);
     controls.showDownloads(id);
     try {
