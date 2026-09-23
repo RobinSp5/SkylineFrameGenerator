@@ -564,7 +564,9 @@ def prepare(features: Features, spec: FrameSpec) -> Prepared:
         buildings, dropped = drop_covered(buildings, lod2)
         # Clipped to the square like every other footprint, so the coverage denominator only ever
         # holds building area that was inside the model in the first place.
-        displaced = [g for g in (d.intersection(square) for d in dropped) if not g.is_empty]
+        # area > 0, not "not empty": a displaced footprint that only touches the edge of the
+        # square clips to a LineString, and that is not area — same guard polygons_of uses.
+        displaced = [g for g in (d.intersection(square) for d in dropped) if g.area > 0]
     clipped = _clip(buildings + lod2, square, tol_m)
     if not spec.parts:
         clipped = [b for b in clipped if not b.is_part]

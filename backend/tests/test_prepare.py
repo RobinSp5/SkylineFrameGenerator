@@ -2,11 +2,12 @@ import pytest
 from shapely.geometry import LineString, MultiPolygon, Polygon, box
 from shapely.ops import unary_union
 
-from skylineframe.features import Building, Features, Lod2Building, Road, RoofSpec, Water
+from skylineframe.features import Block, Building, Features, Lod2Building, Road, RoofSpec, Water
 from skylineframe.prepare import (
     LOD2_DISPLACE_FRACTION,
     SIMPLIFY_TOLERANCE_MM,
     _clip,
+    _coverage,
     assign_parts,
     default_roof_height_m,
     drop_covered,
@@ -679,6 +680,43 @@ def test_drop_covered_splits_a_remainder_that_falls_into_two_pieces():
     assert all(b.osm_id == "way/1" and b.height_m == 8.0 for b in kept)
     assert all(b.geom.geom_type == "Polygon" for b in kept)
     assert all(b.geom.area == pytest.approx(200, rel=0.05) for b in kept)
+
+
+def test_coverage_sees_a_remainder_that_reaches_nothing():
+    # A building whose main lobe an LoD2 model takes over and whose 3x3 m annex stands 190 m
+    # away: the annex is the remainder, it is too small to be printed on its own and too far from
+    # anything to be welded into a printable block, so its area leaves the model. Subtracting
+    # instead of dropping recovers what can be recovered, and the ratio still has to report the
+    # rest as the loss it is (spec §6).
+    feats = Features(
+        buildings=[
+            Building(
+                MultiPolygon([box(-10, -10, 10, 10), box(200, 200, 203, 203)]),
+                height_m=8.0,
+                osm_id="way/1",
+                kind="yes",
+            )
+        ],
+        lod2=[lod2_box(-10, -10, 10, 10, 100.0, 130.0)],
+    )
+    out = prepare(feats, spec())
+    assert [b.osm_id for b in out.buildings] == ["lod2/hessen/B1"]
+    assert [round(b.geom.area) for b in out.blocks] == [409]  # the annex has no block of its own
+    # 400 of the 409 m² that stood here are modelled; the 9 m² annex is gone.
+    assert out.footprint_coverage == pytest.approx(400 / 409, abs=1e-3)
+
+
+def test_coverage_counts_displaced_area_in_the_denominator():
+    # The contract of the displaced argument, pinned directly: what LoD2 took over is building
+    # area that stood in the square, so it belongs in the denominator and never in the numerator.
+    # Through prepare this is currently invisible — every displaced piece lies under an LoD2
+    # footprint that is in `footprints` anyway — so only a direct probe can hold the guarantee.
+    kept = Building(box(0, 0, 10, 10), height_m=10.0, osm_id="way/1")
+    blocks = [Block(box(0, 0, 10, 10), height_m=10.0)]
+    assert _coverage([kept], blocks, [kept], []) == pytest.approx(1.0)
+    assert _coverage([kept], blocks, [kept], [box(20, 0, 30, 10)]) == pytest.approx(0.5)
+    # An empty model over displaced area alone is 0.0, not a division by zero.
+    assert _coverage([], [], [], [box(20, 0, 30, 10)]) == pytest.approx(0.0)
 
 
 def test_the_uncovered_remainder_stays_in_the_model():
