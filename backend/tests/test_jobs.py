@@ -7,7 +7,7 @@ import httpx
 import pytest
 
 from app.geocode import GeocodeError
-from app.jobs import JOB_FILES, MAX_ACTIVE_JOBS, Job, JobQueueFull, JobStore
+from app.jobs import JOB_FILES, MAX_ACTIVE_JOBS, Job, JobQueueFull, JobStore, stage_span, stage_weights
 from skylineframe.errors import AreaError, FetchError
 from skylineframe.export import ExportPaths
 from skylineframe.pipeline import RunResult
@@ -106,7 +106,71 @@ def test_to_dict_shape(tmp_path):
     store = JobStore(tmp_path / "jobs", tmp_path / "cache", runner=fake_runner)
     job = wait_done(store, store.create(spec()).id)
     d = job.to_dict()
-    assert set(d) == {"id", "status", "stage", "message", "stats", "name", "file_stem"}
+    assert set(d) == {
+        "id", "status", "stage", "message", "stats", "name", "file_stem",
+        "progress", "progress_next", "started_at", "elapsed_s",
+    }
+    assert d["progress"] == d["progress_next"] == 1.0
+    assert d["started_at"] is not None and d["elapsed_s"] >= 0
+
+
+def test_stage_spans_cover_the_run_in_order():
+    for flags in ({}, {"terrain": True}, {"trees": False}, {"terrain": True, "trees": False}):
+        s = FrameSpec(center_lat=50.1, center_lon=8.6, **flags)
+        stages = list(stage_weights(s))
+        assert stages[0] == "name" and stages[-1] == "export"
+        assert ("terrain" in stages) == s.terrain and ("trees" in stages) == s.trees
+        spans = [stage_span(s, stage) for stage in stages]
+        assert spans[0][0] == 0.0 and spans[-1][1] == pytest.approx(1.0)
+        for (_, end), (start, _) in zip(spans, spans[1:]):
+            assert start == pytest.approx(end)  # no gaps, no overlaps
+        assert all(start < end for start, end in spans)
+
+
+def test_stage_span_ignores_unknown_and_skipped_stages():
+    flat = FrameSpec(center_lat=50.1, center_lon=8.6, terrain=False)
+    assert stage_span(flat, "terrain") is None
+    assert stage_span(flat, "polish") is None
+
+
+def test_progress_follows_the_stages_and_elapsed_runs_while_running(tmp_path):
+    seen: list[tuple[str, float, float, float]] = []
+    release, created = threading.Event(), threading.Event()
+
+    def runner(spec, out_dir, cache_dir, progress, name=None):
+        created.wait(2)  # job_id is only bound once create() returned
+        for stage in ("fetch", "prepare", "trees", "mesh", "export"):
+            progress(stage, stage)
+            job = store.get(job_id)
+            seen.append((stage, job.progress, job.progress_next, job.elapsed_s()))
+        release.wait(2)
+        return fake_runner(spec, out_dir, cache_dir, lambda *_: None)
+
+    store = JobStore(tmp_path / "jobs", tmp_path / "cache", runner=runner)
+    job_id = store.create(spec()).id
+    created.set()
+    deadline = time.time() + 2
+    while len(seen) < 5 and time.time() < deadline:
+        time.sleep(0.01)
+    running = store.get(job_id).to_dict()
+    assert running["status"] == "running" and 0 < running["progress"] < 1
+    time.sleep(0.05)
+    assert store.get(job_id).elapsed_s() > running["elapsed_s"] - 0.01  # still ticking
+    release.set()
+    job = wait_done(store, job_id)
+    fractions = [start for _, start, _, _ in seen]
+    assert fractions == sorted(fractions) and fractions[0] > 0  # the name lookup came first
+    assert all(start < end for _, start, end, _ in seen)
+    # Frozen once finished: a done job does not keep ageing.
+    done_elapsed = job.elapsed_s()
+    time.sleep(0.02)
+    assert job.elapsed_s() == done_elapsed
+    assert job.progress == 1.0
+
+
+def test_elapsed_is_zero_while_queued(tmp_path):
+    job = Job(id="x", spec=spec(), dir=tmp_path)
+    assert job.elapsed_s() == 0.0 and job.to_dict()["started_at"] is None
 
 
 def test_queue_is_bounded(tmp_path):

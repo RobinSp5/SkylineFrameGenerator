@@ -31,6 +31,45 @@ Runner = Callable[..., RunResult]
 Namer = Callable[[float, float], str | None]
 
 
+def stage_weights(spec: FrameSpec) -> dict[str, float]:
+    """Expected seconds per stage for this spec, in run order: the "name" lookup of _execute, then
+    the stages of skylineframe/pipeline.py (terrain and trees only when the spec asks for them).
+
+    Measured 2026-09-24 on a 1500 m square (Eppstein, 2148 buildings, warm Overpass and DEM cache):
+    simple/flat 10.5 s, full/flat 12.3 s, full + trees 22.0 s, full + trees + terrain 28.9 s.
+    Trees and terrain add solids, so they also lengthen mesh and export. Only the proportions
+    matter: the client turns them into a fraction and divides the elapsed time by it.
+    """
+    trees, terrain = float(spec.trees), float(spec.terrain)
+    weights = {"name": 1.0, "fetch": 1.5}
+    if spec.terrain:
+        weights["terrain"] = 2.8
+    weights["prepare"] = 6.0
+    if spec.trees:
+        weights["trees"] = 2.3
+    weights["mesh"] = 1.1 + 3.9 * trees + 1.0 * terrain
+    weights["export"] = 3.0 + 4.3 * trees + 2.8 * terrain
+    return weights
+
+
+def stage_span(spec: FrameSpec, stage: str) -> tuple[float, float] | None:
+    """Fraction of the run done when `stage` starts and when it ends.
+
+    None for a stage the table does not know: the caller then keeps the span it had, so a new
+    stage in the pipeline never makes the bar jump back.
+    """
+    weights = stage_weights(spec)
+    if stage not in weights:
+        return None
+    total = sum(weights.values())
+    before = 0.0
+    for name, weight in weights.items():
+        if name == stage:
+            return before / total, (before + weight) / total
+        before += weight
+    return None  # unreachable: stage is in weights
+
+
 class JobQueueFull(RuntimeError):
     """More jobs are already queued or running than this server accepts."""
 
@@ -47,6 +86,18 @@ class Job:
     created_at: float = field(default_factory=time.time)
     name: str = ""  # place label, e.g. "Frankfurt am Main – Altstadt"; set before the run starts
     file_stem: str = ""  # download file name without extension, e.g. "Frankfurt-am-Main_Altstadt_1500m_10cm"
+    # Weighted share of the run behind it when the current stage started, and where the current
+    # stage ends (STAGE_WEIGHTS). 1.0 once done; an error keeps the value it failed at.
+    progress: float = 0.0
+    progress_next: float = 0.0
+    started_at: float | None = None  # epoch seconds the worker picked the job up; None while queued
+    finished_at: float | None = None
+
+    def elapsed_s(self) -> float:
+        """Seconds the job has been running (or ran), queue time excluded."""
+        if self.started_at is None:
+            return 0.0
+        return max(0.0, (self.finished_at or time.time()) - self.started_at)
 
     def to_dict(self) -> dict:
         return {
@@ -57,6 +108,12 @@ class Job:
             "stats": self.stats,
             "name": self.name,
             "file_stem": self.file_stem,
+            # For the progress overlay: the client divides elapsed by progress for its estimate.
+            # Elapsed comes from the server clock so a skewed browser clock cannot distort it.
+            "progress": round(self.progress, 4),
+            "progress_next": round(self.progress_next, 4),
+            "started_at": self.started_at,
+            "elapsed_s": round(self.elapsed_s(), 2),
         }
 
     def download_name(self, filename: str) -> str:
@@ -147,8 +204,12 @@ class JobStore:
 
     def _execute(self, job: Job) -> None:
         def progress(stage: str, message: str) -> None:
+            span = stage_span(job.spec, stage)
+            if span is not None:
+                job.progress, job.progress_next = span
             job.stage, job.message = stage, message
 
+        job.started_at = time.time()
         # The lookup can take a few seconds; without a stage the UI would show a blank status line.
         progress("name", "Looking up the place name")
         job.status = "running"
@@ -165,10 +226,14 @@ class JobStore:
             # Every expected failure of the pipeline is a SkylineError and carries a message
             # written for the user; anything else is a bug and is hidden below.
             log.warning("job %s failed: %s", job.id, exc)
+            job.finished_at = time.time()
             job.message, job.status = str(exc), "error"
         except Exception:
             log.exception("job %s crashed", job.id)
+            job.finished_at = time.time()
             job.message, job.status = "Unexpected error during generation. See server log.", "error"
         else:
             job.stats = result.stats
+            job.finished_at = time.time()
+            job.progress = job.progress_next = 1.0
             job.message, job.status = "Ready", "done"
