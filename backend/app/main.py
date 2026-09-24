@@ -36,8 +36,10 @@ def create_app(
     frontend_dist: Path | None = None,
     allowed_hosts: list[str] | None = None,
 ) -> FastAPI:
-    store = store or JobStore(DEFAULT_JOBS_DIR, DEFAULT_CACHE_DIR)
     geocoder = geocoder or Geocoder()
+    # Jobs are named after the place by the same geocoder, so the reverse lookups share the
+    # place search's rate limit and backoff towards Nominatim.
+    store = store or JobStore(DEFAULT_JOBS_DIR, DEFAULT_CACHE_DIR, namer=geocoder.reverse)
     store.cleanup()
     app = FastAPI(title="Skyline Frame Generator")
     app.add_middleware(
@@ -66,9 +68,13 @@ def create_app(
     @app.get("/api/jobs/{job_id}/{filename}")
     def get_job_file(job_id: str, filename: str) -> FileResponse:
         path = store.file(job_id, filename)
-        if path is None:
+        job = store.get(job_id)
+        if path is None or job is None:
             raise HTTPException(404, "file not available")
-        return FileResponse(path, media_type=MEDIA_TYPES.get(filename, "application/octet-stream"), filename=filename)
+        # The file on disk keeps its stable name; the browser saves it under the place name.
+        return FileResponse(
+            path, media_type=MEDIA_TYPES.get(filename, "application/octet-stream"), filename=job.download_name(filename)
+        )
 
     @app.get("/api/geocode")
     def geocode(q: str = Query(min_length=2, max_length=200)) -> list[dict]:

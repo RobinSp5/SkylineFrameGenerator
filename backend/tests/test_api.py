@@ -81,7 +81,7 @@ def test_default_allowed_hosts_exclude_testserver(tmp_path):
 def test_too_many_jobs_is_429(tmp_path):
     gate = threading.Event()
 
-    def blocking_runner(spec, out_dir, cache_dir, progress):
+    def blocking_runner(spec, out_dir, cache_dir, progress, name=None):
         assert gate.wait(10), "gate was never released"
         return fake_runner(spec, out_dir, cache_dir, progress)
 
@@ -112,6 +112,63 @@ def test_create_job_still_rejects_unknown_fields(client):
 def test_spec_accepts_the_lod2_flag(client):
     response = client.post("/api/jobs", json={"center_lat": 50.11, "center_lon": 8.68, "lod2": False})
     assert response.status_code == 202
+
+
+def named_client(tmp_path, label="Frankfurt am Main – Altstadt") -> TestClient:
+    store = JobStore(tmp_path / "jobs", tmp_path / "cache", runner=fake_runner, namer=lambda lat, lon: label)
+    return TestClient(create_app(store=store, allowed_hosts=TEST_HOSTS))
+
+
+def test_job_json_carries_name_and_file_stem(tmp_path):
+    client = named_client(tmp_path)
+    body = poll(client, client.post("/api/jobs", json=SPEC).json()["id"])
+    assert body["name"] == "Frankfurt am Main – Altstadt"
+    assert body["file_stem"] == "Frankfurt-am-Main_Altstadt_1000m_10cm"
+
+
+@pytest.mark.parametrize(
+    ("filename", "download"),
+    [
+        ("model.stl", "Frankfurt-am-Main_Altstadt_1000m_10cm.stl"),
+        ("model.3mf", "Frankfurt-am-Main_Altstadt_1000m_10cm.3mf"),
+        ("SOURCES.txt", "Frankfurt-am-Main_Altstadt_1000m_10cm_SOURCES.txt"),
+        ("preview.glb", "preview.glb"),
+    ],
+)
+def test_download_is_named_after_the_place(tmp_path, filename, download):
+    client = named_client(tmp_path)
+    job_id = client.post("/api/jobs", json=SPEC).json()["id"]
+    poll(client, job_id)
+    r = client.get(f"/api/jobs/{job_id}/{filename}")
+    assert r.status_code == 200
+    assert r.headers["content-disposition"] == f'attachment; filename="{download}"'
+
+
+def test_download_without_a_place_name_uses_the_coordinates(client):
+    job_id = client.post("/api/jobs", json=SPEC).json()["id"]
+    assert poll(client, job_id)["name"] == "50.1100N 8.6800E"
+    r = client.get(f"/api/jobs/{job_id}/model.stl")
+    assert r.headers["content-disposition"] == 'attachment; filename="50.1100N-8.6800E_1000m_10cm.stl"'
+
+
+def test_default_store_names_jobs_with_the_geocoder(tmp_path, monkeypatch):
+    from app import main
+
+    captured = {}
+
+    class SpyStore(JobStore):
+        def __init__(self, root, cache_dir, **kw):
+            captured.update(kw)
+            super().__init__(tmp_path / "jobs", tmp_path / "cache", runner=fake_runner, **kw)
+
+    class StubGeocoder:
+        def reverse(self, lat, lon):
+            return "Eppstein"
+
+    geocoder = StubGeocoder()
+    monkeypatch.setattr(main, "JobStore", SpyStore)
+    create_app(geocoder=geocoder, allowed_hosts=TEST_HOSTS)
+    assert captured["namer"] == geocoder.reverse
 
 
 def test_sources_txt_is_downloadable():

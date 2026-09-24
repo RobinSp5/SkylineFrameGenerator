@@ -3,8 +3,10 @@ import threading
 import time
 from pathlib import Path
 
+import httpx
 import pytest
 
+from app.geocode import GeocodeError
 from app.jobs import JOB_FILES, MAX_ACTIVE_JOBS, Job, JobQueueFull, JobStore
 from skylineframe.errors import AreaError, FetchError
 from skylineframe.export import ExportPaths
@@ -16,23 +18,23 @@ def spec() -> FrameSpec:
     return FrameSpec(center_lat=50.1, center_lon=8.6)
 
 
-def fake_runner(spec, out_dir: Path, cache_dir: Path, progress):
+def fake_runner(spec, out_dir: Path, cache_dir: Path, progress, name=None):
     progress("fetch", "loading")
     out_dir.mkdir(parents=True, exist_ok=True)
-    for name in JOB_FILES:
-        (out_dir / name).write_bytes(b"x" * 10)
+    for filename in JOB_FILES:
+        (out_dir / filename).write_bytes(b"x" * 10)
     return RunResult(ExportPaths(out_dir / "model.stl", out_dir / "model.3mf", out_dir / "preview.glb"), {"buildings": 5})
 
 
-def failing_runner(spec, out_dir, cache_dir, progress):
+def failing_runner(spec, out_dir, cache_dir, progress, name=None):
     raise FetchError("Overpass down")
 
 
-def crashing_runner(spec, out_dir, cache_dir, progress):
+def crashing_runner(spec, out_dir, cache_dir, progress, name=None):
     raise ZeroDivisionError("bug")
 
 
-def antimeridian_runner(spec, out_dir, cache_dir, progress):
+def antimeridian_runner(spec, out_dir, cache_dir, progress, name=None):
     raise AreaError("Areas crossing the antimeridian (±180° longitude) are not supported.")
 
 
@@ -104,13 +106,13 @@ def test_to_dict_shape(tmp_path):
     store = JobStore(tmp_path / "jobs", tmp_path / "cache", runner=fake_runner)
     job = wait_done(store, store.create(spec()).id)
     d = job.to_dict()
-    assert set(d) == {"id", "status", "stage", "message", "stats"}
+    assert set(d) == {"id", "status", "stage", "message", "stats", "name", "file_stem"}
 
 
 def test_queue_is_bounded(tmp_path):
     gate = threading.Event()
 
-    def blocking_runner(spec, out_dir, cache_dir, progress):
+    def blocking_runner(spec, out_dir, cache_dir, progress, name=None):
         assert gate.wait(10), "gate was never released"
         return fake_runner(spec, out_dir, cache_dir, progress)
 
@@ -145,3 +147,67 @@ def test_cleanup_keeps_running_jobs_and_forgets_removed_ones(tmp_path):
     assert store.get(busy.name) is not None
     assert not finished.dir.exists()
     assert store.get(finished.id) is None
+
+
+# --- naming: the place a model is saved under -----------------------------------------------
+
+
+def recording_runner(seen: dict):
+    def runner(spec, out_dir, cache_dir, progress, name=None):
+        seen["name"] = name
+        return fake_runner(spec, out_dir, cache_dir, progress)
+
+    return runner
+
+
+def test_job_is_named_after_the_place(tmp_path):
+    seen: dict = {}
+    asked: list[tuple[float, float]] = []
+
+    def namer(lat, lon):
+        asked.append((lat, lon))
+        return "Frankfurt am Main – Altstadt"
+
+    store = JobStore(tmp_path / "jobs", tmp_path / "cache", runner=recording_runner(seen), namer=namer)
+    job = wait_done(store, store.create(spec()).id)
+    assert asked == [(50.1, 8.6)]
+    assert job.name == "Frankfurt am Main – Altstadt"
+    assert job.file_stem == "Frankfurt-am-Main_Altstadt_1500m_10cm"
+    assert seen["name"] == "Frankfurt am Main – Altstadt"  # the 3MF object carries it too
+    assert job.to_dict()["name"] == job.name and job.to_dict()["file_stem"] == job.file_stem
+
+
+@pytest.mark.parametrize(
+    "namer",
+    [
+        None,
+        lambda lat, lon: None,
+        lambda lat, lon: "   ",
+        lambda lat, lon: (_ for _ in ()).throw(httpx.ConnectError("offline")),
+        lambda lat, lon: (_ for _ in ()).throw(GeocodeError("rate limited")),
+        lambda lat, lon: 1 / 0,
+    ],
+    ids=["no-namer", "nothing-found", "blank", "offline", "rate-limited", "bug"],
+)
+def test_naming_falls_back_to_coordinates_and_never_fails_the_job(tmp_path, namer):
+    seen: dict = {}
+    store = JobStore(tmp_path / "jobs", tmp_path / "cache", runner=recording_runner(seen), namer=namer)
+    job = wait_done(store, store.create(spec()).id)
+    assert job.status == "done"
+    assert job.name == "50.1000N 8.6000E"
+    assert job.file_stem == "50.1000N-8.6000E_1500m_10cm"
+    assert seen["name"] == job.name
+
+
+def test_download_names(tmp_path):
+    store = JobStore(tmp_path / "jobs", tmp_path / "cache", runner=fake_runner, namer=lambda lat, lon: "Eppstein")
+    job = wait_done(store, store.create(spec()).id)
+    assert job.download_name("model.stl") == "Eppstein_1500m_10cm.stl"
+    assert job.download_name("model.3mf") == "Eppstein_1500m_10cm.3mf"
+    assert job.download_name("SOURCES.txt") == "Eppstein_1500m_10cm_SOURCES.txt"
+    assert job.download_name("preview.glb") == "preview.glb"  # only the browser fetches it
+
+
+def test_download_names_before_the_job_is_named(tmp_path):
+    job = Job(id="x", spec=spec(), dir=tmp_path)
+    assert job.download_name("model.stl") == "model.stl"
