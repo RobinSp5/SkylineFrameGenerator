@@ -16,7 +16,6 @@ from collections.abc import Sequence
 
 import manifold3d as m3d
 import numpy as np
-import trimesh
 from shapely.geometry import Polygon
 from shapely.ops import unary_union
 from shapely.validation import make_valid
@@ -27,7 +26,6 @@ Surfaces = Sequence[Sequence[Point3]]
 GROUND_DROP_M = 1.0  # how far the skirt and the prism reach below the lowest vertex
 UP_NORMAL_MIN = 0.05  # a face counts as "roof" above this z component of its unit normal
 CLEAN_BUFFER_M = 0.05  # dilate/erode that closes the seams between the projected faces
-WELD_DIGITS = 3  # vertices are merged to the millimetre
 MIN_RING_POINTS = 3
 SOLID_SIMPLIFY_MM = 0.2  # spec §5; applied after scaling, by scale.py
 SIMPLIFY_MIN_VOLUME = 0.8  # a simplified body is only kept if it holds this share of the volume
@@ -114,40 +112,47 @@ def height_range(surfaces: Surfaces) -> tuple[float, float] | None:
 
 
 def _tent(face: list[Point3], z_base: float) -> m3d.Manifold | None:
-    """One closed tent: the face as a fan, a skirt down to z_base, the same fan reversed below."""
-    vertices: list[Point3] = list(face)
-    vertices.extend((x, y, z_base) for x, y, _ in face)
-    count = len(face)
-    low = count
-    triangles: list[tuple[int, int, int]] = []
-    for i in range(1, count - 1):
-        triangles.append((0, i, i + 1))  # the face, normal up
-        triangles.append((low, low + i + 1, low + i))  # the bottom, reversed, normal down
-    for i in range(count):
-        j = (i + 1) % count
-        # (a, a_low, b_low) / (a, b_low, b): this winding puts the skirt normal outwards for
-        # a ring that runs counter-clockwise seen from above.
-        triangles.append((i, low + i, low + j))
-        triangles.append((i, low + j, j))
-    mesh = trimesh.Trimesh(
-        vertices=np.asarray(vertices, dtype=np.float64),
-        faces=np.asarray(triangles, dtype=np.int64),
-        process=False,
-    )
-    # Weld to the millimetre and drop what the weld collapsed. trimesh 5.1 has no
-    # remove_degenerate_faces; nondegenerate_faces() + update_faces() is the replacement.
-    mesh.merge_vertices(digits_vertex=WELD_DIGITS)
-    mesh.update_faces(mesh.nondegenerate_faces())
-    if len(mesh.faces) == 0:
+    """One closed tent: everything above z_base, inside the face's outline and below its plane.
+
+    Built as the prism of the face's plan cut by the face's plane, never by triangulating the
+    face. A fan from the first vertex is only right for a convex face, and half of all LoD2 roof
+    faces are not (Darmstadt: 6 197 of 13 361): an L-shaped roof fanned from next to its inner
+    corner covers the notch of the L with a triangle turned inside out, and the tents came out
+    mangled (a 7 m³ test building measured 3 m³, and real bodies grew wider upwards, which Bambu
+    Studio reports as floating regions). The cut is exact for any simple polygon, holes included.
+
+    The plane goes through the mean of the vertices along the Newell normal, so a face that is
+    not quite planar, as surveyed faces rarely are, is cut by its best-fitting plane.
+    """
+    normal = _normal(face)
+    if normal is None or normal[2] <= 0.0:
         return None
-    tent = m3d.Manifold(
-        m3d.Mesh(
-            vert_properties=np.asarray(mesh.vertices, dtype=np.float32),
-            tri_verts=np.asarray(mesh.faces, dtype=np.uint32),
-        )
-    )
-    # A tent that did not close (a self-intersecting roof ring, say) would only poison the union.
+    plan = _plan(face)
+    if plan is None:
+        return None
+    nx, ny, nz = normal
+    offset = sum(nx * x + ny * y + nz * z for x, y, z in face) / len(face)
+    top = max(z for _, _, z in face)
+    prism = _cross_section(plan).extrude(top - z_base + 1.0).translate((0.0, 0.0, z_base))
+    # trim_by_plane keeps the side the normal points to: with the normal flipped, what stays is
+    # n · p <= offset, the space below the roof face.
+    tent = prism.trim_by_plane((-nx, -ny, -nz), -offset)
     return tent if tent.status() == m3d.Error.NoError and not tent.is_empty() else None
+
+
+def _plan(face: list[Point3]) -> Polygon | None:
+    """The face seen from above, repaired; None when nothing with area is left."""
+    ring = [(x, y) for x, y, _ in face]
+    if len(set(ring)) < MIN_RING_POINTS:
+        return None
+    plan = Polygon(ring)
+    if not plan.is_valid:
+        repaired = make_valid(plan)
+        parts = [g for g in getattr(repaired, "geoms", [repaired]) if isinstance(g, Polygon) and g.area > 0]
+        if not parts:
+            return None
+        plan = max(parts, key=lambda g: g.area)
+    return plan if plan.area > 0 else None
 
 
 def _roof_body(faces: list[list[Point3]], z_base: float) -> m3d.Manifold | None:

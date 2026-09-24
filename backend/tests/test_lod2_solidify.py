@@ -204,3 +204,66 @@ def test_a_recorded_building_stays_inside_the_triangle_budget(lod2_local):
     # where a concatenation of the tents kept 1622 of them on coincident interior walls.
     solid = to_solid(lod2_local[1].surfaces)
     assert 900 < solid.num_tri() < 2000
+
+
+# The ground under a 2x2 m building, wound clockwise seen from above (outward normal -z).
+GROUND_2X2 = ((0, 0, 0), (0, 2, 0), (2, 2, 0), (2, 0, 0))
+
+
+def test_a_concave_roof_face_does_not_spill_over_a_lower_wing():
+    # An L-shaped main roof at 2 m whose ring starts next to the inner corner, and a 1 m wing in
+    # the notch of the L: the shape a fan from the first vertex gets wrong. manifold3d happened to
+    # resolve this small case even with fanned tents, so it guards the prism cut rather than
+    # reproducing the bug; the recorded Darmstadt building below does reproduce it.
+    l_roof = ((2, 1, 2), (1, 1, 2), (1, 2, 2), (0, 2, 2), (0, 0, 2), (2, 0, 2))
+    wing_roof = ((1, 1, 1), (2, 1, 1), (2, 2, 1), (1, 2, 1))
+    solid = to_solid((l_roof, wing_roof, GROUND_2X2))
+    assert solid.volume() == pytest.approx(3 * 2 + 1 * 1, abs=1e-3)
+    # And nothing stands above the wing: a slice at 1.5 m is exactly the L.
+    assert solid.slice(1.5).area() == pytest.approx(3.0, abs=1e-3)
+
+
+def test_a_sloped_concave_roof_face_keeps_its_plane():
+    # The same L as a shed roof rising from 1 m at y = 0 to 3 m at y = 2, over a flat 0.5 m wing.
+    def z(y):
+        return 1 + y
+
+    l_roof = tuple((x, y, z(y)) for x, y in ((2, 1), (1, 1), (1, 2), (0, 2), (0, 0), (2, 0)))
+    wing_roof = ((1, 1, 0.5), (2, 1, 0.5), (2, 2, 0.5), (1, 2, 0.5))
+    solid = to_solid((l_roof, wing_roof, GROUND_2X2))
+    # L = 2x1 strip (mean height 1.5) + 1x1 square at y 1..2 (mean height 2.5); wing 1x1 at 0.5.
+    assert solid.volume() == pytest.approx(2 * 1.5 + 1 * 2.5 + 0.5, abs=1e-3)
+
+
+def test_no_recorded_building_grows_wider_upwards(lod2_local):
+    # A LoD2 body is the space under its roof faces, so a horizontal cut can only shrink with
+    # height. Fanned tents broke that on real concave roofs: a Darmstadt building grew by 11 m²
+    # at 3.8 m, which Bambu Studio reports as floating regions (solidify._tent).
+    for raw in lod2_local:
+        body = to_solid(raw.surfaces)
+        if body is None:
+            continue
+        top = body.bounding_box()[5]
+        below = body.slice(0.05)
+        for z in np.arange(0.3, top, 0.25):
+            cut = body.slice(float(z))
+            grown = (cut - below.offset(0.02, m3d.JoinType.Miter)).area()
+            assert grown < 1e-3, f"{raw.osm_id} grows by {grown:.3f} m² at {z:.2f} m"
+            below = cut
+
+
+def test_a_recorded_concave_building_does_not_grow_wider_upwards():
+    # The Darmstadt building that made Bambu Studio report floating regions: with fanned tents it
+    # grew by 11 m² at 3.8 m and lost 1 256 m³; cut from prisms it only ever narrows upwards.
+    import json
+    from pathlib import Path
+
+    data = json.loads((Path(__file__).parent / "fixtures" / "lod2_darmstadt_concave.json").read_text())
+    surfaces = tuple(tuple(tuple(p) for p in ring) for ring in data["surfaces"])
+    body = to_solid(surfaces)
+    assert body is not None
+    below = body.slice(0.05)
+    for z in np.arange(0.3, body.bounding_box()[5], 0.25):
+        cut = body.slice(float(z))
+        assert (cut - below.offset(0.02, m3d.JoinType.Miter)).area() < 1e-3, f"grows at {z:.2f} m"
+        below = cut
