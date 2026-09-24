@@ -37,6 +37,15 @@ DEFAULT_ROAD_WIDTH_MM: dict[str, float] = {
 }
 
 MIN_FEATURE_MM = 0.8  # two nozzle widths on a 0.4 mm nozzle
+# One nozzle line: the narrowest wall a 0.4 mm nozzle still lays down. A footprint thinner than
+# this is widened to it rather than buried in a block (spec 4a §2.2).
+MIN_LINE_MM = 0.4
+# Fixed print height of a block. The block is only a ground plate under the houses now, and
+# every house is at least min_building_height_mm tall, so it rises 0.4 mm above it (spec 4a §2.3).
+SOCKEL_MM = 0.4
+# Below this a footprint (a ~5 m² shed at 1:15 000) only feeds its block and gets no body of its
+# own (spec 4a §2.1).
+TINY_FOOTPRINT_MM2 = 0.1
 LEVEL_HEIGHT_M = 3.2  # metres per building level when only building:levels is tagged
 
 
@@ -69,8 +78,9 @@ class FrameSpec(BaseModel):
     z_exaggeration: float = Field(default=1.5, gt=0, le=10)
     default_building_height_m: float = Field(default=8.0, gt=0)
     min_building_height_mm: float = Field(default=0.8, ge=0)
-    # 0.25 mm² instead of the MVP's 1.0: everything below still reaches the model through its
-    # block, so the threshold only decides "own solid" vs "part of the block" (spec §6.5).
+    # Smallest printable sockel polygon. It no longer decides which footprint gets a body of its
+    # own — every footprint of at least TINY_FOOTPRINT_MM2 does — and stays a field so existing
+    # API clients keep working (spec 4a §2.1).
     min_footprint_area_mm2: float = Field(default=0.25, ge=0)
     roofs: bool = True  # build roof solids from roof:shape (spec §7)
     parts: bool = True  # render building:part instead of one box per outline (spec §6.3)
