@@ -371,3 +371,13 @@ def test_the_tile_request_names_the_generator(server, cache):
     server.add(50, 8, ramp_east(5000.0))
     terrain_heightfield(EPPSTEIN, cache, client=server.client())
     assert server.calls[0].headers["user-agent"].startswith("skylineframe/")
+
+
+def test_the_spline_never_overshoots_a_cliff(server, cache):
+    # A 40 m cliff on the tile border: a plain cubic spline rings below the sea and above the
+    # plateau there. The B-spline without prefilter stays inside the data range (spec 4b §4.6).
+    server.add(50, 8, lambda lon, lat: np.full(lon.shape, 40.0))
+    field = terrain_heightfield(ON_THE_BORDER, cache, client=server.client())
+    assert field is not None
+    assert field.z_mm.min() == 0.0
+    assert field.z_mm.max() <= 40.0 * ON_THE_BORDER.scale + 1e-9

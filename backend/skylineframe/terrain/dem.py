@@ -35,6 +35,7 @@ log = logging.getLogger(__name__)
 
 TILE_URL = "https://copernicus-dem-30m.s3.amazonaws.com/{name}/{name}.tif"
 TERRAIN_CELL_MM = 0.5  # print-grid spacing of the Heightfield
+TERRAIN_SPLINE_ORDER = 3  # DEM -> print grid; see terrain_heightfield
 # Around the rotated square: more than the ground filter's window (100 m, spec §4.5), so the
 # filter's flat-padded edge stays outside everything that is sampled.
 MARGIN_M = 200.0
@@ -357,7 +358,14 @@ def terrain_heightfield(spec: FrameSpec, cache_dir: Path, client: httpx.Client |
     lon, lat, cell = _grid_lonlat(spec, n)
     rows = (north - lat) / dlat
     cols = (lon - west) / dlon
-    h = map_coordinates(ground, [rows, cols], order=1, mode="nearest")
+    # Cubic, not linear: one GLO-30 pixel is ~30 m, 2 mm on a 1500 m plate, and linear
+    # interpolation turns every pixel into a flat facet with a crease around it — a visible
+    # 2 mm chequerboard on every slope. prefilter=False evaluates the B-spline with the heights
+    # themselves as coefficients: every value is then a convex combination of its neighbours, so
+    # it cannot overshoot at a cliff or a coast (an interpolating spline dipped the sea below 0 m
+    # and moved the plate minimum). The price is a blur of about one pixel, which the ground
+    # filter's 100 m window already exceeds.
+    h = map_coordinates(ground, [rows, cols], order=TERRAIN_SPLINE_ORDER, mode="nearest", prefilter=False)
     z = (h - h.min()) * spec.scale * spec.terrain_exaggeration
     half = spec.plate_size_mm / 2
     return Heightfield(z_mm=z, cell_mm=cell, origin_mm=(-half, -half))
