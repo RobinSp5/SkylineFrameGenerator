@@ -32,6 +32,8 @@ export function setupControls(root: HTMLElement): Controls {
   const zfactor = el<HTMLInputElement>(root, "zfactor");
   const mode = el<HTMLSelectElement>(root, "mode");
   const lod2 = el<HTMLInputElement>(root, "lod2");
+  const terrain = el<HTMLInputElement>(root, "terrain");
+  const terrainz = el<HTMLInputElement>(root, "terrainz");
   const generate = el<HTMLButtonElement>(root, "generate");
   const status = el<HTMLParagraphElement>(root, "status");
   const downloads = el<HTMLDivElement>(root, "downloads");
@@ -65,6 +67,12 @@ export function setupControls(root: HTMLElement): Controls {
   plate.addEventListener("input", () => {
     preset.value = "custom";
   });
+  // The factor only means something with terrain on; greying it out says so (backend spec 4b §2).
+  const syncTerrain = () => {
+    terrainz.disabled = !terrain.checked;
+  };
+  syncTerrain();
+  terrain.addEventListener("change", syncTerrain);
   preset.addEventListener("change", () => {
     const chosen = PRESETS[preset.value as PresetName] as Preset | undefined;
     if (!chosen) return; // "Custom" keeps whatever the fields say
@@ -85,6 +93,8 @@ export function setupControls(root: HTMLElement): Controls {
       mode: mode.value as "simple" | "full",
       z_exaggeration: Number(zfactor.value),
       lod2: lod2.checked,
+      terrain: terrain.checked,
+      terrain_exaggeration: Number(terrainz.value),
     }),
     writeSquare(p) {
       square = { ...p };
@@ -127,6 +137,12 @@ export function summarize(stats: Record<string, number | string>): string {
   const fromLod2 = count("lod2_buildings");
   if (source && fromLod2 > 0) {
     text += `, ${fromLod2} of which from LoD2 ${source.charAt(0).toUpperCase()}${source.slice(1)}`;
+  }
+  // terrain_note is German backend text for the CLI; the UI only needs to know it is there.
+  if (stats.terrain_source) {
+    text += `, terrain ${count("terrain_relief_mm").toFixed(1)} mm`;
+  } else if (stats.terrain_note) {
+    text += ", terrain unavailable (flat plate)";
   }
   return text;
 }

@@ -10,6 +10,8 @@ export interface FrameSpecInput {
   mode: "simple" | "full";
   z_exaggeration: number;
   lod2: boolean;
+  terrain: boolean;
+  terrain_exaggeration: number;
 }
 
 export type JobStatus = "queued" | "running" | "done" | "error";

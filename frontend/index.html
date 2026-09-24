@@ -49,6 +49,13 @@
           <input id="lod2" type="checkbox" checked />
           Use official LoD2 buildings where available
         </label>
+        <label class="checkbox">
+          <input id="terrain" type="checkbox" />
+          Terrain (Copernicus elevation model)
+        </label>
+        <label>Terrain height factor
+          <input id="terrainz" type="number" min="0.1" max="5" step="0.1" value="1" disabled />
+        </label>
 
         <button id="generate" type="button">Generate</button>
         <p id="status" role="status"></p>

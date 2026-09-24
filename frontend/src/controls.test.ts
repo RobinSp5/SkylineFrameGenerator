@@ -22,6 +22,8 @@ const SIDEBAR = `
   <input id="zfactor" type="number" value="1.5" />
   <select id="mode"><option value="simple">simple</option><option value="full">full</option></select>
   <input id="lod2" type="checkbox" checked />
+  <input id="terrain" type="checkbox" />
+  <input id="terrainz" type="number" value="1" disabled />
   <button id="generate"></button>
   <p id="status"></p>
   <div id="downloads" hidden><a id="dl-stl"></a><a id="dl-3mf"></a><a id="dl-sources"></a></div>
@@ -150,6 +152,42 @@ describe("summarize", () => {
 
   it("survives an empty stats object", () => {
     expect(summarize({})).toBe("Done: 0 buildings, 0 blocks, 0 roofs");
+  });
+});
+
+describe("summarize terrain", () => {
+  it("reports the relief when terrain was used", () => {
+    expect(summarize({ buildings: 42, blocks: 3, roofs: 5, terrain_source: "copernicus", terrain_relief_mm: 10.414 })).toBe(
+      "Done: 42 buildings, 3 blocks, 5 roofs, terrain 10.4 mm",
+    );
+  });
+
+  it("says so when terrain was asked for but not available", () => {
+    expect(summarize({ buildings: 42, blocks: 3, roofs: 5, terrain_source: "", terrain_note: "Gelände nicht verfügbar" })).toBe(
+      "Done: 42 buildings, 3 blocks, 5 roofs, terrain unavailable (flat plate)",
+    );
+  });
+});
+
+describe("setupControls terrain", () => {
+  beforeEach(() => {
+    document.body.innerHTML = `<div id="app">${SIDEBAR}</div>`;
+  });
+
+  it("is off by default and sends its factor only as a number", () => {
+    const controls = setupControls(document.getElementById("app")!);
+    expect(controls.read().terrain).toBe(false);
+    expect(controls.read().terrain_exaggeration).toBe(1);
+  });
+
+  it("enables the factor with the checkbox", () => {
+    const controls = setupControls(document.getElementById("app")!);
+    const terrain = field<HTMLInputElement>("terrain");
+    terrain.checked = true;
+    terrain.dispatchEvent(new Event("change"));
+    expect(field<HTMLInputElement>("terrainz").disabled).toBe(false);
+    field<HTMLInputElement>("terrainz").value = "1.5";
+    expect(controls.read()).toMatchObject({ terrain: true, terrain_exaggeration: 1.5 });
   });
 });
 
