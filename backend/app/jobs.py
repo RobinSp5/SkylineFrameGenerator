@@ -149,6 +149,8 @@ class JobStore:
         def progress(stage: str, message: str) -> None:
             job.stage, job.message = stage, message
 
+        # The lookup can take a few seconds; without a stage the UI would show a blank status line.
+        progress("name", "Looking up the place name")
         job.status = "running"
         # Named before the run, so the 3MF object carries the name. Stem before name: a poller
         # that sees a name can always build the download file name.
