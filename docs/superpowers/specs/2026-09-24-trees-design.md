@@ -47,3 +47,15 @@ Bäume gehören ins Modell, weltweit, auch in Dörfern. OSM-Einzelbäume sind ex
 | `trees=False` | STL bit-identisch zu `main` |
 | Laufzeit (Stichprobe, warm) | +≤30 %; STL +≤60 % |
 | Tests | grün, kein Netz in Tests |
+
+## 7. Ergebnis (gemessen 2026-09-24, warmer Cache)
+
+| Lauf | Bäume | Laufzeit | STL | Bambu |
+|---|---|---|---|---|
+| Eppstein full `--terrain`, ohne Bäume | – | 16,4 s | 13,8 MB | – |
+| Eppstein full `--terrain` | 15 984 | 25,4 s (+55 %) | 26,6 MB (+93 %) | manifold, 1 Teil, keine Warnung |
+| Central Park Süd 1200 m / 15 cm full | 3 888 | 11,9 s | 19,7 MB | manifold, 1 Teil, keine Warnung |
+
+Budget §6 verfehlt bei Laufzeit (+55 % statt +30 %) und STL (+93 % statt +60 %), weil bewaldete Flächen als Kuppelfeld auf 0,2-mm-Raster vernetzt werden und `simplify` gekrümmte Flächen kaum reduziert. Bewusst akzeptiert: 27 MB lädt Bambu Studio problemlos. Möglicher nächster Schritt, falls nötig: Dezimierung (z. B. `fast-simplification`) oder gröberes Raster nur für Waldflächen.
+
+`trees=False`: STL bit-identisch zu 0c07703. WorldCover-Ausfall: nur OSM-Bäume, `trees_note` in Stats und Statuszeile.

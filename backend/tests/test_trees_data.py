@@ -303,6 +303,7 @@ OSM = [OsmTree(10.0, 10.0, 15.0, 6.0)]
 
 def assert_osm_only(layer: TreeLayer) -> None:
     assert layer.source == ""
+    assert layer.note  # the pipeline shows it, so a silent fallback never looks like a forest-free place
     assert len(layer.trees) == 1
     assert layer.trees[0].x_mm == pytest.approx(10.0 * SPEC.scale)
 

@@ -40,6 +40,8 @@ _MASK64 = (1 << 64) - 1
 class TreeLayer:
     trees: list[Tree]
     source: str  # "worldcover" when WorldCover trees are among them, else ""
+    # Set when WorldCover could not be read; the pipeline passes it on as stats["trees_note"].
+    note: str = ""
 
 
 # --- frames ------------------------------------------------------------------
@@ -113,7 +115,8 @@ def _place(spec: FrameSpec, cover: TreeCover) -> tuple[np.ndarray, np.ndarray, n
 
 def _worldcover_trees(
     spec: FrameSpec, cache_dir: Path, client: httpx.Client | None
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray] | None:
+    """Placed WorldCover trees in local metres, or None when WorldCover could not be read."""
     owns_client = client is None
     client = client or httpx.Client(timeout=TIMEOUT_S, follow_redirects=True)
     try:
@@ -121,8 +124,7 @@ def _worldcover_trees(
     # OSError: a cache directory that cannot be created or written is no reason to fail the run.
     except (TileError, OSError) as exc:
         log.warning("Trees: ESA WorldCover not available (%s); OpenStreetMap trees only", exc)
-        empty = np.empty(0)
-        return empty, empty, empty
+        return None
     finally:
         if owns_client:
             client.close()
@@ -138,7 +140,10 @@ def tree_layer(
     data: the layer then holds the OSM trees alone and its source is "".
     """
     half = spec.side_m / 2
-    x, y, height = _worldcover_trees(spec, cache_dir, client)
+    placed = _worldcover_trees(spec, cache_dir, client)
+    note = "" if placed is not None else "Tree cover not available, OpenStreetMap trees only"
+    empty = np.empty(0)
+    x, y, height = placed if placed is not None else (empty, empty, empty)
     osm = [t for t in osm_trees if abs(t.x) <= half and abs(t.y) <= half]
 
     keep = np.ones(len(x), dtype=bool)
@@ -164,4 +169,4 @@ def tree_layer(
         )
         for t in osm
     ]
-    return TreeLayer(trees=trees, source=source)
+    return TreeLayer(trees=trees, source=source, note=note)
