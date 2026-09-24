@@ -221,3 +221,93 @@ def test_lod2_off_gives_the_same_model_as_no_lod2_data(tmp_path, frankfurt_spec,
     # result, and naming Hessen next to a model that carries none of it is a false attribution.
     assert with_flag_off.stats["lod2_source"] == ""
     assert "Hessen" not in with_flag_off.paths.sources.read_text(encoding="utf-8")
+
+
+# --- terrain (spec 4b §5.6) --------------------------------------------------------------------
+
+
+def tilted(spec: FrameSpec, relief_mm: float = 4.0):
+    """A plane rising diagonally across the plate, lowest corner exactly 0 as the contract says."""
+    import numpy as np
+
+    from skylineframe.terrain.heightfield import Heightfield
+
+    flat = Heightfield.flat(spec.plate_size_mm)
+    n = flat.z_mm.shape[0]
+    t = np.arange(n) / (n - 1)
+    return Heightfield(relief_mm * (t[None, :] + t[:, None]) / 2, flat.cell_mm, flat.origin_mm)
+
+
+def test_run_on_terrain_reports_the_relief_and_credits_copernicus(tmp_path, frankfurt_spec, frankfurt_data):
+    import trimesh
+
+    spec = frankfurt_spec.model_copy(update={"terrain": True})
+    calls = []
+
+    def terrain(s, cache_dir):
+        calls.append(cache_dir)
+        return tilted(s)
+
+    stages: list[str] = []
+    result = run(
+        spec,
+        tmp_path / "out",
+        tmp_path / "cache",
+        progress=lambda stage, msg: stages.append(stage),
+        fetch=lambda s, c: parse_overpass(frankfurt_data, s),
+        terrain=terrain,
+    )
+    assert calls == [tmp_path / "cache"]
+    assert stages == ["fetch", "terrain", "prepare", "mesh", "export"]
+    assert result.stats["terrain_source"] == "copernicus"
+    assert result.stats["terrain_relief_mm"] == pytest.approx(4.0)
+    assert "terrain_note" not in result.stats
+    sources = result.paths.sources.read_text(encoding="utf-8")
+    assert sources.count("Copernicus WorldDEM-30") == 2
+    assert sources.index("Copernicus") < sources.index("OpenStreetMap")
+    # export_all verified the manifold topology, so getting here is the watertight guarantee; the
+    # reloaded STL merges touching buildings exactly like the flat model does (see the LoD2 test).
+    stl = trimesh.load(result.paths.stl)
+    assert stl.extents[:2] == pytest.approx([spec.plate_size_mm, spec.plate_size_mm], abs=0.01)
+    assert stl.bounds[0][2] == pytest.approx(-spec.plate_thickness_mm, abs=1e-4)  # flat bottom
+    assert stl.bounds[1][2] > 4.0  # the relief is in the print
+
+
+def test_terrain_that_cannot_be_loaded_gives_the_flat_model_and_a_note(tmp_path, frankfurt_spec, frankfurt_data):
+    # Spec 4b §5.6/§6: offline with terrain on is a flat model and a note, never an abort.
+    spec = frankfurt_spec.model_copy(update={"terrain": True})
+    offline = run(
+        spec,
+        tmp_path / "a",
+        tmp_path / "cache",
+        fetch=lambda s, c: parse_overpass(frankfurt_data, s),
+        terrain=lambda s, c: None,
+    )
+    plain = run(
+        frankfurt_spec, tmp_path / "b", tmp_path / "cache", fetch=lambda s, c: parse_overpass(frankfurt_data, s)
+    )
+    assert offline.stats["terrain_source"] == ""
+    assert offline.stats["terrain_note"] == "Gelände nicht verfügbar"
+    assert "terrain_relief_mm" not in offline.stats
+    assert offline.paths.stl.read_bytes() == plain.paths.stl.read_bytes()
+    assert "Copernicus" not in offline.paths.sources.read_text(encoding="utf-8")
+
+
+def test_terrain_off_never_asks_for_a_heightfield_and_is_byte_identical(tmp_path, frankfurt_spec, frankfurt_data):
+    def must_not_run(s, c):
+        raise AssertionError("terrain loaded although spec.terrain is False")
+
+    with_param = run(
+        frankfurt_spec,
+        tmp_path / "a",
+        tmp_path / "cache",
+        fetch=lambda s, c: parse_overpass(frankfurt_data, s),
+        terrain=must_not_run,
+    )
+    without = run(
+        frankfurt_spec, tmp_path / "b", tmp_path / "cache", fetch=lambda s, c: parse_overpass(frankfurt_data, s)
+    )
+    assert with_param.paths.stl.read_bytes() == without.paths.stl.read_bytes()
+    assert with_param.stats["terrain_source"] == ""
+    assert "terrain_note" not in with_param.stats
+    assert "Copernicus" not in with_param.paths.sources.read_text(encoding="utf-8")

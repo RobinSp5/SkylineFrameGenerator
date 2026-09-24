@@ -9,15 +9,19 @@ from .errors import PipelineError
 from .export import ExportPaths, export_all
 from .features import Features
 from .fetch import fetch_features
-from .lod2.sources import ATTRIBUTIONS, sources_text
+from .lod2.sources import ATTRIBUTIONS, COPERNICUS, sources_text
 from .mesh import build_meshes
 from .prepare import prepare
 from .project import project_features
 from .scale import scale_features
 from .spec import FrameSpec
+from .terrain.heightfield import Heightfield
 
 ProgressCallback = Callable[[str, str], None]
 FetchFn = Callable[[FrameSpec, Path], Features]
+# (spec, cache_dir) -> the relief, or None when the DEM could not be had (spec 4b §4.3).
+TerrainFn = Callable[[FrameSpec, Path], Heightfield | None]
+TERRAIN_UNAVAILABLE = "Gelände nicht verfügbar"
 
 
 @dataclass
@@ -33,6 +37,7 @@ def run(
     cache_dir: Path,
     progress: ProgressCallback | None = None,
     fetch: FetchFn = fetch_features,
+    terrain: TerrainFn | None = None,
 ) -> RunResult:
     def report(stage: str, message: str) -> None:
         if progress:
@@ -40,6 +45,19 @@ def run(
 
     report("fetch", "Loading OpenStreetMap data")
     raw = fetch(spec, cache_dir)
+
+    # Only asked for when the spec wants it: terrain=False must not even touch the DEM code, and
+    # the flat model stays byte-identical (spec 4b §2). A missing relief is no reason to fail the
+    # run — the model is built flat and the stats say so (spec 4b §5.6).
+    heightfield: Heightfield | None = None
+    if spec.terrain:
+        report("terrain", "Loading terrain (Copernicus DEM)")
+        if terrain is None:
+            # Imported here so the flat path never loads the raster dependencies.
+            from .terrain.dem import terrain_heightfield
+
+            terrain = terrain_heightfield
+        heightfield = terrain(spec, cache_dir)
 
     report("prepare", "Clipping and cleaning geometry")
     prepared = prepare(project_features(raw, spec), spec)
@@ -50,7 +68,7 @@ def run(
     scaled = scale_features(prepared, spec)
 
     report("mesh", f"Building solids for {len(prepared.buildings)} buildings in {len(prepared.blocks)} blocks")
-    meshes = build_meshes(scaled, spec)
+    meshes = build_meshes(scaled, spec, heightfield)
 
     report("export", "Writing STL, 3MF and preview")
     # Not raw.lod2_source on its own: the provider answering is not the same as official geometry
@@ -64,7 +82,13 @@ def run(
         meshes,
         spec,
         out_dir,
-        sources=sources_text(date.today().isoformat(), ATTRIBUTIONS.get(lod2_source)),
+        # Copernicus only when a relief really reached the model: a DEM that failed to load leaves
+        # a flat plate, and crediting it would be a false attribution (spec 4b §4.8).
+        sources=sources_text(
+            date.today().isoformat(),
+            ATTRIBUTIONS.get(lod2_source),
+            terrain=COPERNICUS if heightfield is not None else None,
+        ),
     )
 
     individual = len(prepared.buildings)
@@ -109,6 +133,14 @@ def run(
         "lod2_triangles": sum(p.solid_mm.num_tri() for p in scaled.buildings if p.solid_mm is not None),
         "stl_bytes": paths.stl.stat().st_size,
         "threemf_bytes": paths.threemf.stat().st_size,
+        # Terrain (spec 4b §5.6): the source is empty unless a relief is in the print. The note
+        # only appears when terrain was asked for and could not be had.
+        "terrain_source": COPERNICUS.name if heightfield is not None else "",
         **paths.diagnostics,
     }
+    if heightfield is not None:
+        # The lowest node is 0 by contract, so the highest one is the relief.
+        stats["terrain_relief_mm"] = round(float(heightfield.z_mm.max()), 2)
+    elif spec.terrain:
+        stats["terrain_note"] = TERRAIN_UNAVAILABLE
     return RunResult(paths=paths, stats=stats)
