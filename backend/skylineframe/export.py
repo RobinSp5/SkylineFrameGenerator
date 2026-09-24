@@ -18,6 +18,7 @@ PART_COLORS: dict[str, tuple[int, int, int, int]] = {
     "buildings": (255, 255, 255, 255),
     "water": (70, 130, 220, 255),
     "roads": (90, 90, 90, 255),
+    "trees": (84, 130, 53, 255),
 }
 SIZE_TOLERANCE_MM = 0.01
 DEGENERATE_AREA_MM2 = 1e-9

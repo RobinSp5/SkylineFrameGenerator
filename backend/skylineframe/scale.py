@@ -1,5 +1,6 @@
 """Convert prepared features from local metres to print millimetres."""
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 
 import manifold3d as m3d
@@ -13,6 +14,8 @@ from .prepare import Prepared
 from .roofs import MIN_ROOF_MM
 from .spec import SOCKEL_MM, FrameSpec
 from .thicken import thickened
+from .trees.geometry import fitted_trees
+from .trees.model import Tree
 
 # Share of a part's footprint that has to rest on lower bodies of the same outline before the
 # part may start in the air (spec §8). Two towers of one complex often share a single corner
@@ -48,6 +51,8 @@ class Scaled:
     blocks: list[Prism] = field(default_factory=list)
     roads: list[Polygon] = field(default_factory=list)
     water: list[Polygon] = field(default_factory=list)
+    # Trees that print, already fitted between everything above (spec 6 §5.2).
+    trees: list[Tree] = field(default_factory=list)
 
 
 def building_height_mm(height_m: float, spec: FrameSpec) -> float:
@@ -203,10 +208,12 @@ def _building_prism(b: Building, groups: dict[str, list[Building]], spec: FrameS
     )
 
 
-def scale_features(prepared: Prepared, spec: FrameSpec) -> Scaled:
+def scale_features(prepared: Prepared, spec: FrameSpec, trees: Sequence[Tree] = ()) -> Scaled:
+    """`trees` are already in print millimetres (spec 6 §3); they are fitted here, against the
+    scaled footprints, blocks, roads and water, the same way a building is clamped to what prints."""
     s = spec.scale
     groups = _by_outline(prepared.buildings)
-    return Scaled(
+    scaled = Scaled(
         buildings=[_building_prism(b, groups, spec) for b in prepared.buildings],
         # SOCKEL_MM as it is, not through building_height_mm: its 0.8 mm minimum and
         # z_exaggeration would lift the sockel back up to the roofs of small houses — exactly the
@@ -215,3 +222,7 @@ def scale_features(prepared: Prepared, spec: FrameSpec) -> Scaled:
         roads=[_scale_geom(p, s) for p in prepared.roads],
         water=[_scale_geom(p, s) for p in prepared.water],
     )
+    if trees:
+        obstacles = [p.geom for p in scaled.buildings] + [p.geom for p in scaled.blocks] + scaled.roads + scaled.water
+        scaled.trees = fitted_trees(list(trees), obstacles, spec)
+    return scaled

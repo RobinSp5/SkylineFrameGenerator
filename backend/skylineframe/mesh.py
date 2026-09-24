@@ -14,12 +14,14 @@ import trimesh
 from shapely.geometry import Polygon
 
 from .errors import MeshError
-from .grid import grid_solid
+from .grid import grid_solid, masked_grid_solid
 from .roofs import roof_solid
 from .scale import Prism, Scaled
 from .spec import FrameSpec
 from .terrain.heightfield import Heightfield
 from .thicken import thickened
+from .trees.geometry import MIN_CAP_MM, canopy, surface_z
+from .trees.model import Tree
 
 EPS = 0.01  # overshoot of cutters above the plate top for a clean boolean cut
 BUILDING_SINK_MM = 0.2  # buildings are sunk into the plate so the union never relies on face contact only
@@ -32,6 +34,7 @@ class MeshSet:
     single: m3d.Manifold
     water: m3d.Manifold | None = None
     roads: m3d.Manifold | None = None
+    trees: m3d.Manifold | None = None  # spec 6 §5.5
 
     def parts(self) -> dict[str, m3d.Manifold]:
         parts = {"base": self.base, "buildings": self.buildings}
@@ -39,6 +42,8 @@ class MeshSet:
             parts["water"] = self.water
         if self.roads is not None:
             parts["roads"] = self.roads
+        if self.trees is not None:
+            parts["trees"] = self.trees
         return parts
 
 
@@ -198,8 +203,48 @@ def build_meshes(scaled: Scaled, spec: FrameSpec, terrain: Heightfield | None = 
         _check(roads, "roads")
     _check(base, "base")
 
-    single = _check(base + buildings_sunk, "single")
-    return MeshSet(base=base, buildings=buildings, single=single, water=water, roads=roads)
+    single = base + buildings_sunk
+    trees = None
+    canopy_solid = tree_solid(scaled.trees, spec, None)
+    if canopy_solid is not None:
+        # Flat plate: the part is the canopy above z = 0, flush like the buildings part.
+        trees = _check(canopy_solid - plate(spec), "trees")
+        single = single + canopy_solid
+    single = _check(single, "single")
+    return MeshSet(base=base, buildings=buildings, single=single, water=water, roads=roads, trees=trees)
+
+
+# --- trees (spec 6 §5) --------------------------------------------------------------------------
+
+
+def tree_solid(trees: list[Tree], spec: FrameSpec, terrain: Heightfield | None) -> m3d.Manifold | None:
+    """Every tree as one solid: the canopy height field on its own grid, meshed only over the cells
+    a dome touches (spec 6 §5.3), or None when no tree is left.
+
+    Built sunk, the way buildings are for the single-colour union: away from the domes the solid
+    drops to a slab inside the plate, below the deepest groove and above the plate bottom, so the
+    union never meets it face to face and it never fills a recess. The fitting kept every crown
+    TREE_CLEARANCE_MM clear of the grooves, which is more than the one cell diagonal by which the
+    grid surface reaches past a dome. Every node carries a column down to the slab, so the canopy
+    is carried from below by construction (2.5D). On terrain each dome stands on the relief under
+    it, node by node (spec 6 §5.4).
+    """
+    if not trees:
+        return None
+    field = canopy(trees, spec)
+    tree_node = field.z_mm >= MIN_CAP_MM
+    if not tree_node.any():
+        return None
+    deepest = max(spec.road_depth_mm, spec.water_depth_mm)
+    gap = (spec.plate_thickness_mm - deepest) / 3  # the model validator keeps this positive
+    top = np.full(field.z_mm.shape, -deepest - gap)
+    height = field.z_mm[tree_node]
+    if terrain is not None:
+        j, i = np.nonzero(tree_node)
+        height = height + surface_z(terrain, field.origin_mm[0] + i * field.cell_mm, field.origin_mm[1] + j * field.cell_mm)
+    top[tree_node] = height
+    cells = tree_node[:-1, :-1] | tree_node[:-1, 1:] | tree_node[1:, :-1] | tree_node[1:, 1:]
+    return masked_grid_solid(field, top, -spec.plate_thickness_mm + gap, cells)
 
 
 # --- terrain (spec 4b §5) ---------------------------------------------------------------------
@@ -376,8 +421,15 @@ def _build_on_terrain(scaled: Scaled, spec: FrameSpec, hf: Heightfield) -> MeshS
         _check(roads, "roads")
     _check(base, "base")
 
-    single = _check(base + buildings_sunk, "single")
-    return MeshSet(base=base, buildings=buildings, single=single, water=water, roads=roads)
+    single = base + buildings_sunk
+    trees = None
+    canopy_solid = tree_solid(scaled.trees, spec, hf)
+    if canopy_solid is not None:
+        # Cut at the relief like the buildings part, so the 3MF parts never overlap.
+        trees = _check(canopy_solid - ground, "trees")
+        single = single + canopy_solid
+    single = _check(single, "single")
+    return MeshSet(base=base, buildings=buildings, single=single, water=water, roads=roads, trees=trees)
 
 
 # --- export precision ---------------------------------------------------------------------------
