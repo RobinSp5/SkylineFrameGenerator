@@ -1,7 +1,7 @@
 """Clip features to the target square, repair geometry, form blocks and derive road/water areas.
 
-Everything in this module is in local metres. The stage order follows spec §6:
-clip -> fill heights -> assign parts -> resolve roofs -> blocks -> printability -> roads/water.
+Everything in this module is in local metres. The stage order follows spec §6 and spec 4a §2:
+clip -> fill heights -> assign parts -> widen -> resolve roofs -> sockel blocks -> roads/water.
 """
 
 import math
@@ -19,12 +19,14 @@ from .features import Block, Building, Features, Road, Water
 from .heights import estimate_height_m
 from .lod2.solidify import faces_of, footprint_of_faces, height_of_faces, to_solid
 from .project import square_local
-from .spec import MIN_FEATURE_MM, FrameSpec, Mode
+from .spec import MIN_FEATURE_MM, MIN_LINE_MM, TINY_FOOTPRINT_MM2, FrameSpec, Mode
 
 SIMPLIFY_TOLERANCE_MM = 0.05
 # Fraction of the weld radius used to collapse the chords its round joins leave behind.
 ARC_SIMPLIFY_FRACTION = 0.1
-BLOCK_PERCENTILE = 0.25  # spec §6.4
+# The widening radius is bisected down to this fraction of half a line: 0.2 µm in print space at
+# MIN_LINE_MM = 0.4, far below anything a nozzle resolves, in about ten buffer pairs (spec 4a §2.2).
+WIDEN_TOLERANCE_FRACTION = 1e-3
 # Blocks stay a hair wider than the pure close so individual building walls are strictly inside
 # the block volume below block height; avoids coincident faces in the 3D union.
 BLOCK_HAIR_MM = 0.02
@@ -45,7 +47,9 @@ LOD2_REMAINDER_MIN_AREA_M2 = 0.01
 
 @dataclass
 class Prepared:
-    buildings: list[Building]  # individually printable footprints; valid Polygons in local metres
+    # Every footprint of at least TINY_FOOTPRINT_MM2, widened to a nozzle line where it was
+    # thinner (spec 4a §2.1/§2.2); valid Polygons in local metres.
+    buildings: list[Building]
     blocks: list[Block] = field(default_factory=list)
     roads: list[Polygon] = field(default_factory=list)
     water: list[Polygon] = field(default_factory=list)
@@ -83,11 +87,62 @@ def _is_printable(poly: Polygon, min_area_m2: float, half_feature_m: float) -> b
     return poly.area >= min_area_m2 and not poly.buffer(-half_feature_m).is_empty
 
 
+def widen_to_line(poly: Polygon, half_line_m: float) -> Polygon:
+    """Grow a footprint just enough that eroding it by half a nozzle line leaves something (spec 4a §2.2).
+
+    A footprint that already survives the erosion is returned as the very same object, so every
+    house of a line width or more stays bit-identical. Anything thinner — a garage, a row-house
+    sliver, a wing drawn as a strip — is grown by the smallest radius r in (0, half_line_m] that
+    makes it survive: at most half a line per side, so the house stays where it stands.
+
+    The radius is bisected rather than taken from the maximum inscribed circle: growing a comb or
+    an L can close its notches and survive well before r reaches half a line minus the inscribed
+    radius, so that radius is only an upper bound. r = half_line_m always survives, because the
+    erosion of the grown shape contains the original footprint again.
+
+    Mitre joins keep the corner count: a round buffer would put an arc fan on every corner of
+    every small house, and a rectangle has to stay a rectangle for resolve_roof to put a roof on it.
+    """
+    if not poly.buffer(-half_line_m).is_empty:
+        return poly
+
+    def grown(r: float) -> BaseGeometry:
+        return poly.buffer(r, join_style="mitre")
+
+    lo, hi = 0.0, half_line_m
+    while hi - lo > half_line_m * WIDEN_TOLERANCE_FRACTION:
+        mid = (lo + hi) / 2
+        if grown(mid).buffer(-half_line_m).is_empty:
+            lo = mid
+        else:
+            hi = mid
+    return grown(hi)
+
+
+def _widened(b: Building, half_line_m: float, square: Polygon) -> Building:
+    """The footprint of `b` widened to a nozzle line, clipped back to the square (spec 4a §2.2).
+
+    A widened LoD2 footprint loses its surfaces: the body is cut from the narrow outline and
+    would not fill the widened one, so it prints as a prism at its LoD2 height, like a model whose
+    body would not close — without being one, so it never counts towards lod2_rejected.
+
+    The clip keeps a strip along the edge of the square on the plate; it may leave such a strip
+    under a line wide again, which is the plate edge's doing and not the footprint's.
+    """
+    geom = widen_to_line(b.geom, half_line_m)
+    if geom is b.geom:
+        return b
+    pieces = polygons_of(geom.intersection(square))
+    if not pieces:
+        return b
+    return replace(b, geom=max(pieces, key=lambda p: p.area), surfaces=())
+
+
 def _clip(buildings: list[Building], square: Polygon, tol_m: float) -> list[Building]:
     """Clip to the square, simplify and repair; one Building per resulting polygon.
 
-    Nothing is dropped for being small here — the printability split happens after the blocks
-    are formed, so a small footprint still contributes its area to its block (spec §6.5).
+    Nothing is dropped for being small here — the TINY_FOOTPRINT_MM2 split happens after
+    assign_parts, and a tiny footprint still contributes its area to its block (spec 4a §2.1).
 
     A LoD2 footprint that the square cuts in two keeps its faces on the larger piece only: the
     body is built once and clipped to the plate later, so a second copy would solidify the same
@@ -120,8 +175,8 @@ def lod2_buildings(features: Features) -> list[Building]:
     """One Building per LoD2 model: footprint, ground-to-ridge height, faces kept for later.
 
     Only the cheap half of spec §5 runs here. The body costs two orders of magnitude more and is
-    built in solidify_buildings, for the footprints that survive the printability check — a
-    1500 m Frankfurt square delivers 6 119 models and most of them end up inside a block.
+    built in solidify_buildings, only for the footprints that are printed as bodies: tiny ones
+    only feed a block, and widened ones print as prisms (spec 4a §2.1/§2.2).
     """
     out: list[Building] = []
     for raw in features.lod2:
@@ -158,9 +213,9 @@ def drop_covered(
     share the LoD2 model is the building, and the OSM footprint is replaced — but only where the
     LoD2 model actually covers it. Whatever sticks out is a wing, an extension or a garage the
     LoD2 stock does not know about, and it stays as a footprint of its own. Slivers among those
-    remainders are not printable and reach the model through their block, which is how the rest
-    of the pipeline already recovers small geometry (spec §6.5). Discarding the whole footprint
-    instead threw 21 023 m² away in a 1500 m Frankfurt square — 2.2 % of its building area.
+    remainders are widened to a nozzle line or, below TINY_FOOTPRINT_MM2, reach the model through
+    their block, which is how the rest of the pipeline recovers small geometry (spec 4a §2).
+    Discarding the whole footprint instead threw 21 023 m² away in a 1500 m Frankfurt square — 2.2 % of its building area.
 
     One rule for outlines and for building:part alike: a part over a LoD2 building is a setback
     that the body already has, and keeping it would put a second tower inside the first.
@@ -346,22 +401,6 @@ def resolve_roof(b: Building, rotation_deg: float) -> None:
     b.roof = roof
 
 
-def weighted_percentile(values: list[float], weights: list[float], q: float) -> float:
-    """The q-quantile of `values` weighted by `weights`, 'lower' convention.
-
-    Sort by value, accumulate the weights and return the first value whose cumulative weight
-    reaches q of the total. With equal weights this is the plain q-quantile.
-    """
-    pairs = sorted(zip(values, weights))
-    target = q * sum(weights)
-    cumulative = 0.0
-    for value, weight in pairs:
-        cumulative += weight
-        if cumulative >= target:
-            return value
-    return pairs[-1][0]
-
-
 def _close(area: BaseGeometry, radius_m: float, hair_m: float = 0.0) -> BaseGeometry:
     """Morphological close with round joins: dilate, then erode (spec §6.4).
 
@@ -418,15 +457,17 @@ def build_blocks(
     waters: BaseGeometry,
     square: Polygon,
 ) -> list[Block]:
-    """One Block per connected group of footprints, at the weighted 25th percentile eaves height.
+    """One Block per connected group of footprints: the sockel the houses stand on (spec 4a §2.3).
 
     A block that is itself unprintable (a single shed in the middle of a field) is dropped —
     it would be a sliver in the mesh, and footprint_coverage reports what that costs.
 
-    The height stays the plain percentile in metres. The printable minimum is a print-space
-    number and is applied once, by scale.building_height_mm, exactly as for a building: a
-    metre floor of min_building_height_mm / scale here would be scaled again afterwards and
-    would therefore carry z_exaggeration twice (spec §6.4).
+    A block carries no height. It used to stand at the area-weighted 25th percentile of its
+    members' eaves, which buried every small house in a slab at roof height; now scale gives
+    every block the same SOCKEL_MM, and the houses are bodies of their own on top of it.
+
+    The footprints go in as they were drawn, not widened: the sockel outline stays exactly what
+    this close produced before phase 4a, and a widened house simply overhangs it by a hair.
 
     Roads and water both stop the close from welding across them, but they do it at opposite
     ends of it (spec §6.4). The road corridors come off the *input*: a street buffer overlaps
@@ -451,23 +492,15 @@ def build_blocks(
     if not polys:
         return []
 
+    # A polygon of the closed area that holds no footprint's interior point is not a block of
+    # houses (a scrap the corridor subtraction left, say), so it gets no sockel.
     tree = STRtree(polys)
-    members: dict[int, list[Building]] = {}
+    occupied: set[int] = set()
     for b in footprints:
         found = tree.query(b.geom.representative_point(), predicate="within")
         if len(found):
-            members.setdefault(int(found[0]), []).append(b)
-
-    blocks: list[Block] = []
-    for i, poly in enumerate(polys):
-        inside = members.get(i, [])
-        if not inside:
-            continue
-        height = weighted_percentile(
-            [b.eaves_m for b in inside], [b.geom.area for b in inside], BLOCK_PERCENTILE
-        )
-        blocks.append(Block(geom=poly, height_m=height))
-    return blocks
+            occupied.add(int(found[0]))
+    return [Block(geom=poly) for i, poly in enumerate(polys) if i in occupied]
 
 
 def _coverage(
@@ -478,9 +511,9 @@ def _coverage(
 ) -> float:
     """Share of the building area in the square that the model still carries (spec §6).
 
-    The model is the union of the blocks and the individually printable buildings: a footprint
-    whose block was dropped, or trimmed away by a road corridor, still counts when it is a
-    solid of its own.
+    The model is the union of the blocks and the buildings: a footprint whose block was dropped,
+    or trimmed away by a road corridor, still counts when it is a body of its own. A widened
+    building counts only up to its drawn outline, because `total` is the drawn footprints.
 
     `displaced` are the OSM footprints that LoD2 replaced, already clipped to the square. They go
     into the denominator and never into the numerator: the area they held stood in the square and
@@ -583,7 +616,13 @@ def prepare(features: Features, spec: FrameSpec) -> Prepared:
     # Counted on footprints, not on `buildings` below: a LoD2 footprint that only feeds a block
     # still puts official geometry into the model, so the source is truthfully named for it.
     lod2_footprints = sum(1 for b in footprints if b.lod2)
-    for b in footprints:
+    # Every footprint but the tiniest is a body of its own; a 10 m house at 1:15 000 used to fail
+    # the 0.8 mm erosion and vanish into a slab (spec 4a §2.1). Widened here, before
+    # resolve_roof, so the roof rectangle is the rectangle of the footprint that is printed.
+    tiny_m2 = TINY_FOOTPRINT_MM2 / scale**2
+    half_line_m = MIN_LINE_MM / 2 / scale
+    buildings = [_widened(b, half_line_m, square) for b in footprints if b.geom.area >= tiny_m2]
+    for b in buildings:
         resolve_roof(b, spec.rotation_deg)
 
     full = spec.mode == Mode.full
@@ -592,9 +631,8 @@ def prepare(features: Features, spec: FrameSpec) -> Prepared:
     corridors = road_corridors(features.roads, spec, square) if full else Polygon()
     waters = water_area(features.water, square) if full else Polygon()
     blocks = build_blocks(footprints, spec, close_m, min_area_m2, half_feature_m, corridors, waters, square)
-    buildings = [b for b in footprints if _is_printable(b.geom, min_area_m2, half_feature_m)]
-    # Only now is it clear which footprints get their own solid; everything else goes into a
-    # block and would never use a body (spec §5).
+    # Every body that is printed is now also solidified: that is thousands of LoD2 models instead
+    # of a few dozen, and the spec 4a §3 runtime budget accounts for it.
     lod2_rejected = solidify_buildings(buildings)
     coverage = _coverage(footprints, blocks, buildings, displaced)
     if not full:
@@ -609,8 +647,8 @@ def prepare(features: Features, spec: FrameSpec) -> Prepared:
     recess_min_area_m2 = MIN_FEATURE_MM**2 / scale**2
     weld_m = SIMPLIFY_TOLERANCE_MM / scale
     # Precedence stays buildings > roads > water. What blocks a pocket is the union of the
-    # blocks and of the individually printable buildings: the blocks stop at the corridors,
-    # but a building that sticks into one still keeps its ground (spec §6.4/§6.7).
+    # blocks and of the (widened) buildings: the blocks stop at the corridors, but a building
+    # that sticks into one still keeps its ground (spec §6.4/§6.7).
     blocked = unary_union([*(b.geom for b in blocks), *(b.geom for b in buildings)])
     roads = _road_areas(corridors, blocked, recess_min_area_m2, weld_m)
     blocked_for_water = unary_union([blocked, *roads])

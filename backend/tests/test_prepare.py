@@ -15,11 +15,11 @@ from skylineframe.prepare import (
     minimum_rect,
     polygons_of,
     prepare,
-    weighted_percentile,
+    widen_to_line,
 )
 from skylineframe.project import square_local
-from skylineframe.scale import building_height_mm
-from skylineframe.spec import FrameSpec, Mode
+from skylineframe.scale import scale_features
+from skylineframe.spec import MIN_LINE_MM, SOCKEL_MM, TINY_FOOTPRINT_MM2, FrameSpec, Mode
 
 
 def spec(**kw) -> FrameSpec:
@@ -58,27 +58,31 @@ def test_building_outside_square_is_dropped():
 
 
 def test_tiny_footprint_reaches_the_model_through_its_block():
-    # 0.25 mm² at scale 0.1 => 25 m², and the 0.8 mm feature width => 8 m. The 5x5 shed is
-    # neither, so it is no longer its own solid — but it is 1 m away from the house, so the
-    # close (radius 4 m) welds both into one block and none of its area is lost (spec §6.5).
-    feats = Features(buildings=[bld(box(0, 0, 10, 10)), bld(box(11, 0, 16, 5))])
+    # TINY_FOOTPRINT_MM2 = 0.1 mm² at scale 0.1 => 10 m². The 3x3 shed is below it, so it is not
+    # a body of its own — but it is 1 m away from the house, so the close (radius 4 m) welds both
+    # into one sockel block and none of its area is lost (spec 4a §2.1).
+    assert TINY_FOOTPRINT_MM2 == 0.1
+    feats = Features(buildings=[bld(box(0, 0, 10, 10)), bld(box(11, 0, 14, 3))])
     out = prepare(feats, spec())
     assert len(out.buildings) == 1
     assert out.buildings[0].geom.area == pytest.approx(100)
     assert len(out.blocks) == 1
-    assert out.blocks[0].geom.area > 125
+    assert out.blocks[0].geom.area > 109
     # abs: the chord simplify of the close shaves ~0.05 m² off the block corners, so the
     # coverage is 1.0 up to that tolerance and never exactly 1.0.
     assert out.footprint_coverage == pytest.approx(1.0, abs=1e-3)
 
 
-def test_sliver_footprint_is_dropped():
-    # 2 m x 300 m wall: area 600 m² passes the area filter but is 0.2 mm wide at scale 0.1 =>
-    # unprintable, and its block (the wall alone) is unprintable too, so it disappears.
+def test_sliver_footprint_is_widened_but_gets_no_block():
+    # 2 m x 300 m wall: 0.2 mm wide at scale 0.1, half a nozzle line. It is widened to one line
+    # and printed as a body of its own (spec 4a §2.2), but its block — the wall alone — still
+    # fails the sockel's printability check, so the wall carries no sockel under it.
     feats = Features(buildings=[bld(box(0, 0, 2, 300)), bld(box(20, 20, 40, 40))])
     out = prepare(feats, spec())
-    assert len(out.buildings) == 1
-    assert out.buildings[0].geom.bounds == pytest.approx((20, 20, 40, 40))
+    assert len(out.buildings) == 2
+    wall, house = sorted(out.buildings, key=lambda b: b.geom.bounds[0])
+    assert house.geom.bounds == pytest.approx((20, 20, 40, 40))
+    assert wall.geom.bounds[2] - wall.geom.bounds[0] >= MIN_LINE_MM / spec().scale
     # The block is the house plus the BLOCK_HAIR_MM the close leaves it (0.02 mm => 0.2 m at
     # this scale); abs: the close reproduces the outline only to its own chord simplify.
     assert [b.geom.bounds for b in out.blocks] == [pytest.approx((19.8, 19.8, 40.2, 40.2), abs=0.1)]
@@ -355,36 +359,104 @@ def test_three_row_houses_form_one_block():
     # (measured 317.80 with shapely 2.1.2). How much a corner loses depends on where the ring
     # the close produced happens to start, so the tolerance is generous.
     assert out.blocks[0].geom.area == pytest.approx(317.8, abs=1.5)
-    # equal areas => the 25th percentile is the lowest of the three eaves heights
-    assert out.blocks[0].height_m == pytest.approx(12.0)
-    assert len(out.buildings) == 3  # each house is printable on its own as well
+    assert len(out.buildings) == 3  # each house is a body of its own as well
 
 
-def test_block_height_is_floored_in_print_space_not_in_metres():
-    # prepare reports the plain percentile in metres; the printable minimum is applied once,
-    # by scale.building_height_mm, so z_exaggeration cannot act on it twice (spec §6.4).
-    out = prepare(Features(buildings=[bld(box(0, 0, 20, 20), 1.0)]), spec())
-    assert out.blocks[0].height_m == pytest.approx(1.0)
-    assert building_height_mm(out.blocks[0].height_m, spec()) == pytest.approx(spec().min_building_height_mm)
+def test_sockel_height_does_not_depend_on_the_member_heights():
+    # The old block stood on the area-weighted 25th percentile of its members' eaves — here 40 m,
+    # a slab at roof height with the small house buried in it. The sockel is a fixed SOCKEL_MM
+    # in print space, whatever stands on it (spec 4a §2.3).
+    feats = Features(buildings=[bld(box(0, 0, 19, 20), 40.0), bld(box(19.5, 0, 22.5, 20), 12.0)])
+    s = spec()
+    out = scale_features(prepare(feats, s), s)
+    assert len(out.blocks) == 1
+    assert out.blocks[0].height_mm == SOCKEL_MM == 0.4
 
 
-def test_weighted_percentile_uses_the_areas():
-    # Unweighted the 25th percentile would be 12; weighted, the 12 m footprint carries 20 of
-    # 400 m², so the first value whose cumulative area reaches 100 m² is 40.
-    assert weighted_percentile([40.0, 12.0], [380.0, 20.0], 0.25) == 40.0
-    assert weighted_percentile([40.0, 12.0], [100.0, 300.0], 0.25) == 12.0
-    assert weighted_percentile([7.0], [1.0], 0.25) == 7.0
+def test_sockel_is_not_lifted_to_the_building_minimum():
+    # A block of 1 m houses: building_height_mm would clamp it up to min_building_height_mm and
+    # z_exaggeration would scale it — both would put the slab back at roof height. The sockel
+    # takes neither, and every house still stands the building minimum tall on top of it.
+    s = spec(z_exaggeration=5.0)
+    out = scale_features(prepare(Features(buildings=[bld(box(0, 0, 20, 20), 1.0)]), s), s)
+    assert out.blocks[0].height_mm == pytest.approx(SOCKEL_MM)
+    assert out.buildings[0].height_mm == pytest.approx(s.min_building_height_mm)
 
 
 def test_unprintable_block_is_dropped_and_lowers_the_coverage():
-    # The 5x5 shed stands alone, so its block is the shed itself: 25 m² is exactly the area
-    # threshold, but eroding by 4 m leaves nothing, so the block goes and 25 of 125 m² of
-    # building area are missing from the model.
-    feats = Features(buildings=[bld(box(0, 0, 10, 10)), bld(box(200, 200, 205, 205))])
+    # The 3x3 shed stands alone: at 0.09 mm² it is below TINY_FOOTPRINT_MM2, so it is no body of
+    # its own, and its block is the shed itself, which eroding by 4 m empties. The block goes and
+    # 9 of 109 m² of building area are missing from the model.
+    feats = Features(buildings=[bld(box(0, 0, 10, 10)), bld(box(200, 200, 203, 203))])
     out = prepare(feats, spec())
     assert len(out.blocks) == 1
     assert len(out.buildings) == 1
-    assert out.footprint_coverage == pytest.approx(0.8)
+    assert out.footprint_coverage == pytest.approx(100 / 109, abs=1e-3)
+
+
+def test_a_small_house_below_the_old_threshold_is_a_body_of_its_own():
+    # 5x5 m => 0.5 mm wide and 0.25 mm² at scale 0.1. The old rule wanted 0.8 mm of width and
+    # buried it in a slab; now anything of at least TINY_FOOTPRINT_MM2 is a body (spec 4a §2.1).
+    # 0.5 mm survives the half-line erosion, so the footprint is not grown at all.
+    out = prepare(Features(buildings=[bld(box(200, 200, 205, 205))]), spec())
+    assert len(out.buildings) == 1
+    assert out.buildings[0].geom.bounds == (200, 200, 205, 205)
+    assert out.buildings[0].geom.area == 25
+
+
+# --- widening (spec 4a §2.2) --------------------------------------------
+
+
+def test_widen_leaves_a_one_millimetre_house_bit_identical():
+    house = box(0, 0, 10, 10)  # 1 mm at scale 0.1
+    assert widen_to_line(house, MIN_LINE_MM / 2 / spec().scale) is house
+
+
+def test_widen_grows_a_strip_to_one_nozzle_line_and_no_further():
+    # 3 m => 0.3 mm. It needs r > 0.05 mm per side to survive the 0.2 mm erosion; the smallest
+    # such r gives a strip of one line, 0.4 mm, and never more than 0.2 mm per side.
+    half_m = MIN_LINE_MM / 2 / spec().scale
+    strip = box(0, 0, 3, 50)
+    grown = widen_to_line(strip, half_m)
+    width = grown.bounds[2] - grown.bounds[0]
+    assert width >= MIN_LINE_MM / spec().scale
+    assert width == pytest.approx(4.0, abs=0.05)
+    assert not grown.buffer(-half_m).is_empty
+    # Mitre joins: still a rectangle, and it stays where it was.
+    assert len(grown.exterior.coords) == 5
+    assert grown.centroid.equals_exact(strip.centroid, 1e-9)
+
+
+def test_widen_never_grows_by_more_than_half_a_line():
+    half_m = MIN_LINE_MM / 2 / spec().scale
+    needle = box(0, 0, 0.01, 50)
+    grown = widen_to_line(needle, half_m)
+    assert grown.bounds[2] - grown.bounds[0] <= 0.01 + 2 * half_m + 1e-9
+    assert not grown.buffer(-half_m).is_empty
+
+
+def test_a_narrow_footprint_is_widened_in_prepare():
+    out = prepare(Features(buildings=[bld(box(0, 0, 3, 50))]), spec())
+    assert len(out.buildings) == 1
+    b = out.buildings[0]
+    assert b.geom.bounds[2] - b.geom.bounds[0] == pytest.approx(4.0, abs=0.05)
+
+
+def test_the_roof_is_fitted_to_the_widened_footprint():
+    # Widening happens before resolve_roof, so the roof rectangle is the rectangle of the
+    # printed footprint and not of the narrower original (spec 4a §2.2).
+    out = prepare(Features(buildings=[roofed(box(0, 0, 3, 20))]), spec())
+    b = out.buildings[0]
+    assert b.roof is not None
+    assert Polygon(b.rect).area == pytest.approx(b.geom.area, rel=1e-6)
+    assert b.geom.area > 3 * 20
+
+
+def test_a_widened_footprint_stays_on_the_plate():
+    # A strip along the edge of the square would otherwise grow past the plate.
+    out = prepare(Features(buildings=[bld(box(497, -20, 500, 20))]), spec())
+    assert len(out.buildings) == 1
+    assert square_local(spec()).contains(out.buildings[0].geom)
 
 
 def test_a_street_keeps_the_two_rows_in_separate_blocks():
@@ -712,7 +784,7 @@ def test_coverage_counts_displaced_area_in_the_denominator():
     # Through prepare this is currently invisible — every displaced piece lies under an LoD2
     # footprint that is in `footprints` anyway — so only a direct probe can hold the guarantee.
     kept = Building(box(0, 0, 10, 10), height_m=10.0, osm_id="way/1")
-    blocks = [Block(box(0, 0, 10, 10), height_m=10.0)]
+    blocks = [Block(box(0, 0, 10, 10))]
     assert _coverage([kept], blocks, [kept], []) == pytest.approx(1.0)
     assert _coverage([kept], blocks, [kept], [box(20, 0, 30, 10)]) == pytest.approx(0.5)
     # An empty model over displaced area alone is 0.0, not a division by zero.
@@ -732,9 +804,9 @@ def test_the_uncovered_remainder_stays_in_the_model():
 
 
 def test_a_lod2_building_that_only_reaches_a_block_is_never_solidified(monkeypatch):
-    # 5x5 m: the area passes, but eroding by 4 m leaves nothing, so it is not printable on its
-    # own. It stands 1 m from a 20x20 house, so the close (radius 4 m) welds both into one block
-    # and none of its area is lost. Solidifying it would be two orders of magnitude of work for
+    # 3x3 m => 0.09 mm², below TINY_FOOTPRINT_MM2, so it is no body of its own (spec 4a §2.1).
+    # It stands 1 m from a 20x20 house, so the close (radius 4 m) welds both into one block and
+    # none of its area is lost. Solidifying it would be two orders of magnitude of work for
     # geometry that is thrown away (spec §5).
     calls = []
     import skylineframe.prepare as prepare_module
@@ -747,8 +819,8 @@ def test_a_lod2_building_that_only_reaches_a_block_is_never_solidified(monkeypat
 
     monkeypatch.setattr(prepare_module, "to_solid", spy)
     feats = Features(
-        buildings=[Building(box(6, 0, 26, 20), height_m=10.0, osm_id="way/9", kind="yes")],
-        lod2=[lod2_box(0, 0, 5, 5, 100.0, 110.0)],
+        buildings=[Building(box(4, 0, 24, 20), height_m=10.0, osm_id="way/9", kind="yes")],
+        lod2=[lod2_box(0, 0, 3, 3, 100.0, 110.0)],
     )
     out = prepare(feats, spec())
     assert calls == []
@@ -757,8 +829,28 @@ def test_a_lod2_building_that_only_reaches_a_block_is_never_solidified(monkeypat
     # It still reaches the model through its block, exactly like a small OSM footprint: one block
     # around both footprints, and no area lost.
     assert len(out.blocks) == 1
-    assert out.blocks[0].geom.area > 425  # 400 m² house + 25 m² shed + the 1 m the close filled
-    assert out.footprint_coverage == pytest.approx(1.0)
+    assert out.blocks[0].geom.area > 409  # 400 m² house + 9 m² shed + the 1 m the close filled
+    # abs: the chord simplify of the close shaves a little off the corners of the small shed.
+    assert out.footprint_coverage == pytest.approx(1.0, abs=1e-3)
+
+
+def test_a_widened_lod2_footprint_is_printed_as_a_prism(monkeypatch):
+    # 3 m x 20 m => 0.3 mm wide: the body cut from the narrow LoD2 outline would not fill the
+    # widened footprint, so it is printed as a prism at its LoD2 height, like a rejected model —
+    # but it is not a rejection and is not counted as one (spec 4a §2.2).
+    calls = []
+    import skylineframe.prepare as prepare_module
+
+    monkeypatch.setattr(prepare_module, "to_solid", lambda surfaces: calls.append(surfaces))
+    out = prepare(Features(lod2=[lod2_box(0, 0, 3, 20, 100.0, 112.0)]), spec())
+    assert calls == []
+    assert len(out.buildings) == 1
+    b = out.buildings[0]
+    assert b.lod2 is True and b.surfaces == () and b.solid_m is None
+    assert b.height_m == pytest.approx(12.0, abs=0.1)
+    assert b.geom.bounds[2] - b.geom.bounds[0] == pytest.approx(4.0, abs=0.05)
+    assert out.lod2_rejected == 0
+    assert out.lod2_footprints == 1
 
 
 def test_only_the_largest_clipped_piece_keeps_the_surfaces():

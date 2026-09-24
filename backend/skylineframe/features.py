@@ -66,10 +66,12 @@ class Building:
 
 @dataclass
 class Block:
-    """A welded group of footprints, extruded as one solid (spec §6.4)."""
+    """A welded group of footprints, extruded as one sockel under its houses (spec §6.4).
+
+    No height: a sockel is SOCKEL_MM tall in print space whatever stands on it (spec 4a §2.3).
+    """
 
     geom: BaseGeometry  # Polygon
-    height_m: float
 
 
 @dataclass

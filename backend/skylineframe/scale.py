@@ -11,7 +11,7 @@ from .features import Building
 from .lod2.solidify import SOLID_SIMPLIFY_MM, simplified
 from .prepare import Prepared
 from .roofs import MIN_ROOF_MM
-from .spec import FrameSpec
+from .spec import SOCKEL_MM, FrameSpec
 
 # Share of a part's footprint that has to rest on lower bodies of the same outline before the
 # part may start in the air (spec §8). Two towers of one complex often share a single corner
@@ -195,7 +195,10 @@ def scale_features(prepared: Prepared, spec: FrameSpec) -> Scaled:
     groups = _by_outline(prepared.buildings)
     return Scaled(
         buildings=[_building_prism(b, groups, spec) for b in prepared.buildings],
-        blocks=[Prism(_scale_geom(bl.geom, s), building_height_mm(bl.height_m, spec)) for bl in prepared.blocks],
+        # SOCKEL_MM as it is, not through building_height_mm: its 0.8 mm minimum and
+        # z_exaggeration would lift the sockel back up to the roofs of small houses — exactly the
+        # slab it replaces (spec 4a §2.3).
+        blocks=[Prism(_scale_geom(bl.geom, s), SOCKEL_MM) for bl in prepared.blocks],
         roads=[_scale_geom(p, s) for p in prepared.roads],
         water=[_scale_geom(p, s) for p in prepared.water],
     )

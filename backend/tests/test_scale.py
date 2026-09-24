@@ -7,7 +7,7 @@ from skylineframe.lod2.solidify import to_solid
 from skylineframe.prepare import Prepared, prepare
 from skylineframe.project import project_features
 from skylineframe.scale import building_height_mm, raw_height_mm, scale_features
-from skylineframe.spec import FrameSpec
+from skylineframe.spec import SOCKEL_MM, FrameSpec
 
 
 def spec(**kw) -> FrameSpec:
@@ -175,11 +175,14 @@ def test_part_whose_base_equals_its_own_top_falls_back_to_the_plate():
     assert out.buildings[1].height_mm == pytest.approx(6.0)
 
 
-def test_blocks_are_scaled_like_buildings():
-    prepared = Prepared(buildings=[], blocks=[Block(box(-500, -500, 500, 500), 10.0)])
-    out = scale_features(prepared, spec())
+def test_blocks_are_scaled_like_buildings_but_stand_at_sockel_height():
+    # The outline scales like any footprint; the height is the fixed SOCKEL_MM in print space and
+    # never goes through building_height_mm, whose 0.8 mm minimum would lift the sockel to roof
+    # height of a small house (spec 4a §2.3).
+    prepared = Prepared(buildings=[], blocks=[Block(box(-500, -500, 500, 500))])
+    out = scale_features(prepared, spec(min_building_height_mm=2.0))
     assert out.blocks[0].geom.bounds == pytest.approx((-50, -50, 50, 50))
-    assert out.blocks[0].height_mm == pytest.approx(1.5)
+    assert out.blocks[0].height_mm == SOCKEL_MM == 0.4
     assert out.blocks[0].z0_mm == 0.0 and out.blocks[0].roof is None
 
 

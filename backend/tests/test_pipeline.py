@@ -188,12 +188,11 @@ def test_lod2_geometry_that_only_feeds_a_block_still_names_the_source(
     tmp_path, frankfurt_spec, frankfurt_data
 ):
     # The source is named for LoD2 geometry that reaches the model at all, not only for the
-    # buildings that get their own body (spec §7). A sliver about 2 m wide fails the printability
-    # check — eroding by half the minimum feature empties it — so it carries no body and goes into
-    # a block instead. Its geometry is still in the print, so naming Hessen is truthful, and
-    # leaving it unnamed would be the false negative: on the real 1500 m square 4 737 LoD2
-    # footprints reach the model against only 708 that are even tried for a body.
-    sliver = wgs84_box(50.1090, 8.6822, 0.000028, 100.0, 118.0, "lod2/hessen/SLIVER", size_deg_lat=0.00027)
+    # buildings that get their own body (spec §7). A kiosk of about 1 x 1.2 m is 0.075 mm² at this
+    # scale, below TINY_FOOTPRINT_MM2, so it carries no body and only feeds its block
+    # (spec 4a §2.1). Its geometry is still in the print, so naming Hessen is truthful, and
+    # leaving it unnamed would be the false negative.
+    sliver = wgs84_box(50.1090, 8.6822, 0.000014, 100.0, 118.0, "lod2/hessen/SLIVER", size_deg_lat=0.0000108)
     result = run(
         frankfurt_spec,
         tmp_path / "out",
