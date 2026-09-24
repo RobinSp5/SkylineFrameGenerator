@@ -1,8 +1,11 @@
-"""Height estimate for buildings without height tags (spec §5).
+"""Estimates for untagged buildings: height (spec §5) and a default roof (phase 4a spec §2.4).
 
-Deliberately free of package imports: prepare needs the estimate, and pulling it out of fetch
-would drag httpx and osm2geojson into the geometry stage.
+Deliberately free of fetch: prepare needs these estimates, and pulling them out of fetch would
+drag httpx and osm2geojson into the geometry stage. The only package import is the RoofSpec
+data class from features, which does not touch the network stack.
 """
+
+from .features import RoofSpec
 
 # Height by building type, then by footprint area. Buildings without any height tag are ~70 %
 # of the data, and a flat 8 m for all of them is what flattened the MVP models.
@@ -31,3 +34,22 @@ def estimate_height_m(kind: str, area_m2: float) -> float:
         if area_m2 < limit:
             return height
     return AREA_HEIGHT_FALLBACK_M
+
+
+# Most OSM houses carry no roof:shape, so without a default the residential areas print flat.
+# Like the height table this is an estimate: a gable for typical houses, and for "residential"
+# only below a footprint where it is still a house rather than a block.
+DEFAULT_GABLE_KINDS: frozenset[str] = frozenset({"house", "detached", "semidetached_house", "bungalow"})
+DEFAULT_GABLE_RESIDENTIAL_MAX_M2 = 200.0
+
+
+def default_roof(kind: str, area_m2: float) -> RoofSpec | None:
+    """Roof for an OSM building without roof:shape, or None for flat (phase 4a spec §2.4).
+
+    height_m stays 0.0 and direction_deg None: prepare derives both from the footprint.
+    """
+    if kind in DEFAULT_GABLE_KINDS:
+        return RoofSpec(shape="gabled")
+    if kind == "residential" and area_m2 < DEFAULT_GABLE_RESIDENTIAL_MAX_M2:
+        return RoofSpec(shape="gabled")
+    return None
