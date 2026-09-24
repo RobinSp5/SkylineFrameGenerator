@@ -1,6 +1,7 @@
 import xml.etree.ElementTree as ET
 import zipfile
 
+import manifold3d as m3d
 import numpy as np
 import pytest
 import trimesh
@@ -262,3 +263,15 @@ def test_sources_txt_is_written_only_after_verification(tmp_path, meshset, monke
     with pytest.raises(ExportError):
         export_all(meshset, spec(), out_dir, sources="x\n")
     assert list(out_dir.iterdir()) == []
+
+
+def test_printable_drops_shells_without_material():
+    # Boolean artefacts: closed shells of practically zero volume a slicer counts as extra parts.
+    from skylineframe.mesh import MIN_SHELL_VOLUME_MM3, printable
+
+    body = m3d.Manifold.cube((10.0, 10.0, 5.0))
+    sliver = m3d.Manifold.cube((0.1, 0.1, 1e-4)).translate((20.0, 0.0, 0.0))
+    out = printable(m3d.Manifold.compose([body, sliver]))
+    assert len(out.decompose()) == 1
+    assert out.volume() == pytest.approx(500.0)
+    assert sliver.volume() < MIN_SHELL_VOLUME_MM3

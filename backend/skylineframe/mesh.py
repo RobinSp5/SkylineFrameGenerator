@@ -479,6 +479,12 @@ def _separated(verts: np.ndarray, tris: np.ndarray, group: np.ndarray, size: np.
     return out
 
 
+# A separate shell below this is an artefact, not a feature. The smallest real one, a building
+# widened to one 0.4 mm line and 0.8 mm tall, holds about 0.13 mm³; the slivers the booleans leave
+# measure up to 0.002 mm³ (a 0.12 mm needle in Frankfurt), so the cut sits well between the two.
+MIN_SHELL_VOLUME_MM3 = 0.05
+
+
 def printable(man: m3d.Manifold) -> m3d.Manifold:
     """The solid as a slicer will see it: 2-manifold once its vertices are welded by position.
 
@@ -497,7 +503,9 @@ def printable(man: m3d.Manifold) -> m3d.Manifold:
     verts = np.round(verts / PRINT_GRID_MM) * PRINT_GRID_MM
     result = man
     for _ in range(MAX_SEPARATION_PASSES):
-        result = _from_arrays(verts, tris)
+        # Slivers inside the loop: the snap and every rebuild can leave new ones, and taking them
+        # out can put two remaining shells back onto one position, which the check below catches.
+        result = _without_slivers(_from_arrays(verts, tris))
         verts, tris = _arrays(result)
         _, group, size = np.unique(verts.astype(np.float32), axis=0, return_inverse=True, return_counts=True)
         group = group.ravel()
@@ -505,6 +513,22 @@ def printable(man: m3d.Manifold) -> m3d.Manifold:
             break
         verts = _separated(verts, tris, group, size)
     return _check(result, "printable")
+
+
+def _without_slivers(man: m3d.Manifold) -> m3d.Manifold:
+    """Drop the shells that hold no printable material.
+
+    The booleans leave a few dozen closed shells of practically zero volume behind, flat pockets
+    where two coplanar faces nearly met (Eppstein with terrain: 51, none above 0.0007 mm³). No
+    nozzle can lay them down, but a slicer counts each one as a separate part of the model.
+    """
+    shells = man.decompose()
+    if len(shells) <= 1:
+        return man
+    kept = [shell for shell in shells if shell.volume() >= MIN_SHELL_VOLUME_MM3]
+    if not kept or len(kept) == len(shells):
+        return man
+    return m3d.Manifold.compose(kept)
 
 
 def to_trimesh(man: m3d.Manifold) -> trimesh.Trimesh:
