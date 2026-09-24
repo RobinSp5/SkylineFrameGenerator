@@ -11,6 +11,7 @@ from shapely.geometry import Polygon, box
 from skylineframe.export import export_all
 from skylineframe.mesh import (
     BUILDING_SINK_MM,
+    _footprint_bases,
     build_meshes,
     footprint_base,
     plate,
@@ -194,6 +195,20 @@ def test_a_part_in_the_air_stays_on_the_body_below_it():
     ms = build_meshes(scaled, spec(), terrain=slope())
     assert_one_watertight_solid(ms.single)
     assert ms.buildings.bounding_box()[5] == pytest.approx(SLOPE * 50 + 10.0, abs=1e-5)
+
+
+
+def test_a_part_on_a_raised_part_inherits_the_lowered_base():
+    # Review finding: B stands on A and is lowered to A's base; C stands only on B, and used to
+    # take B's *own* base, leaving it 0.4 mm above B's roof on this slope (spec 4b §5.2).
+    a = Prism(box(0, -5, 10, 5), 6.0)
+    b = Prism(box(8, -5, 14, 5), 10.0, z0_mm=3.0)
+    c = Prism(box(12, -5, 14, 5), 12.0, z0_mm=8.0)
+    bases = _footprint_bases([a, b, c], slope())
+    assert bases[1] == pytest.approx(bases[0])
+    assert bases[2] == pytest.approx(bases[0])
+    ms = build_meshes(Scaled(buildings=[a, b, c]), spec(), terrain=slope())
+    assert_one_watertight_solid(ms.single)
 
 
 # --- sockel, roads and water -----------------------------------------------------------------

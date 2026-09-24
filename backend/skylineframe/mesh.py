@@ -299,13 +299,29 @@ def _footprint_bases(prisms: list[Prism], hf: Heightfield) -> list[float]:
     if not any(p.z0_mm > 0 for p in prisms):
         return own
     tree = shapely.STRtree([p.geom for p in prisms])
+    neighbours = {
+        k: [
+            int(o)
+            for o in tree.query(p.geom, predicate="intersects")
+            if o != k and prisms[o].geom.intersection(p.geom).area > 0
+        ]
+        for k, p in enumerate(prisms)
+        if p.z0_mm > 0 and p.geom.area > 0
+    }
+    # A part can stand on another raised part, which was itself lowered onto the body below it.
+    # The lowering has to travel up the stack, so the minimum runs over the already lowered bases
+    # until nothing changes. Bases only ever decrease, so this ends; a stack is never deeper than
+    # the number of parts.
     bases = list(own)
-    for k, p in enumerate(prisms):
-        if p.z0_mm <= 0 or p.geom.area <= 0:
-            continue
-        for other in tree.query(p.geom, predicate="intersects"):
-            if other != k and prisms[other].geom.intersection(p.geom).area > 0:
-                bases[k] = min(bases[k], own[other])
+    for _ in range(len(prisms)):
+        changed = False
+        for k, others in neighbours.items():
+            lowest = min((bases[o] for o in others), default=bases[k])
+            if lowest < bases[k]:
+                bases[k] = lowest
+                changed = True
+        if not changed:
+            break
     return bases
 
 

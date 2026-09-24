@@ -23,7 +23,7 @@ from pathlib import Path
 import httpx
 import numpy as np
 import tifffile
-from scipy.ndimage import map_coordinates
+from scipy.ndimage import distance_transform_edt, map_coordinates
 
 from ..fetch import USER_AGENT
 from ..project import local_transformer, query_bbox
@@ -184,7 +184,7 @@ def _sample_tile(path: Path, lons: np.ndarray, lats: np.ndarray) -> np.ndarray:
     except (OSError, ValueError, KeyError, IndexError, RuntimeError) as exc:
         # tifffile.TiffFileError is a ValueError, the imagecodecs errors are RuntimeErrors.
         raise TileError(str(exc) or type(exc).__name__) from exc
-    window[~np.isfinite(window) | (window < NODATA_BELOW_M)] = 0.0
+    _fill_voids(window)
     # Separable: along the rows first, then along the columns of that result.
     ri, rt = _weights(rows - r0, r1 - r0)
     ci, ct = _weights(cols - c0, c1 - c0)
@@ -192,6 +192,23 @@ def _sample_tile(path: Path, lons: np.ndarray, lats: np.ndarray) -> np.ndarray:
     ci1 = np.minimum(ci + 1, c1 - c0 - 1)
     along = window[ri, :] * (1 - rt)[:, None] + window[ri1, :] * rt[:, None]
     return along[:, ci] * (1 - ct)[None, :] + along[:, ci1] * ct[None, :]
+
+
+def _fill_voids(window: np.ndarray) -> None:
+    """Give every void pixel the height of its nearest valid neighbour. In place.
+
+    A void set to 0 m would be a 300 m pit in a town at 300 m, and the ground filter removes
+    bumps, not pits, so the smoothing would only spread it. A window with no valid pixel at all
+    stays at 0 m, like open sea.
+    """
+    void = ~np.isfinite(window) | (window < NODATA_BELOW_M)
+    if not void.any():
+        return
+    if void.all():
+        window[:] = 0.0
+        return
+    _dist, (ri, ci) = distance_transform_edt(void, return_indices=True)
+    window[void] = window[ri[void], ci[void]]
 
 
 def _check(path: Path) -> None:
@@ -296,9 +313,11 @@ def _mosaic(
     # Every tile local first: the mosaic pixel size comes from the tiles themselves.
     south, west, north, east = query_bbox(spec, margin_m=MARGIN_M)
     tiles = ensure((south, west, north, east))
+    if all(tile in ocean for tile in tiles):
+        # Not a relief of 0 mm: every tile missing is as likely a moved bucket as open sea, and
+        # naming Copernicus under a flat plate would credit data that never arrived.
+        raise TileError("no Copernicus DEM tile covers the square")
     dlat, dlon = _pixel_size([path_of(tile) for tile in tiles if tile not in ocean])
-    if not math.isfinite(dlat):  # nothing but ocean: any grid will do
-        dlat = dlon = 1 / 3600
     # Plus two ground-filter windows and a pixel, so the filter's flat-padded border stays out
     # of the square even on a coarse raster. For GLO-30 that is 8 pixels, about 240 m.
     row_m, col_m = _pixel_m(dlat, dlon, spec.center_lat)
@@ -345,7 +364,8 @@ def terrain_heightfield(spec: FrameSpec, cache_dir: Path, client: httpx.Client |
     client = client or httpx.Client(timeout=TIMEOUT_S, follow_redirects=True)
     try:
         surface, north, west, dlat, dlon = _mosaic(spec, cache_dir, client)
-    except TileError as exc:
+    # OSError: a cache directory that cannot be created or written is no reason to fail the run.
+    except (TileError, OSError) as exc:
         log.warning("Terrain: Copernicus DEM not available (%s); building a flat plate", exc)
         return None
     finally:

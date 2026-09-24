@@ -12,6 +12,7 @@ from skylineframe.spec import FrameSpec
 from skylineframe.terrain.dem import (
     TERRAIN_CELL_MM,
     TILE_URL,
+    _fill_voids,
     terrain_heightfield,
     tile_for,
     tile_name,
@@ -264,10 +265,10 @@ def test_a_missing_tile_is_sea_level(server, cache):
     assert north.min() == pytest.approx(40.0 * ON_THE_BORDER.scale, rel=0.01)
 
 
-def test_only_ocean_is_a_flat_field(server, cache):
-    field = terrain_heightfield(EPPSTEIN, cache, client=server.client())
-    assert field is not None
-    assert np.all(field.z_mm == 0.0)
+def test_only_ocean_gives_none(server, cache):
+    # Every tile missing is as likely a moved bucket as open sea: build flat and say so, rather
+    # than credit Copernicus for a relief of 0 mm (review finding, spec 4b §4.3).
+    assert terrain_heightfield(EPPSTEIN, cache, client=server.client()) is None
     # A 404 leaves nothing in the cache, but within one run the bucket is asked only once.
     urls = [str(r.url) for r in server.calls]
     assert urls == [tile_url(50, 8)]
@@ -381,3 +382,24 @@ def test_the_spline_never_overshoots_a_cliff(server, cache):
     assert field is not None
     assert field.z_mm.min() == 0.0
     assert field.z_mm.max() <= 40.0 * ON_THE_BORDER.scale + 1e-9
+
+
+def test_an_unwritable_cache_gives_none(server, tmp_path):
+    server.add(50, 8, lambda lon, lat: np.full(lon.shape, 40.0))
+    blocked = tmp_path / "not-a-dir"
+    blocked.write_text("a file where the cache directory should be")
+    assert terrain_heightfield(EPPSTEIN, blocked, client=server.client()) is None
+
+
+def test_voids_take_the_height_of_their_neighbours():
+    window = np.full((5, 5), 300.0)
+    window[2, 2] = -32767.0
+    window[0, 4] = np.nan
+    _fill_voids(window)
+    assert np.all(window == 300.0)
+
+
+def test_a_window_of_only_voids_is_sea_level():
+    window = np.full((3, 3), -32767.0)
+    _fill_voids(window)
+    assert np.all(window == 0.0)
