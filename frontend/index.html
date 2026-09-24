@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="de">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
@@ -11,51 +11,51 @@
       <div id="map"></div>
       <aside id="sidebar">
         <h1>Skyline Frame</h1>
-        <label>Ort suchen
-          <input id="search" type="search" placeholder="z. B. Frankfurt am Main" autocomplete="off" />
+        <label>Search location
+          <input id="search" type="search" placeholder="e.g. Frankfurt am Main" autocomplete="off" />
         </label>
         <div id="search-results"></div>
 
-        <label>Maßstab
+        <label>Scale
           <select id="preset">
-            <option value="skyline">Skyline — 1500 m auf 100 mm (1:15.000)</option>
-            <option value="detail">Detail — 800 m auf 100 mm (1:8.000)</option>
-            <option value="gross">Groß — 1500 m auf 200 mm (1:7.500)</option>
-            <option value="custom">Eigene</option>
+            <option value="skyline">Skyline — 1500 m on 100 mm (1:15,000)</option>
+            <option value="detail">Detail — 800 m on 100 mm (1:8,000)</option>
+            <option value="gross">Large — 1500 m on 200 mm (1:7,500)</option>
+            <option value="custom">Custom</option>
           </select>
         </label>
-        <label>Ausschnitt <output id="side-out">1500 m</output>
+        <label>Extent <output id="side-out">1500 m</output>
           <input id="side" type="range" min="200" max="5000" step="50" value="1500" />
         </label>
-        <label>Drehung <output id="rotation-out">0°</output>
+        <label>Rotation <output id="rotation-out">0°</output>
           <input id="rotation" type="range" min="-180" max="180" step="1" value="0" />
         </label>
-        <label>Platte (mm)
+        <label>Plate (mm)
           <input id="plate" type="number" min="40" max="250" step="5" value="100" />
         </label>
-        <label>Plattendicke (mm)
+        <label>Plate thickness (mm)
           <input id="thickness" type="number" min="1" max="10" step="0.5" value="3" />
         </label>
-        <label>Höhenfaktor
+        <label>Height factor
           <input id="zfactor" type="number" min="0.5" max="10" step="0.1" value="1.5" />
         </label>
-        <label>Modus
+        <label>Mode
           <select id="mode">
-            <option value="simple">Simple (Gebäude + Platte)</option>
-            <option value="full">Full (+ Straßen + Wasser)</option>
+            <option value="simple">Simple (buildings + plate)</option>
+            <option value="full">Full (+ streets + water)</option>
           </select>
         </label>
         <label class="checkbox">
           <input id="lod2" type="checkbox" checked />
-          Amtliche LoD2-Gebäude nutzen, wo verfügbar
+          Use official LoD2 buildings where available
         </label>
 
-        <button id="generate" type="button">Generieren</button>
+        <button id="generate" type="button">Generate</button>
         <p id="status" role="status"></p>
         <div id="downloads" hidden>
-          <a id="dl-stl" download>STL (einfarbig)</a>
-          <a id="dl-3mf" download>3MF (mehrfarbig)</a>
-          <a id="dl-sources" download>Quellen und Lizenz (SOURCES.txt)</a>
+          <a id="dl-stl" download>STL (single colour)</a>
+          <a id="dl-3mf" download>3MF (multi-colour)</a>
+          <a id="dl-sources" download>Sources and licence (SOURCES.txt)</a>
         </div>
       </aside>
       <div id="viewer"></div>

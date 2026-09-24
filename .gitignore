@@ -13,3 +13,5 @@ frontend/playwright-report/
 out/
 # Half-written fixture recordings from record_frankfurt.py
 backend/tests/fixtures/*.tmp
+# /brag launch-video runs (renders, composition, share copy)
+brag-output*/

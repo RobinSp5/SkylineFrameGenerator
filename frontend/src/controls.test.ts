@@ -10,8 +10,8 @@ const SIDEBAR = `
   <select id="preset">
     <option value="skyline">Skyline</option>
     <option value="detail">Detail</option>
-    <option value="gross">Groß</option>
-    <option value="custom">Eigene</option>
+    <option value="gross">Large</option>
+    <option value="custom">Custom</option>
   </select>
   <output id="side-out"></output>
   <input id="side" type="range" min="200" max="5000" step="50" value="1500" />
@@ -90,7 +90,7 @@ describe("setupControls", () => {
     expect(controls.read().plate_size_mm).toBe(100);
   });
 
-  it("falls back to Eigene when the side slider is moved by hand", () => {
+  it("falls back to Custom when the side slider is moved by hand", () => {
     const controls = setupControls(root);
     controls.onSquareInput((p) => updates.push(p as Record<string, number>));
 
@@ -102,7 +102,7 @@ describe("setupControls", () => {
     expect(updates).toEqual([{ sideM: 1250 }]);
   });
 
-  it("falls back to Eigene when the plate size is edited by hand", () => {
+  it("falls back to Custom when the plate size is edited by hand", () => {
     setupControls(root);
     const plate = field<HTMLInputElement>("plate");
     plate.value = "140";
@@ -110,7 +110,7 @@ describe("setupControls", () => {
     expect(field<HTMLSelectElement>("preset").value).toBe("custom");
   });
 
-  it("keeps the fields untouched when Eigene is selected", () => {
+  it("keeps the fields untouched when Custom is selected", () => {
     const controls = setupControls(root);
     controls.onSquareInput((p) => updates.push(p as Record<string, number>));
     const preset = field<HTMLSelectElement>("preset");
@@ -132,24 +132,24 @@ describe("setupControls", () => {
 describe("summarize", () => {
   it("names the LoD2 source when one was used", () => {
     expect(summarize({ buildings: 851, blocks: 164, roofs: 300, lod2_buildings: 612, lod2_source: "hessen" })).toBe(
-      "Fertig: 851 Gebäude, 164 Blöcke, 300 Dächer, 612 davon aus LoD2 Hessen",
+      "Done: 851 buildings, 164 blocks, 300 roofs, 612 of which from LoD2 Hessen",
     );
   });
 
   it("stays on the OSM wording without a source", () => {
     expect(summarize({ buildings: 42, blocks: 3, roofs: 5, lod2_source: "" })).toBe(
-      "Fertig: 42 Gebäude, 3 Blöcke, 5 Dächer",
+      "Done: 42 buildings, 3 blocks, 5 roofs",
     );
   });
 
   it("says nothing about LoD2 when the source delivered no individual building", () => {
     expect(summarize({ buildings: 42, blocks: 3, roofs: 5, lod2_source: "hessen", lod2_buildings: 0 })).toBe(
-      "Fertig: 42 Gebäude, 3 Blöcke, 5 Dächer",
+      "Done: 42 buildings, 3 blocks, 5 roofs",
     );
   });
 
   it("survives an empty stats object", () => {
-    expect(summarize({})).toBe("Fertig: 0 Gebäude, 0 Blöcke, 0 Dächer");
+    expect(summarize({})).toBe("Done: 0 buildings, 0 blocks, 0 roofs");
   });
 });
 

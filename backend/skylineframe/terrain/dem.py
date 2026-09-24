@@ -358,8 +358,6 @@ def terrain_heightfield(spec: FrameSpec, cache_dir: Path, client: httpx.Client |
     rows = (north - lat) / dlat
     cols = (lon - west) / dlon
     h = map_coordinates(ground, [rows, cols], order=1, mode="nearest")
-    # FrameSpec.terrain_exaggeration lands with the geometry half of phase 4b; 1.0 until then.
-    exaggeration = getattr(spec, "terrain_exaggeration", 1.0)
-    z = (h - h.min()) * spec.scale * exaggeration
+    z = (h - h.min()) * spec.scale * spec.terrain_exaggeration
     half = spec.plate_size_mm / 2
     return Heightfield(z_mm=z, cell_mm=cell, origin_mm=(-half, -half))

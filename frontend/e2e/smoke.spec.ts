@@ -38,7 +38,7 @@ test("page loads, square is drawn, generation flow shows downloads", async ({ pa
   await page.selectOption("#mode", "full");
   await page.click("#generate");
 
-  await expect(page.locator("#status")).toContainText("42 Gebäude, 3 Blöcke, 5 Dächer, 12 davon aus LoD2 Hessen", {
+  await expect(page.locator("#status")).toContainText("42 buildings, 3 blocks, 5 roofs, 12 of which from LoD2 Hessen", {
     timeout: 10_000,
   });
   await expect(page.locator("#downloads")).toBeVisible();

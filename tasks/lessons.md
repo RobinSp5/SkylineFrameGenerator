@@ -11,3 +11,8 @@ Patterns learned from corrections in this project. Review at session start.
 - **What happened:** One research subagent was given a broad worldwide licence survey; it spawned ~20 of its own subagents, and all but one died on the account session limit, losing most of the work.
 - **Rule:** When dispatching a research agent, state explicitly "do not dispatch subagents". Split broad research into a few narrow, sequential dispatches instead, or do the decisive checks yourself with curl/WebFetch — targeted primary-source fetches proved faster and more reliable than the fan-out.
 - **Check:** Before dispatching, ask "could this agent reasonably fan out?" If yes, forbid it in the prompt.
+
+## 2026-09-23 — Launch video language
+- **Correction:** Robin: "das video sollte nur englisch sein". The /brag video kept the German UI labels verbatim ("Ort suchen", "Generieren") next to English overlay copy.
+- **Rule:** Public-facing marketing output (videos, share copy, launch posts) is English only. When a recreated UI is German, translate its labels in the recreation; never quote the German UI verbatim.
+- **Check:** Before rendering, grep the composition for umlauts and the known German UI strings.

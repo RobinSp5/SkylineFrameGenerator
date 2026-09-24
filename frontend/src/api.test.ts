@@ -76,10 +76,10 @@ describe("waitForJob resilience", () => {
     }) as typeof fetch;
 
     const controller = new AbortController();
-    const reason = new Error("Zeitüberschreitung");
+    const reason = new Error("Timed out");
     // Abort while the poll loop is between requests: the sleep must reject instead of waiting a minute.
     const promise = waitForJob("abc", () => controller.abort(reason), 60_000, { signal: controller.signal });
-    await expect(promise).rejects.toThrow("Zeitüberschreitung");
+    await expect(promise).rejects.toThrow("Timed out");
     expect(seen[0]?.signal).toBe(controller.signal);
   });
 });

@@ -67,7 +67,7 @@ export function setupControls(root: HTMLElement): Controls {
   });
   preset.addEventListener("change", () => {
     const chosen = PRESETS[preset.value as PresetName] as Preset | undefined;
-    if (!chosen) return; // "Eigene" keeps whatever the fields say
+    if (!chosen) return; // "Custom" keeps whatever the fields say
     side.value = String(chosen.sideM);
     plate.value = String(chosen.plateMm);
     syncOutputs();
@@ -118,15 +118,15 @@ export function setupControls(root: HTMLElement): Controls {
   };
 }
 
-/** The status line of a finished run (spec §8), e.g. "Fertig: 851 Gebäude, 164 Blöcke, 300 Dächer,
- * 612 davon aus LoD2 Hessen". Exported so it can be tested without a DOM. */
+/** The status line of a finished run (spec §8), e.g. "Done: 851 buildings, 164 blocks, 300 roofs,
+ * 612 of which from LoD2 Hessen". Exported so it can be tested without a DOM. */
 export function summarize(stats: Record<string, number | string>): string {
   const count = (key: string) => Number(stats[key] ?? 0);
-  let text = `Fertig: ${count("buildings")} Gebäude, ${count("blocks")} Blöcke, ${count("roofs")} Dächer`;
+  let text = `Done: ${count("buildings")} buildings, ${count("blocks")} blocks, ${count("roofs")} roofs`;
   const source = typeof stats.lod2_source === "string" ? stats.lod2_source : "";
   const fromLod2 = count("lod2_buildings");
   if (source && fromLod2 > 0) {
-    text += `, ${fromLod2} davon aus LoD2 ${source.charAt(0).toUpperCase()}${source.slice(1)}`;
+    text += `, ${fromLod2} of which from LoD2 ${source.charAt(0).toUpperCase()}${source.slice(1)}`;
   }
   return text;
 }
