@@ -23,6 +23,10 @@ export interface JobState {
   message: string;
   // lod2_source is a provider name, everything else is a number (backend spec §8).
   stats: Record<string, number | string>;
+  // Place label ("Frankfurt am Main – Altstadt", or the coordinates) and the ASCII download
+  // stem ("Frankfurt-am-Main_Altstadt_1500m_10cm"); empty until the job has started.
+  name?: string;
+  file_stem?: string;
 }
 
 export interface GeocodeHit {
