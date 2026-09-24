@@ -223,12 +223,13 @@ describe("setupControls result", () => {
     expect(root.querySelector("[data-stage=preview]")!.getAttribute("aria-pressed")).toBe("true");
   });
 
-  it("puts the running stage on the button and restores it afterwards", () => {
+  it("shows a short busy label with the percentage and restores it afterwards", () => {
     const controls = setupControls(root);
     controls.setBusy(true);
     expect(field<HTMLButtonElement>("generate").disabled).toBe(true);
     controls.setProgress({ status: "running", stage: "fetch", message: "Loading OpenStreetMap data" });
-    expect(field("generate-label").textContent).toBe("Loading OpenStreetMap data");
+    expect(field("generate-label").textContent).toMatch(/^Generating… (\d+ %)?$/);
+    expect(field("generate-label").textContent!.length).toBeLessThan(20);
     expect(field("progress").hidden).toBe(false);
     controls.setBusy(false);
     expect(field("generate-label").textContent).toBe("Generate model");

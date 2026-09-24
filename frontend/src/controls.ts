@@ -274,8 +274,10 @@ export function setupControls(root: HTMLElement): Controls {
       }
     },
     setProgress(job) {
-      const { label, fraction } = progressOf(job);
-      generateLabel.textContent = label;
+      const { fraction } = progressOf(job);
+      // The overlay carries the step in words; the button only says that it is busy and how far
+      // along, short enough never to be cut off (the stage message was, at 40 characters).
+      generateLabel.textContent = fraction === null ? "Generating…" : `Generating… ${Math.round(fraction * 100)} %`;
       // Not mirrored into the status live region: the generation overlay announces each step.
       status.textContent = "";
       status.classList.remove("error");
