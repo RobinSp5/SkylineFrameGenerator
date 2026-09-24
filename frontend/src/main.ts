@@ -1,7 +1,8 @@
-// Entry point: wires the map, the sidebar, the job API and the 3D preview together.
+// Entry point: wires the map, the panel, the job API and the 3D preview together.
 import "./style.css";
 import { createJob, waitForJob, jobFileUrl } from "./api";
 import { setupControls, summarize } from "./controls";
+import { splitPlace } from "./format";
 import { createMap } from "./map";
 import { setupSearch } from "./search";
 import { createViewer } from "./viewer";
@@ -20,33 +21,54 @@ try {
   console.error("3D preview unavailable (no WebGL?)", err);
 }
 
+// The panel floats over the map; padding keeps the square centred in the part that stays visible.
+const sidebar = document.getElementById("sidebar")!;
+const syncPadding = () => {
+  const phone = window.matchMedia("(max-width: 767px)").matches;
+  const rect = sidebar.getBoundingClientRect();
+  const covered = phone ? { bottom: Math.round(window.innerHeight - rect.top) } : { right: Math.round(window.innerWidth - rect.left) };
+  // On a phone the search bar and, below it, the map attribution span the top edge too (style.css).
+  map.setPadding(phone ? { ...covered, top: 100 } : covered);
+  viewer?.setInsets(covered);
+};
+new ResizeObserver(syncPadding).observe(sidebar);
+window.addEventListener("resize", syncPadding);
+syncPadding();
+
 controls.writeSquare(map.getParams());
 map.onChange((p) => controls.writeSquare(p));
 controls.onSquareInput((partial) => map.setParams({ ...map.getParams(), ...partial }));
-setupSearch(controls.elements.search, controls.elements.searchResults, (hit) => map.flyTo(hit.lat, hit.lon));
+setupSearch(controls.elements.search, controls.elements.searchResults, (hit) => {
+  controls.setPlace(hit.name);
+  // The panel header carries the region; the search field only needs the place itself.
+  controls.elements.search.value = splitPlace(hit.name).name;
+  map.flyTo(hit.lat, hit.lon);
+});
+controls.onAdjust(() => controls.setStatus(""));
 
 controls.onGenerate(async () => {
+  const spec = controls.read();
   controls.setBusy(true);
   controls.showDownloads(null);
+  controls.setStatus("");
   // Drop the previous model up front: a failing run must not leave a stale preview beside the error.
   viewer?.clear();
-  controls.setStatus("Starting job …");
   const abort = new AbortController();
   const timeout = setTimeout(() => abort.abort(new Error("Timed out")), JOB_TIMEOUT_MS);
   try {
-    const { id } = await createJob(controls.read(), abort.signal);
-    const job = await waitForJob(id, (j) => controls.setStatus(`${j.stage || j.status}: ${j.message}`), 1000, {
-      signal: abort.signal,
-    });
+    const { id } = await createJob(spec, abort.signal);
+    const job = await waitForJob(id, (j) => controls.setProgress(j), 1000, { signal: abort.signal });
     if (job.status === "error") {
       controls.setStatus(job.message || "Generation failed", true);
       return;
     }
     const summary = summarize(job.stats ?? {});
     controls.setStatus(summary);
-    controls.showDownloads(id);
+    controls.showResult(job, spec);
+    if (!viewer) return;
     try {
-      await viewer?.load(jobFileUrl(id, "preview.glb"));
+      await viewer.load(jobFileUrl(id, "preview.glb"));
+      controls.setStage("preview");
     } catch (err) {
       console.error(err);
       controls.setStatus(`${summary} (preview unavailable)`);

@@ -3,69 +3,180 @@
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" content="#EDEDEA" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#111113" media="(prefers-color-scheme: dark)" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500&display=swap"
+    />
     <title>Skyline Frame Generator</title>
   </head>
   <body>
-    <div id="app">
-      <div id="map"></div>
-      <aside id="sidebar">
-        <h1>Skyline Frame</h1>
-        <label>Search location
-          <input id="search" type="search" placeholder="e.g. Frankfurt am Main" autocomplete="off" />
-        </label>
-        <div id="search-results"></div>
+    <div id="app" data-view="config">
+      <div id="stage">
+        <div id="map" role="region" aria-label="Map. Drag the square to move the print area."></div>
+        <div id="viewer" role="region" aria-label="3D preview of the generated model" hidden></div>
+      </div>
 
-        <label>Scale
-          <select id="preset">
-            <option value="skyline">Skyline — 1500 m on 100 mm (1:15,000)</option>
-            <option value="detail">Detail — 800 m on 100 mm (1:8,000)</option>
-            <option value="gross">Large — 1500 m on 200 mm (1:7,500)</option>
-            <option value="custom">Custom</option>
-          </select>
-        </label>
-        <label>Extent <output id="side-out">1500 m</output>
-          <input id="side" type="range" min="200" max="5000" step="50" value="1500" />
-        </label>
-        <label>Rotation <output id="rotation-out">0°</output>
-          <input id="rotation" type="range" min="-180" max="180" step="1" value="0" />
-        </label>
-        <label>Plate (mm)
-          <input id="plate" type="number" min="40" max="250" step="5" value="100" />
-        </label>
-        <label>Plate thickness (mm)
-          <input id="thickness" type="number" min="1" max="10" step="0.5" value="3" />
-        </label>
-        <label>Height factor
-          <input id="zfactor" type="number" min="0.5" max="10" step="0.1" value="1.5" />
-        </label>
-        <label>Mode
-          <select id="mode">
-            <option value="simple">Simple (buildings + plate)</option>
-            <option value="full">Full (+ streets + water)</option>
-          </select>
-        </label>
-        <label class="checkbox">
-          <input id="lod2" type="checkbox" checked />
-          Use official LoD2 buildings where available
-        </label>
-        <label class="checkbox">
-          <input id="terrain" type="checkbox" />
-          Terrain (Copernicus elevation model)
-        </label>
-        <label>Terrain height factor
-          <input id="terrainz" type="number" min="0.1" max="5" step="0.1" value="1" disabled />
-        </label>
-
-        <button id="generate" type="button">Generate</button>
-        <p id="status" role="status"></p>
-        <div id="downloads" hidden>
-          <a id="dl-stl" download>STL (single colour)</a>
-          <a id="dl-3mf" download>3MF (multi-colour)</a>
-          <a id="dl-sources" download>Sources and licence (SOURCES.txt)</a>
+      <div class="topbar">
+        <h1 id="brand" class="brand">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M3 20h18M5 20V11l4-3v12M11 20V5l5 3v12M18 20v-7l2 1v6" /></svg>
+          <span>Skyline Frame</span>
+        </h1>
+        <div class="search-wrap">
+          <label class="search">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="M20 20l-3.5-3.5" /></svg>
+            <span class="sr-only">Search a place</span>
+            <input id="search" type="search" placeholder="Search a place" autocomplete="off" spellcheck="false" />
+          </label>
+          <div id="search-results" class="search-results"></div>
         </div>
+        <div id="stage-toggle" class="seg seg-2 stage-toggle" role="group" aria-label="View">
+          <button type="button" data-stage="map" aria-pressed="true">Map</button>
+          <button type="button" data-stage="preview" aria-pressed="false">3D preview</button>
+        </div>
+      </div>
+
+      <p class="map-hint mono" aria-hidden="true">Drag the square to move it · scroll to zoom</p>
+
+      <aside id="sidebar" aria-label="Print settings">
+        <button id="sheet-toggle" class="grabber" type="button" aria-expanded="true" aria-controls="sidebar-body">
+          <span class="sr-only">Show or hide settings</span>
+        </button>
+
+        <header class="place">
+          <h2 id="place-name">Selected area</h2>
+          <p id="place-region" class="hint" hidden></p>
+          <p id="place-coords" class="hint mono"></p>
+          <p id="result-meta" class="hint"></p>
+        </header>
+
+        <div id="sidebar-body" class="panel-body">
+          <section id="config" class="config" aria-label="Settings">
+            <div class="size">
+              <div class="size-head">
+                <label for="size" class="lbl">Print size</label>
+                <output id="size-out" for="size" class="readout mono"><span id="size-value">10.0</span> <span class="unit">cm</span></output>
+              </div>
+              <input id="size" class="range" type="range" min="4" max="25" step="0.5" value="10" aria-describedby="scale-out" />
+              <div class="size-scale hint mono">
+                <span aria-hidden="true">4 cm</span>
+                <span id="scale-out">10 × 10 cm plate · 1 : 15 000</span>
+                <span aria-hidden="true">25 cm</span>
+              </div>
+            </div>
+
+            <fieldset id="preset" class="seg seg-4">
+              <legend class="sr-only">Preset</legend>
+              <label title="1500 m on a 10 cm plate"><input type="radio" name="preset" value="skyline" checked /><span>Skyline</span></label>
+              <label title="800 m on a 10 cm plate"><input type="radio" name="preset" value="detail" /><span>Detail</span></label>
+              <label title="1500 m on a 20 cm plate"><input type="radio" name="preset" value="gross" /><span>Large</span></label>
+              <label title="Your own area and size"><input type="radio" name="preset" value="custom" /><span>Custom</span></label>
+            </fieldset>
+
+            <div class="pair">
+              <div class="field">
+                <div class="field-head">
+                  <label for="side" class="lbl">Area</label>
+                  <output id="side-out" for="side" class="hint mono">1500 m</output>
+                </div>
+                <input id="side" class="range" type="range" min="200" max="5000" step="50" value="1500" />
+              </div>
+              <div class="field">
+                <div class="field-head">
+                  <label for="rotation" class="lbl">Rotation</label>
+                  <output id="rotation-out" for="rotation" class="hint mono">0°</output>
+                </div>
+                <input id="rotation" class="range" type="range" min="-180" max="180" step="1" value="0" />
+              </div>
+            </div>
+
+            <div class="group">
+              <fieldset id="mode" class="seg seg-2">
+                <legend class="sr-only">Detail</legend>
+                <label><input type="radio" name="mode" value="simple" checked /><span>Buildings only</span></label>
+                <label><input type="radio" name="mode" value="full" /><span>+ Streets &amp; water</span></label>
+              </fieldset>
+              <label class="switch-row">
+                <span class="switch-text">
+                  <span class="lbl">Official 3D buildings</span>
+                  <span class="hint">Real roofs where the state publishes LoD2</span>
+                </span>
+                <input id="lod2" class="switch" type="checkbox" role="switch" checked />
+              </label>
+              <label class="switch-row">
+                <span class="switch-text">
+                  <span class="lbl">Terrain</span>
+                  <span class="hint">Hills and valleys from Copernicus</span>
+                </span>
+                <input id="terrain" class="switch" type="checkbox" role="switch" />
+              </label>
+              <div class="terrainz-row">
+                <label for="terrainz" class="hint">Terrain height</label>
+                <input id="terrainz" class="range" type="range" min="0.5" max="3" step="0.1" value="1" disabled />
+                <output id="terrainz-out" for="terrainz" class="mono">1.0×</output>
+              </div>
+            </div>
+
+            <details class="more">
+              <summary>
+                <span class="lbl">Plate and heights</span>
+                <span id="more-summary" class="hint mono">3 mm · 1.5×</span>
+                <svg class="chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 9l6 6 6-6" /></svg>
+              </summary>
+              <div class="pair more-body">
+                <div class="field">
+                  <label for="thickness" class="lbl">Plate thickness</label>
+                  <div class="num-wrap"><input id="thickness" class="num" type="number" min="1" max="10" step="0.5" value="3" /><span class="hint">mm</span></div>
+                </div>
+                <div class="field">
+                  <label for="zfactor" class="lbl">Building height</label>
+                  <div class="num-wrap"><input id="zfactor" class="num" type="number" min="0.5" max="10" step="0.1" value="1.5" /><span class="hint">×</span></div>
+                </div>
+              </div>
+            </details>
+          </section>
+
+          <section id="result" class="result" aria-label="Result" hidden>
+            <dl class="stats">
+              <div><dt>buildings</dt><dd id="stat-buildings" class="mono">0</dd></div>
+              <div><dt>official 3D</dt><dd id="stat-lod2" class="mono">0</dd></div>
+              <div id="stat-relief-wrap"><dt>relief</dt><dd class="mono"><span id="stat-relief">0</span><span class="unit"> mm</span></dd></div>
+            </dl>
+            <div id="downloads" class="downloads" hidden>
+              <h3 class="lbl">Download</h3>
+              <a id="dl-3mf" class="dl dl-primary" download>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 4v11M7 10l5 5 5-5M5 20h14" /></svg>
+                <span class="dl-text"><span class="dl-title">3MF for Bambu Studio</span><span id="dl-3mf-name" class="dl-name mono">model.3mf</span></span>
+              </a>
+              <a id="dl-stl" class="dl dl-secondary" download>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 4v11M7 10l5 5 5-5M5 20h14" /></svg>
+                <span class="dl-text"><span class="dl-title">STL, single colour</span><span id="dl-stl-name" class="dl-name mono">model.stl</span></span>
+              </a>
+              <a id="dl-sources" class="dl dl-link" download>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><path d="M6 3h9l4 4v14H6zM14 3v5h5" /></svg>
+                <span class="dl-text"><span class="dl-title">Sources and licences</span><span id="dl-sources-name" class="dl-name mono">SOURCES.txt</span></span>
+              </a>
+            </div>
+          </section>
+        </div>
+
+        <footer class="panel-foot">
+          <p id="status" role="status"></p>
+          <div class="config-foot">
+            <div id="progress" class="progress" hidden><span id="progress-bar"></span></div>
+            <button id="generate" class="btn btn-primary" type="button"><span id="generate-label">Generate model</span></button>
+            <p id="file-preview" class="hint mono">Skyline_1500m_10cm.3mf</p>
+          </div>
+          <div class="result-foot">
+            <button id="adjust" class="btn btn-secondary" type="button">Adjust settings</button>
+          </div>
+        </footer>
       </aside>
-      <div id="viewer"></div>
     </div>
     <script type="module" src="/src/main.ts"></script>
   </body>

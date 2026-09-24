@@ -1,33 +1,13 @@
 // @vitest-environment happy-dom
 // Set per-file so vite.config.ts can stay on the fast `environment: "node"` default.
 import { beforeEach, describe, expect, it } from "vitest";
-import { setupControls, summarize } from "./controls";
+import type { JobState } from "./api";
+import { progressOf, setupControls, summarize } from "./controls";
 import { PRESETS, presetFor } from "./presets";
+import PAGE from "../index.html?raw";
 
-const SIDEBAR = `
-  <input id="search" />
-  <div id="search-results"></div>
-  <select id="preset">
-    <option value="skyline">Skyline</option>
-    <option value="detail">Detail</option>
-    <option value="gross">Large</option>
-    <option value="custom">Custom</option>
-  </select>
-  <output id="side-out"></output>
-  <input id="side" type="range" min="200" max="5000" step="50" value="1500" />
-  <output id="rotation-out"></output>
-  <input id="rotation" type="range" min="-180" max="180" step="1" value="0" />
-  <input id="plate" type="number" value="100" />
-  <input id="thickness" type="number" value="3" />
-  <input id="zfactor" type="number" value="1.5" />
-  <select id="mode"><option value="simple">simple</option><option value="full">full</option></select>
-  <input id="lod2" type="checkbox" checked />
-  <input id="terrain" type="checkbox" />
-  <input id="terrainz" type="number" value="1" disabled />
-  <button id="generate"></button>
-  <p id="status"></p>
-  <div id="downloads" hidden><a id="dl-stl"></a><a id="dl-3mf"></a><a id="dl-sources"></a></div>
-`;
+// The real page markup, minus the module script: the tests break when index.html and the wiring drift.
+const APP = PAGE.slice(PAGE.indexOf("<body>") + "<body>".length, PAGE.indexOf("<script")).trim();
 
 function field<T extends HTMLElement>(id: string): T {
   return document.getElementById(id) as unknown as T;
@@ -56,38 +36,43 @@ describe("setupControls", () => {
   let updates: Array<Record<string, number>>;
 
   beforeEach(() => {
-    document.body.innerHTML = `<div id="app">${SIDEBAR}</div>`;
+    document.body.innerHTML = APP;
     root = document.getElementById("app")!;
     updates = [];
   });
 
-  const fire = (el: HTMLElement, type: string) => el.dispatchEvent(new Event(type));
+  const fire = (el: HTMLElement, type: string) => el.dispatchEvent(new Event(type, { bubbles: true }));
+  const presetValue = () => root.querySelector<HTMLInputElement>("input[name=preset]:checked")?.value;
+  /** Checks a preset radio the way a click would: the change event bubbles to the fieldset. */
+  const pickPreset = (value: string) => {
+    const radio = root.querySelector<HTMLInputElement>(`input[name=preset][value=${value}]`)!;
+    radio.checked = true;
+    fire(radio, "change");
+  };
 
   it("starts on the preset that matches the initial fields", () => {
     setupControls(root);
-    expect(field<HTMLSelectElement>("preset").value).toBe("skyline");
+    expect(presetValue()).toBe("skyline");
   });
 
-  it("writes side and plate when a preset is picked and tells the map", () => {
+  it("writes side and print size when a preset is picked and tells the map", () => {
     const controls = setupControls(root);
     controls.onSquareInput((p) => updates.push(p as Record<string, number>));
 
-    const preset = field<HTMLSelectElement>("preset");
-    preset.value = "gross";
-    fire(preset, "change");
+    pickPreset("gross");
 
     expect(field<HTMLInputElement>("side").value).toBe("1500");
-    expect(field<HTMLInputElement>("plate").value).toBe("200");
+    expect(field<HTMLInputElement>("size").value).toBe("20");
     expect(field<HTMLOutputElement>("side-out").value).toBe("1500 m");
+    expect(field("size-value").textContent).toBe("20.0");
+    expect(field("scale-out").textContent).toBe("20 × 20 cm plate · 1 : 7\u202F500");
     expect(controls.read().plate_size_mm).toBe(200);
     expect(updates).toEqual([{ sideM: 1500 }]);
   });
 
   it("switches to Detail including the side length", () => {
     const controls = setupControls(root);
-    const preset = field<HTMLSelectElement>("preset");
-    preset.value = "detail";
-    fire(preset, "change");
+    pickPreset("detail");
     expect(controls.read().side_m).toBe(800);
     expect(controls.read().plate_size_mm).toBe(100);
   });
@@ -100,24 +85,25 @@ describe("setupControls", () => {
     side.value = "1250";
     fire(side, "input");
 
-    expect(field<HTMLSelectElement>("preset").value).toBe("custom");
+    expect(presetValue()).toBe("custom");
     expect(updates).toEqual([{ sideM: 1250 }]);
   });
 
-  it("falls back to Custom when the plate size is edited by hand", () => {
-    setupControls(root);
-    const plate = field<HTMLInputElement>("plate");
-    plate.value = "140";
-    fire(plate, "input");
-    expect(field<HTMLSelectElement>("preset").value).toBe("custom");
+  it("maps the print size in centimetres to plate millimetres and falls back to Custom", () => {
+    const controls = setupControls(root);
+    const size = field<HTMLInputElement>("size");
+    size.value = "14.5";
+    fire(size, "input");
+    expect(presetValue()).toBe("custom");
+    expect(controls.read().plate_size_mm).toBe(145);
+    expect(field("size-value").textContent).toBe("14.5");
+    expect(field("file-preview").textContent).toBe("Skyline_1500m_14.5cm.3mf");
   });
 
   it("keeps the fields untouched when Custom is selected", () => {
     const controls = setupControls(root);
     controls.onSquareInput((p) => updates.push(p as Record<string, number>));
-    const preset = field<HTMLSelectElement>("preset");
-    preset.value = "custom";
-    fire(preset, "change");
+    pickPreset("custom");
     expect(controls.read().side_m).toBe(1500);
     expect(updates).toEqual([]);
   });
@@ -127,7 +113,116 @@ describe("setupControls", () => {
     const rotation = field<HTMLInputElement>("rotation");
     rotation.value = "30";
     fire(rotation, "input");
-    expect(field<HTMLSelectElement>("preset").value).toBe("skyline");
+    expect(presetValue()).toBe("skyline");
+  });
+
+  it("re-derives the preset when the map reports a new square", () => {
+    const controls = setupControls(root);
+    controls.writeSquare({ lat: 50, lon: 8, sideM: 800, rotationDeg: 0 });
+    expect(presetValue()).toBe("detail");
+    expect(field("place-coords").textContent).toBe("50.0000 N\u00A0\u00A08.0000 E");
+  });
+
+  it("reads mode, height factor and plate thickness", () => {
+    const controls = setupControls(root);
+    root.querySelector<HTMLInputElement>("input[name=mode][value=full]")!.checked = true;
+    field<HTMLInputElement>("thickness").value = "4";
+    field<HTMLInputElement>("zfactor").value = "2";
+    expect(controls.read()).toMatchObject({ mode: "full", plate_thickness_mm: 4, z_exaggeration: 2 });
+  });
+
+  it("names the place from the picked search result", () => {
+    const controls = setupControls(root);
+    expect(field("place-name").textContent).toBe("Selected area");
+    controls.setPlace("Eppstein, Main-Taunus-Kreis, Hessen, 65817, Deutschland");
+    expect(field("place-name").textContent).toBe("Eppstein");
+    expect(field("place-region").textContent).toBe("Main-Taunus-Kreis, Hessen");
+    expect(field("file-preview").textContent).toBe("Eppstein_1500m_10cm.3mf");
+  });
+});
+
+describe("setupControls result", () => {
+  let root: HTMLElement;
+  beforeEach(() => {
+    document.body.innerHTML = APP;
+    root = document.getElementById("app")!;
+  });
+
+  const job = (extra: Partial<JobState> = {}): JobState => ({
+    id: "job1",
+    status: "done",
+    stage: "export",
+    message: "Ready",
+    stats: { buildings: 2148, lod2_buildings: 702, terrain_source: "copernicus", terrain_relief_mm: 10.414 },
+    ...extra,
+  });
+
+  it("shows stats, the job name and the file names from file_stem", () => {
+    const controls = setupControls(root);
+    controls.showResult(job({ name: "Eppstein", file_stem: "Eppstein_1500m_10cm" }), { ...controls.read(), terrain: true });
+    expect(root.dataset.view).toBe("result");
+    expect(field("config").hidden).toBe(true);
+    expect(field("place-name").textContent).toBe("Eppstein");
+    expect(field("result-meta").textContent).toBe("10 × 10 cm · 1500 m · terrain on");
+    expect(field("stat-buildings").textContent).toBe("2\u202F148");
+    expect(field("stat-lod2").textContent).toBe("702");
+    expect(field("stat-relief").textContent).toBe("10.4");
+    expect(field("stat-relief-wrap").hidden).toBe(false);
+    expect(field("dl-3mf").getAttribute("download")).toBe("Eppstein_1500m_10cm.3mf");
+    expect(field("dl-stl").getAttribute("download")).toBe("Eppstein_1500m_10cm.stl");
+    expect(field("dl-sources").getAttribute("download")).toBe("Eppstein_1500m_10cm_SOURCES.txt");
+    expect(field("dl-3mf-name").textContent).toBe("Eppstein_1500m_10cm.3mf");
+  });
+
+  it("keeps the server file names without file_stem and hides relief without terrain", () => {
+    const controls = setupControls(root);
+    controls.showResult(job({ stats: { buildings: 3 } }), controls.read());
+    expect(field("dl-3mf").getAttribute("download")).toBe("");
+    expect(field("dl-3mf-name").textContent).toBe("model.3mf");
+    expect(field("stat-relief-wrap").hidden).toBe(true);
+    expect(field("place-name").textContent).toBe("Selected area");
+  });
+
+  it("goes back to the settings and the map on Adjust settings", () => {
+    const controls = setupControls(root);
+    let adjusted = 0;
+    controls.onAdjust(() => adjusted++);
+    controls.showResult(job(), controls.read());
+    controls.setStage("preview");
+    expect(field("viewer").hidden).toBe(false);
+    field<HTMLButtonElement>("adjust").click();
+    expect(root.dataset.view).toBe("config");
+    expect(field("viewer").hidden).toBe(true);
+    expect(adjusted).toBe(1);
+  });
+
+  it("switches the stage with the toggle", () => {
+    const controls = setupControls(root);
+    controls.showResult(job(), controls.read());
+    root.querySelector<HTMLButtonElement>("[data-stage=preview]")!.click();
+    expect(field("viewer").hidden).toBe(false);
+    expect(root.querySelector("[data-stage=preview]")!.getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("puts the running stage on the button and restores it afterwards", () => {
+    const controls = setupControls(root);
+    controls.setBusy(true);
+    expect(field<HTMLButtonElement>("generate").disabled).toBe(true);
+    controls.setProgress({ status: "running", stage: "fetch", message: "Loading OpenStreetMap data" });
+    expect(field("generate-label").textContent).toBe("Loading OpenStreetMap data");
+    expect(field("progress").hidden).toBe(false);
+    controls.setBusy(false);
+    expect(field("generate-label").textContent).toBe("Generate model");
+    expect(field("progress").hidden).toBe(true);
+  });
+});
+
+describe("progressOf", () => {
+  it("is indeterminate while queued and fills by stage", () => {
+    expect(progressOf({ status: "queued", stage: "", message: "" })).toEqual({ label: "Waiting for the server", fraction: null });
+    expect(progressOf({ status: "running", stage: "fetch", message: "Loading" }).fraction).toBeCloseTo(1 / 6);
+    expect(progressOf({ status: "running", stage: "export", message: "Writing" }).fraction).toBeCloseTo(5 / 6);
+    expect(progressOf({ status: "running", stage: "other", message: "" })).toEqual({ label: "other", fraction: null });
   });
 });
 
@@ -171,7 +266,7 @@ describe("summarize terrain", () => {
 
 describe("setupControls terrain", () => {
   beforeEach(() => {
-    document.body.innerHTML = `<div id="app">${SIDEBAR}</div>`;
+    document.body.innerHTML = APP;
   });
 
   it("is off by default and sends its factor only as a number", () => {
@@ -193,7 +288,7 @@ describe("setupControls terrain", () => {
 
 describe("setupControls lod2", () => {
   beforeEach(() => {
-    document.body.innerHTML = `<div id="app">${SIDEBAR}</div>`;
+    document.body.innerHTML = APP;
   });
 
   it("sends the checkbox state", () => {
