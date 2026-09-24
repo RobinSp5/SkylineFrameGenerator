@@ -1,6 +1,6 @@
 from datetime import date
 
-from skylineframe.lod2.sources import ATTRIBUTIONS, HESSEN, OSM, SOURCES_FILENAME, sources_text
+from skylineframe.lod2.sources import ATTRIBUTIONS, COPERNICUS, HESSEN, OSM, SOURCES_FILENAME, sources_text
 
 
 def test_filename_and_registry():
@@ -39,3 +39,29 @@ def test_every_attribution_is_reachable_by_its_provider_name():
     for name, attribution in ATTRIBUTIONS.items():
         assert attribution.name == name
         assert attribution.text.strip()
+
+
+COPERNICUS_TEXT = (
+    "Gelände: produced using Copernicus WorldDEM-30 © DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH "
+    "2014-2018 provided under COPERNICUS by the European Union and ESA; all rights reserved. The organisations in "
+    "charge of the Copernicus programme by law or by delegation do not incur any liability for any use of the "
+    "Copernicus WorldDEM-30."
+)
+
+
+def test_copernicus_text_is_the_wording_of_the_licence():
+    # Spec 4b §4.8: the processed-data notice and the liability sentence, verbatim.
+    assert COPERNICUS.name == "copernicus"
+    assert COPERNICUS.text == COPERNICUS_TEXT
+    # Not an LoD2 provider: the pipeline looks stats["lod2_source"] up in ATTRIBUTIONS.
+    assert "copernicus" not in ATTRIBUTIONS
+
+
+def test_terrain_block_sits_between_lod2_and_osm():
+    text = sources_text("2026-09-24", HESSEN, terrain=COPERNICUS)
+    assert text.index("LoD2 Hessen") < text.index("Copernicus WorldDEM-30") < text.index("OpenStreetMap")
+    assert COPERNICUS_TEXT + "\n" + OSM.text + "\n" in text
+    assert "Copernicus" not in sources_text("2026-09-24", HESSEN)
+    assert sources_text("2026-09-24", terrain=COPERNICUS) == (
+        "Geometrie erzeugt mit Skyline Frame Generator am 2026-09-24.\n" + COPERNICUS_TEXT + "\n" + OSM.text + "\n"
+    )

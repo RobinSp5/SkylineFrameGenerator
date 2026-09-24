@@ -36,11 +36,27 @@ OSM = Attribution(
 # provider name -> attribution; pipeline looks the used source up here.
 ATTRIBUTIONS: dict[str, Attribution] = {HESSEN.name: HESSEN}
 
+# The terrain relief (spec 4b §4.8). The Copernicus DEM licence asks for this exact notice on
+# processed data (Art. 6 b) plus the liability sentence (Art. 6 c), so it stays one verbatim line
+# instead of being wrapped like the blocks above. Deliberately not in ATTRIBUTIONS: that registry
+# is looked up by stats["lod2_source"], and Copernicus is never a building source.
+COPERNICUS = Attribution(
+    name="copernicus",
+    text=(
+        "Gelände: produced using Copernicus WorldDEM-30 © DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH "
+        "2014-2018 provided under COPERNICUS by the European Union and ESA; all rights reserved. The organisations "
+        "in charge of the Copernicus programme by law or by delegation do not incur any liability for any use of "
+        "the Copernicus WorldDEM-30."
+    ),
+)
 
-def sources_text(date_iso: str, lod2: Attribution | None = None) -> str:
-    """The content of SOURCES.txt for one run, one block per source used (spec §7)."""
+
+def sources_text(date_iso: str, lod2: Attribution | None = None, terrain: Attribution | None = None) -> str:
+    """The content of SOURCES.txt for one run, one block per source used (spec §7, 4b §4.8)."""
     blocks = [HEADER.format(date=date_iso)]
     if lod2 is not None:
         blocks.append(lod2.text)
+    if terrain is not None:
+        blocks.append(terrain.text)
     blocks.append(OSM.text)
     return "\n".join(blocks) + "\n"

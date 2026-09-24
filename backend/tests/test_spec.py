@@ -93,3 +93,18 @@ def test_unknown_field_is_still_forbidden():
 
     with pytest.raises(ValidationError):
         FrameSpec(center_lat=50, center_lon=8, lod3=True)
+
+
+def test_terrain_is_off_by_default_with_its_own_exaggeration():
+    # Spec 4b §2: terrain is opt-in and scaled separately from the buildings.
+    spec = FrameSpec(center_lat=50, center_lon=8)
+    assert spec.terrain is False
+    assert spec.terrain_exaggeration == 1.0
+    on = FrameSpec(center_lat=50, center_lon=8, terrain=True, terrain_exaggeration=5)
+    assert on.terrain is True and on.terrain_exaggeration == 5
+
+
+@pytest.mark.parametrize("value", [0, -1, 5.01])
+def test_terrain_exaggeration_is_limited_to_zero_to_five(value):
+    with pytest.raises(ValidationError):
+        FrameSpec(center_lat=50, center_lon=8, terrain_exaggeration=value)

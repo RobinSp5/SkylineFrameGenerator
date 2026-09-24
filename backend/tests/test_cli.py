@@ -142,3 +142,38 @@ def test_generate_says_so_when_no_lod2_source_was_used(monkeypatch, tmp_path):
     result = runner.invoke(cli.app, ["--lat", "50.1", "--lon", "8.6", "--out", str(tmp_path)])
     assert result.exit_code == 0, result.output
     assert "LoD2 source: none (OpenStreetMap only)" in result.output
+
+
+def test_terrain_is_off_by_default_and_can_be_switched_on(monkeypatch, tmp_path):
+    spec, _ = run_cli(monkeypatch, tmp_path, [])
+    assert spec.terrain is False and spec.terrain_exaggeration == 1.0
+    spec, _ = run_cli(monkeypatch, tmp_path, ["--terrain", "--terrain-z", "2.5"])
+    assert spec.terrain is True and spec.terrain_exaggeration == 2.5
+
+
+def _run_with_stats(monkeypatch, tmp_path, stats: dict, args: list[str]):
+    def fake_run(spec, out_dir, cache_dir, progress=None):
+        return RunResult(ExportPaths(out_dir / "model.stl", out_dir / "model.3mf", out_dir / "preview.glb"), stats)
+
+    monkeypatch.setattr(cli, "run", fake_run)
+    result = runner.invoke(cli.app, ["--lat", "50.1", "--lon", "8.6", "--out", str(tmp_path), *args])
+    assert result.exit_code == 0, result.output
+    return result
+
+
+def test_generate_prints_the_terrain_source_and_relief(monkeypatch, tmp_path):
+    stats = {"buildings": 3, "terrain_source": "copernicus", "terrain_relief_mm": 10.84}
+    result = _run_with_stats(monkeypatch, tmp_path, stats, ["--terrain"])
+    assert "Terrain: copernicus, relief 10.84 mm" in result.output
+
+
+def test_generate_prints_the_note_when_terrain_was_unavailable(monkeypatch, tmp_path):
+    # Spec 4b §5.6: offline with --terrain is a flat model plus a note, never an abort.
+    stats = {"buildings": 3, "terrain_source": "", "terrain_note": "Gelände nicht verfügbar"}
+    result = _run_with_stats(monkeypatch, tmp_path, stats, ["--terrain"])
+    assert "Terrain: Gelände nicht verfügbar (flat plate)" in result.output
+
+
+def test_generate_is_silent_about_terrain_when_it_was_not_asked_for(monkeypatch, tmp_path):
+    result = _run_with_stats(monkeypatch, tmp_path, {"buildings": 3, "terrain_source": ""}, [])
+    assert "Terrain" not in result.output

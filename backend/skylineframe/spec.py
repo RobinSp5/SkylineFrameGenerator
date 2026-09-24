@@ -88,6 +88,11 @@ class FrameSpec(BaseModel):
     # Use an official LoD2 model where one is available; without a provider, without network or
     # with lod2=False the result is bit-identical to the OSM-only run (spec §8/§11).
     lod2: bool = True
+    # Terrain relief from the Copernicus DEM (spec 4b §2). Off by default, and off is the exact
+    # flat-plate code path of before. Its own exaggeration: a hill wants a different factor than a
+    # tower, and z_exaggeration already means "buildings" to every existing client.
+    terrain: bool = False
+    terrain_exaggeration: float = Field(default=1.0, gt=0, le=5)
     road_depth_mm: float = Field(default=0.4, gt=0)
     water_depth_mm: float = Field(default=0.6, gt=0)
     road_width_mm: dict[str, float] = Field(default_factory=lambda: dict(DEFAULT_ROAD_WIDTH_MM))
