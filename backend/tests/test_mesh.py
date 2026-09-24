@@ -240,3 +240,26 @@ def test_a_body_and_a_prism_live_side_by_side():
     assert to_trimesh(meshes.buildings).is_watertight
     assert meshes.buildings.volume() == pytest.approx(BODY_VOLUME + 10 * 10 * 6, rel=1e-6)
     assert meshes.buildings.bounding_box()[5] == pytest.approx(BODY_BOX[5], abs=1e-6)
+
+
+def test_print_optimized_thickens_a_spiky_osm_roof():
+    # A pyramid roof on a 1 mm tower rises 6 mm to a point: from 3 mm up it is thinner than two
+    # nozzle lines. Print-optimized it is widened to 0.8 mm up to its tip and keeps its height;
+    # in detail mode it stays the pure pyramid (mesh._roof_bodies).
+    from shapely.geometry import box as _box
+
+    from skylineframe.mesh import _roof_bodies
+
+    tower = _box(0, 0, 1, 1)
+    rect = ((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0))
+    p = Prism(tower, 2.0, roof=ScaledRoof(rect_mm=rect, shape="pyramidal", z_eaves_mm=2.0, z_ridge_mm=8.0))
+    plain = _roof_bodies([p])[0]
+    thick = _roof_bodies([p], 0.8)[0]
+    assert thick.bounding_box()[5] == pytest.approx(plain.bounding_box()[5], abs=1e-3)
+    near_tip = thick.slice(7.5).bounds()
+    assert min(near_tip[2] - near_tip[0], near_tip[3] - near_tip[1]) >= 0.8 - 1e-3
+    tip = plain.slice(7.5).bounds()
+    assert tip[2] - tip[0] < 0.2
+    # Nothing grows past the tower's own walls.
+    x0, y0, _, x1, y1, _ = thick.bounding_box()
+    assert (x0, y0) >= (-1e-3, -1e-3) and (x1, y1) <= (1 + 1e-3, 1 + 1e-3)

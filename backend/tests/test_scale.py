@@ -89,12 +89,24 @@ def test_roof_below_the_print_minimum_is_dropped():
     assert scale_features(Prepared(buildings=[b]), spec()).buildings[0].roof is None
 
 
+def test_print_optimized_puts_every_part_on_the_ground():
+    # The default: a part in the air would overhang wherever its base does not reach, so it is
+    # filled down to the plate instead of lifted (scale._building_prism).
+    lower = building(box(-100, -100, 100, 100), height_m=40.0, eaves_m=40.0, ridge_m=40.0, outline_id="way/7")
+    upper = building(
+        box(-50, -50, 150, 50), height_m=80.0, eaves_m=80.0, ridge_m=80.0, min_height_m=40.0, is_part=True, outline_id="way/7"
+    )
+    out = scale_features(Prepared(buildings=[lower, upper]), spec())
+    assert out.buildings[1].z0_mm == 0.0
+    assert out.buildings[1].height_mm == pytest.approx(12.0)
+
+
 def test_supported_part_starts_at_its_min_height():
     lower = building(box(-100, -100, 100, 100), height_m=40.0, eaves_m=40.0, ridge_m=40.0, outline_id="way/7")
     upper = building(
         box(-50, -50, 50, 50), height_m=80.0, eaves_m=80.0, ridge_m=80.0, min_height_m=40.0, is_part=True, outline_id="way/7"
     )
-    out = scale_features(Prepared(buildings=[lower, upper]), spec())
+    out = scale_features(Prepared(buildings=[lower, upper]), spec(print_optimized=False))
     assert out.buildings[1].z0_mm == pytest.approx(6.0)  # 40 m x 0.15
     assert out.buildings[1].height_mm == pytest.approx(12.0)
 
@@ -132,7 +144,7 @@ def test_part_carried_by_two_siblings_is_lifted():
     tower = building(
         box(0, 0, 100, 100), height_m=80.0, eaves_m=80.0, ridge_m=80.0, min_height_m=40.0, is_part=True, outline_id="way/7"
     )
-    out = scale_features(Prepared(buildings=[west, east, tower]), spec())
+    out = scale_features(Prepared(buildings=[west, east, tower]), spec(print_optimized=False))
     assert out.buildings[2].z0_mm == pytest.approx(6.0)  # 40 m x 0.15
 
 
@@ -143,10 +155,10 @@ def test_support_is_measured_on_the_union_of_the_bodies_below():
     tower = building(
         box(0, 0, 100, 100), height_m=80.0, eaves_m=80.0, ridge_m=80.0, min_height_m=40.0, is_part=True, outline_id="way/7"
     )
-    out = scale_features(Prepared(buildings=[west, east, tower]), spec())
+    out = scale_features(Prepared(buildings=[west, east, tower]), spec(print_optimized=False))
     assert out.buildings[2].z0_mm == pytest.approx(6.0)
     # One of the two alone stays below the threshold, so the union is what makes the difference.
-    assert scale_features(Prepared(buildings=[west, tower]), spec()).buildings[1].z0_mm == 0.0
+    assert scale_features(Prepared(buildings=[west, tower]), spec(print_optimized=False)).buildings[1].z0_mm == 0.0
 
 
 def test_commerzbank_parts_touching_only_at_a_corner_are_grounded(bankenviertel_data, bankenviertel_spec):

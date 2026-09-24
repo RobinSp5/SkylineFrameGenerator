@@ -19,6 +19,7 @@ from .roofs import roof_solid
 from .scale import Prism, Scaled
 from .spec import FrameSpec
 from .terrain.heightfield import Heightfield
+from .thicken import thickened
 
 EPS = 0.01  # overshoot of cutters above the plate top for a clean boolean cut
 BUILDING_SINK_MM = 0.2  # buildings are sunk into the plate so the union never relies on face contact only
@@ -112,18 +113,28 @@ def _roof_body(p: Prism) -> m3d.Manifold | None:
     )
 
 
-def _roof_bodies(prisms: list[Prism]) -> list[m3d.Manifold]:
+def _roof_bodies(prisms: list[Prism], min_line_mm: float | None = None) -> list[m3d.Manifold]:
     """All roofs of a list of prisms. Built once and reused by the flush and the sunk union:
     a roof sits above the plate, so sinking the bodies never moves it. A LoD2 building has no
-    ScaledRoof at all — its roof shape is already inside its body."""
+    ScaledRoof at all — its roof shape is already inside its body.
+
+    With min_line_mm (print-optimized) every roof goes through the same thickening as a LoD2
+    body: a pyramid or cone roof on a narrow tower tapers into the same unprintable pin as a
+    surveyed spire, and most of the world's roofs come from OpenStreetMap, not from LoD2.
+    """
     roofs = []
     for p in prisms:
         if p.solid_mm is not None or not _is_solid(p):
             continue
         roof = _roof_body(p)
         if roof is not None:
-            roofs.append(roof)
+            roofs.append(thickened(roof, min_line_mm) if min_line_mm else roof)
     return roofs
+
+
+def _thicken_line(spec: FrameSpec) -> float | None:
+    """The line width roofs are thickened to, or None when the model is not print-optimized."""
+    return spec.min_line_mm if spec.print_optimized else None
 
 
 def _bodies(prisms: list[Prism], sink: float) -> list[m3d.Manifold]:
@@ -164,7 +175,7 @@ def build_meshes(scaled: Scaled, spec: FrameSpec, terrain: Heightfield | None = 
         raise MeshError("No printable building footprints in the selected area.")
     # Roofs are hulls and boolean intersections — the two unions below share them instead of
     # building every roof twice. Blocks never carry a roof.
-    roofs = _roof_bodies(scaled.buildings)
+    roofs = _roof_bodies(scaled.buildings, _thicken_line(spec))
 
     base = plate(spec)
     # Exported part: flush on the plate top, so 3MF parts never overlap.
@@ -339,7 +350,8 @@ def _build_on_terrain(scaled: Scaled, spec: FrameSpec, hf: Heightfield) -> MeshS
     def lifted(idx: list[int], build: Callable[[list[Prism]], list[m3d.Manifold]]) -> list[m3d.Manifold]:
         return _lifted([prisms[k] for k in idx], [bases[k] for k in idx], build)
 
-    shared = lifted(plain, lambda ps: _bodies(ps, BUILDING_SINK_MM)) + lifted(plain, _roof_bodies)
+    line = _thicken_line(spec)
+    shared = lifted(plain, lambda ps: _bodies(ps, BUILDING_SINK_MM)) + lifted(plain, lambda ps: _roof_bodies(ps, line))
     sockel = _sockel_on(scaled.blocks, hf, spec, BUILDING_SINK_MM)
     if sockel is not None:
         shared.append(sockel)

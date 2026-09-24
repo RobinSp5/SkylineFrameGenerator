@@ -181,7 +181,16 @@ def _scaled_solid(b: Building, spec: FrameSpec) -> m3d.Manifold | None:
 def _building_prism(b: Building, groups: dict[str, list[Building]], spec: FrameSpec) -> Prism:
     eaves_mm = building_height_mm(b.eaves_m, spec)
     z0_mm = 0.0
-    if b.min_height_m > 0 and b.outline_id is not None and _is_supported(b, groups.get(b.outline_id, [])):
+    # Print-optimized, every part stands on the ground: a part may otherwise start in the air
+    # with only SUPPORT_FRACTION of it resting on its base, and the rest is an overhang a slicer
+    # flags as floating. Filled to the ground the whole model is carried from below by
+    # construction, wherever it is, instead of by a threshold tuned on one city.
+    if (
+        not spec.print_optimized
+        and b.min_height_m > 0
+        and b.outline_id is not None
+        and _is_supported(b, groups.get(b.outline_id, []))
+    ):
         z0_mm = raw_height_mm(b.min_height_m, spec)
         if z0_mm >= eaves_mm:  # mistagged: the part would have no body at all
             z0_mm = 0.0
