@@ -2,7 +2,7 @@
    settings, one burnt-orange accent marks the print area and the primary action. */
 
 :root {
-  color-scheme: light dark;
+  color-scheme: light;
   --font: "Geist", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace;
 
@@ -41,32 +41,31 @@
   -webkit-font-smoothing: antialiased;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --ground: #111113;
-    --stage: #141416;
-    --panel: #18181b;
-    --panel-foot: #141416;
-    --raised: #1f1f23;
-    --ink: #f4f4f2;
-    --muted: #a1a1aa;
-    --hairline: #2a2a2e;
-    --divider: #2a2a2e;
-    --control-border: #2e2e33;
-    --seg-bg: #232327;
-    --seg-on: #3a3a40;
-    --seg-on-shadow: none;
-    --switch-off: #3a3a40;
-    --switch-edge: #71717a;
-    --accent: #fb923c;
-    --accent-hover: #fdba74;
-    --on-accent: #1c0f06;
-    --brand-bg: #f4f4f2;
-    --brand-ink: #111113;
-    --error: #f87171;
-    --shadow-panel: 0 12px 40px rgba(0, 0, 0, 0.5);
-    --shadow-float: 0 4px 16px rgba(0, 0, 0, 0.4);
-  }
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --ground: #111113;
+  --stage: #141416;
+  --panel: #18181b;
+  --panel-foot: #141416;
+  --raised: #1f1f23;
+  --ink: #f4f4f2;
+  --muted: #a1a1aa;
+  --hairline: #2a2a2e;
+  --divider: #2a2a2e;
+  --control-border: #2e2e33;
+  --seg-bg: #232327;
+  --seg-on: #3a3a40;
+  --seg-on-shadow: none;
+  --switch-off: #3a3a40;
+  --switch-edge: #71717a;
+  --accent: #fb923c;
+  --accent-hover: #fdba74;
+  --on-accent: #1c0f06;
+  --brand-bg: #f4f4f2;
+  --brand-ink: #111113;
+  --error: #f87171;
+  --shadow-panel: 0 12px 40px rgba(0, 0, 0, 0.5);
+  --shadow-float: 0 4px 16px rgba(0, 0, 0, 0.4);
 }
 
 * { box-sizing: border-box; }
@@ -109,9 +108,7 @@ h1, h2, h3, p { margin: 0; }
   pointer-events: none;
   white-space: nowrap;
 }
-@media (prefers-color-scheme: dark) {
-  .square-label { background: var(--accent); color: var(--on-accent); }
-}
+:root[data-theme="dark"] .square-label { background: var(--accent); color: var(--on-accent); }
 
 /* maplibre controls, restyled to sit with the rest of the chrome. Scoped under #map: maplibre's
    own stylesheet loads after this one and would win at equal specificity. */
@@ -126,12 +123,10 @@ h1, h2, h3, p { margin: 0; }
 #map .maplibregl-ctrl-group button { width: 36px; height: 36px; }
 #map .maplibregl-ctrl-group button + button { border-top: 1px solid var(--divider); }
 #map .maplibregl-ctrl-group button:focus-visible { box-shadow: inset 0 0 0 2px var(--accent); }
-@media (prefers-color-scheme: dark) {
-  #map .maplibregl-ctrl-group button .maplibregl-ctrl-icon { filter: invert(1); }
-  #map .maplibregl-ctrl-attrib, #map .maplibregl-ctrl-attrib.maplibregl-compact { background: rgba(24, 24, 27, 0.85); color: var(--muted); }
-  #map .maplibregl-ctrl-attrib a { color: var(--muted); }
-  #map .maplibregl-ctrl-attrib-button { filter: invert(1); }
-}
+:root[data-theme="dark"] #map .maplibregl-ctrl-group button .maplibregl-ctrl-icon { filter: invert(1); }
+:root[data-theme="dark"] #map .maplibregl-ctrl-attrib, :root[data-theme="dark"] #map .maplibregl-ctrl-attrib.maplibregl-compact { background: rgba(24, 24, 27, 0.85); color: var(--muted); }
+:root[data-theme="dark"] #map .maplibregl-ctrl-attrib a { color: var(--muted); }
+:root[data-theme="dark"] #map .maplibregl-ctrl-attrib-button { filter: invert(1); }
 /* The panel covers the right edge; the attribution must stay readable (OSM licence). */
 #map .maplibregl-ctrl-bottom-right { right: 412px; }
 
@@ -151,6 +146,28 @@ h1, h2, h3, p { margin: 0; }
 
 /* ---------- Top bar: brand, search, stage toggle ---------- */
 
+.icon-btn {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  flex-shrink: 0;
+  padding: 0;
+  border: 1px solid var(--control-border);
+  border-radius: var(--r-pill);
+  background: var(--panel);
+  color: var(--ink);
+  box-shadow: var(--shadow-float);
+  cursor: pointer;
+  transition: transform 0.15s var(--ease);
+}
+.icon-btn:hover { background: var(--raised); }
+.icon-btn:active { transform: scale(0.96); }
+/* One icon per preference; data-theme-pref is set on <html> by index.html and src/theme.ts. */
+.theme-toggle .ti { display: none; }
+:root[data-theme-pref="system"] .theme-toggle .ti-system,
+:root[data-theme-pref="light"] .theme-toggle .ti-light,
+:root[data-theme-pref="dark"] .theme-toggle .ti-dark { display: block; }
 .topbar {
   position: absolute;
   left: 20px;
@@ -381,6 +398,9 @@ h1, h2, h3, p { margin: 0; }
 .switch:checked::after { transform: translateX(16px); }
 .terrainz-row { display: flex; align-items: center; gap: 12px; padding-top: 4px; min-height: 32px; }
 .terrainz-row label { width: 96px; flex-shrink: 0; }
+/* The building height factor shares the terrain row's layout, but it is always on and is the
+   first thing people tweak after the size, so its label reads at full weight. */
+.factor-row { padding: 0 0 6px; }
 .terrainz-row .range { flex: 1; min-width: 0; }
 .terrainz-row output { font-size: 13px; width: 40px; text-align: right; }
 .terrainz-row:has(:disabled) output, .terrainz-row:has(:disabled) label { opacity: 0.55; }
@@ -532,7 +552,7 @@ h1, h2, h3, p { margin: 0; }
 @media (max-width: 767px) {
   .topbar { left: 12px; right: 12px; top: 12px; max-width: none; }
   .brand { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); }
-  .search-wrap { width: 100%; }
+  .search-wrap { flex: 1; min-width: 0; width: auto; }
   .search input { font-size: 16px; }
   .stage-toggle { width: 100%; }
   .map-hint, #map .maplibregl-ctrl-bottom-left { display: none; }

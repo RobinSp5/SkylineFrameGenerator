@@ -21,3 +21,9 @@ Patterns learned from corrections in this project. Review at session start.
 - **What happened:** A one-line terrain refactor was committed with `git commit -qam` while Robin's uncommitted frontend translation, `.gitignore` and `tasks/lessons.md` edits sat in the working tree. All of it landed in `02eb7fb` under a terrain message and was pushed to `main`.
 - **Rule:** Never use `git commit -a` / `-am` in this repo. Stage explicit paths (`git add backend/...`) and check `git diff --cached --stat` before every commit when the working tree has changes that are not mine.
 - **Check:** At session start, note which files are already modified; before each commit, confirm none of them are staged unless the user asked for it.
+
+## 2026-09-24 — Redesign hid a primary control
+- **Correction:** Robin: "der höhenmultiplikator ist weg, der muss da sein!" The UI redesign moved the building height factor into a collapsed "Plate and heights" section, and the dark map (inverted OSM tiles) was unreadable.
+- **Rule:** A redesign keeps every control the user already relies on at the same level of visibility unless they agree to demote it. Collapsible sections only take settings people rarely touch (plate thickness), never the ones that shape the model (size, heights, detail).
+- **Rule:** Never ship a dark map by inverting light raster tiles; check the dark map at real zoom in a screenshot before calling a theme done.
+- **Check:** Before finishing a UI change, list every input id before and after and confirm none moved into a collapsed or hidden container.

@@ -74,6 +74,7 @@ export function setupControls(root: HTMLElement): Controls {
   const terrain = el<HTMLInputElement>(root, "terrain");
   const terrainz = el<HTMLInputElement>(root, "terrainz");
   const terrainzOut = el<HTMLOutputElement>(root, "terrainz-out");
+  const zfactorOut = el<HTMLOutputElement>(root, "zfactor-out");
   const generate = el<HTMLButtonElement>(root, "generate");
   const generateLabel = el<HTMLSpanElement>(root, "generate-label");
   const progress = el<HTMLDivElement>(root, "progress");
@@ -122,7 +123,8 @@ export function setupControls(root: HTMLElement): Controls {
     size.setAttribute("aria-valuetext", `${formatCm(cm)} centimetres`);
     scaleOut.textContent = `${formatPlate(plateMm())} · ${formatScale(Number(side.value), plateMm())}`;
     terrainzOut.value = `${Number(terrainz.value).toFixed(1)}×`;
-    moreSummary.textContent = `${thickness.value} mm · ${zfactor.value}×`;
+    zfactorOut.value = `${Number(zfactor.value).toFixed(1)}×`;
+    moreSummary.textContent = `${thickness.value} mm`;
     filePreview.textContent = `${guessFileStem(place && splitPlace(place).name, Number(side.value), plateMm())}.3mf`;
   };
   const syncCoords = () => {

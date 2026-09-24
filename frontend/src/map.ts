@@ -1,4 +1,4 @@
-// MapLibre map with a muted OSM raster basemap and a draggable selection square.
+// MapLibre map on the OpenFreeMap Positron basemap (recoloured in dark mode) with a draggable selection square.
 import {
   Map as MapLibreMap,
   Marker,
@@ -6,7 +6,6 @@ import {
   setWorkerUrl,
   type GeoJSONSource,
   type MapMouseEvent,
-  type MapOptions,
 } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 // maplibre derives its worker URL from its own `import.meta.url`, which points at the bundled app
@@ -15,6 +14,8 @@ import "maplibre-gl/dist/maplibre-gl.css";
 import maplibreWorkerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url";
 import type { Feature, Polygon } from "geojson";
 import { localToLngLat, squareCorners, squareGeoJSON, type SquareParams } from "./square";
+import { BASEMAP_STYLE, darkPaint } from "./basemap";
+import { currentTheme, onThemeChange, type Theme } from "./theme";
 
 setWorkerUrl(maplibreWorkerUrl);
 
@@ -34,40 +35,14 @@ export interface MapController {
   setPadding(p: MapPadding): void;
 }
 
-// maplibre-gl v6 does not re-export `StyleSpecification`; derive it from the public MapOptions.
-type StyleSpec = Exclude<MapOptions["style"], string | undefined>;
-
-/** Colours per theme; they mirror the CSS tokens in style.css, which a WebGL layer cannot read. */
-const THEMES = {
-  light: {
-    accent: "#C2410C",
-    mask: "rgba(237,237,234,0.62)",
-    // Desaturated and lifted: the basemap is context, the square is the subject.
-    raster: { "raster-saturation": -0.85, "raster-contrast": -0.1, "raster-brightness-min": 0.12, "raster-brightness-max": 1 },
-  },
-  dark: {
-    accent: "#FB923C",
-    mask: "rgba(17,17,19,0.55)",
-    // brightness-min above brightness-max inverts the tiles into a dark map.
-    raster: { "raster-saturation": -0.9, "raster-contrast": -0.1, "raster-brightness-min": 0.82, "raster-brightness-max": 0.06 },
-  },
-} as const;
-
-const darkQuery = window.matchMedia("(prefers-color-scheme: dark)");
-const theme = () => (darkQuery.matches ? THEMES.dark : THEMES.light);
-
-const STYLE: StyleSpec = {
-  version: 8,
-  sources: {
-    osm: {
-      type: "raster",
-      tiles: ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],
-      tileSize: 256,
-      attribution: "© OpenStreetMap contributors",
-    },
-  },
-  layers: [{ id: "osm", type: "raster", source: "osm", paint: { ...theme().raster } }],
+/** Overlay colours per theme; they mirror the CSS tokens in style.css, which a WebGL layer cannot
+ * read. The basemap itself is in basemap.ts: inverting the light OSM tiles for dark mode turned
+ * forest, streets and labels into one grey mush. */
+const THEMES: Record<Theme, { accent: string; mask: string }> = {
+  light: { accent: "#C2410C", mask: "rgba(237,237,234,0.55)" },
+  dark: { accent: "#FB923C", mask: "rgba(12,12,14,0.55)" },
 };
+const theme = () => THEMES[currentTheme()];
 
 /** Signed area of a lon/lat ring (shoelace); the sign gives the winding direction. */
 function ringArea(ring: [number, number][]): number {
@@ -112,7 +87,7 @@ export function createMap(container: HTMLElement, initial: SquareParams): MapCon
 
   const map = new MapLibreMap({
     container,
-    style: STYLE,
+    style: BASEMAP_STYLE,
     center: [params.lon, params.lat],
     zoom: 13,
     attributionControl: { compact: true },
@@ -150,37 +125,42 @@ export function createMap(container: HTMLElement, initial: SquareParams): MapCon
   };
   let framed = false;
 
-  const applyTheme = () => {
-    if (!map.getLayer("square-line")) return;
-    const t = theme();
-    for (const [key, value] of Object.entries(t.raster)) {
-      map.setPaintProperty("osm", key as keyof typeof t.raster, value);
+  // The print-area overlay goes on top of whatever basemap style is loaded. A theme switch loads a
+  // whole new style, which drops every source and layer, so this runs on each `style.load`.
+  const addOverlay = () => {
+    if (map.getSource("square")) return;
+    if (currentTheme() === "dark") {
+      for (const layer of map.getStyle().layers) {
+        for (const [key, value] of Object.entries(darkPaint(layer))) {
+          // darkPaint only returns paint keys of the layer's own type; maplibre's signature wants
+          // the key union, which a plain string from a lookup table cannot prove.
+          map.setPaintProperty(layer.id, key as Parameters<typeof map.setPaintProperty>[1], value);
+        }
+      }
     }
-    map.setPaintProperty("mask", "fill-color", t.mask);
-    map.setPaintProperty("square-fill", "fill-color", t.accent);
-    map.setPaintProperty("square-line", "line-color", t.accent);
-  };
-  darkQuery.addEventListener("change", applyTheme);
-
-  map.on("load", () => {
+    const t = theme();
     map.addSource("mask", { type: "geojson", data: maskGeoJSON(params) });
     map.addSource("square", { type: "geojson", data: squareGeoJSON(params) });
-    map.addLayer({ id: "mask", type: "fill", source: "mask", paint: { "fill-color": theme().mask } });
+    map.addLayer({ id: "mask", type: "fill", source: "mask", paint: { "fill-color": t.mask } });
     map.addLayer({
       id: "square-fill",
       type: "fill",
       source: "square",
       // Nearly clear, but still a hit target for dragging.
-      paint: { "fill-color": theme().accent, "fill-opacity": 0.04 },
+      paint: { "fill-color": t.accent, "fill-opacity": 0.04 },
     });
     map.addLayer({
       id: "square-line",
       type: "line",
       source: "square",
-      paint: { "line-color": theme().accent, "line-width": 2 },
+      paint: { "line-color": t.accent, "line-width": 2 },
     });
-    applyTheme();
+  };
+  map.on("style.load", addOverlay);
+  // diff: false reloads Positron from scratch, so leaving dark mode drops every recoloured paint.
+  onThemeChange(() => map.setStyle(BASEMAP_STYLE, { diff: false }));
 
+  map.on("load", () => {
     map.on("mouseenter", "square-fill", () => (map.getCanvas().style.cursor = "move"));
     map.on("mouseleave", "square-fill", () => (map.getCanvas().style.cursor = ""));
 

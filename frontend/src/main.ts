@@ -4,6 +4,7 @@ import { createJob, waitForJob, jobFileUrl } from "./api";
 import { setupControls, summarize } from "./controls";
 import { splitPlace } from "./format";
 import { createMap } from "./map";
+import { initTheme, nextPreference, preference, setPreference, type ThemePreference } from "./theme";
 import { setupSearch } from "./search";
 import { createViewer } from "./viewer";
 
@@ -12,6 +13,25 @@ const JOB_TIMEOUT_MS = 600_000;
 
 const root = document.getElementById("app")!;
 const controls = setupControls(root);
+// Before the map: it picks its basemap style from the resolved theme.
+initTheme();
+const THEME_LABELS: Record<ThemePreference, string> = {
+  system: "Theme: follow system",
+  light: "Theme: light",
+  dark: "Theme: dark",
+};
+const themeToggle = document.getElementById("theme-toggle")!;
+const labelTheme = () => {
+  const label = `${THEME_LABELS[preference()]}. Click to change.`;
+  themeToggle.setAttribute("aria-label", label);
+  themeToggle.title = THEME_LABELS[preference()];
+};
+labelTheme();
+themeToggle.addEventListener("click", () => {
+  setPreference(nextPreference(preference()));
+  labelTheme();
+});
+
 const map = createMap(document.getElementById("map")!, { lat: 50.1106, lon: 8.6821, sideM: 1500, rotationDeg: 0 });
 let viewer: ReturnType<typeof createViewer> | null = null;
 try {

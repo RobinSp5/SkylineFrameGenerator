@@ -7,7 +7,9 @@ import { PRESETS, presetFor } from "./presets";
 import PAGE from "../index.html?raw";
 
 // The real page markup, minus the module script: the tests break when index.html and the wiring drift.
-const APP = PAGE.slice(PAGE.indexOf("<body>") + "<body>".length, PAGE.indexOf("<script")).trim();
+// Searched from <body> on: the theme bootstrap script in <head> comes first in the file.
+const BODY = PAGE.indexOf("<body>") + "<body>".length;
+const APP = PAGE.slice(BODY, PAGE.indexOf("<script", BODY)).trim();
 
 function field<T extends HTMLElement>(id: string): T {
   return document.getElementById(id) as unknown as T;
@@ -129,6 +131,16 @@ describe("setupControls", () => {
     field<HTMLInputElement>("thickness").value = "4";
     field<HTMLInputElement>("zfactor").value = "2";
     expect(controls.read()).toMatchObject({ mode: "full", plate_thickness_mm: 4, z_exaggeration: 2 });
+  });
+
+  it("shows the building height factor as a slider outside the collapsed plate section", () => {
+    setupControls(root);
+    const zfactor = field<HTMLInputElement>("zfactor");
+    expect(zfactor.type).toBe("range");
+    expect(zfactor.closest("details")).toBeNull();
+    zfactor.value = "2.3";
+    zfactor.dispatchEvent(new Event("input"));
+    expect(field<HTMLOutputElement>("zfactor-out").value).toBe("2.3×");
   });
 
   it("names the place from the picked search result", () => {
