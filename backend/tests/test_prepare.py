@@ -399,8 +399,8 @@ def test_unprintable_block_is_dropped_and_lowers_the_coverage():
 def test_a_small_house_below_the_old_threshold_is_a_body_of_its_own():
     # 5x5 m => 0.5 mm wide and 0.25 mm² at scale 0.1. The old rule wanted 0.8 mm of width and
     # buried it in a slab; now anything of at least TINY_FOOTPRINT_MM2 is a body (spec 4a §2.1).
-    # 0.5 mm survives the half-line erosion, so the footprint is not grown at all.
-    out = prepare(Features(buildings=[bld(box(200, 200, 205, 205))]), spec())
+    # 0.5 mm survives the half-line erosion of the detail mode, so the footprint is not grown.
+    out = prepare(Features(buildings=[bld(box(200, 200, 205, 205))]), spec(print_optimized=False))
     assert len(out.buildings) == 1
     assert out.buildings[0].geom.bounds == (200, 200, 205, 205)
     assert out.buildings[0].geom.area == 25
@@ -454,10 +454,23 @@ def test_widen_keeps_a_rectangle_a_rectangle():
 
 
 def test_a_narrow_footprint_is_widened_in_prepare():
-    out = prepare(Features(buildings=[bld(box(0, 0, 3, 50))]), spec())
+    # Detail mode: one nozzle line, 0.4 mm = 4 m at scale 0.1.
+    out = prepare(Features(buildings=[bld(box(0, 0, 3, 50))]), spec(print_optimized=False))
     assert len(out.buildings) == 1
     b = out.buildings[0]
     assert b.geom.bounds[2] - b.geom.bounds[0] == pytest.approx(4.0, abs=0.05)
+
+
+def test_print_optimized_widens_to_two_nozzle_lines():
+    # The default: 0.8 mm = 8 m at scale 0.1. A 0.5 mm house that detail mode leaves alone is
+    # grown too, since a one-line pin is what made Bambu Studio report floating regions.
+    assert spec().print_optimized is True
+    strip = prepare(Features(buildings=[bld(box(0, 0, 3, 50))]), spec()).buildings[0]
+    assert strip.geom.bounds[2] - strip.geom.bounds[0] == pytest.approx(8.0, abs=0.05)
+    house = prepare(Features(buildings=[bld(box(200, 200, 205, 205))]), spec()).buildings[0]
+    assert house.geom.bounds[2] - house.geom.bounds[0] == pytest.approx(8.0, abs=0.05)
+    wide = prepare(Features(buildings=[bld(box(0, 0, 12, 12))]), spec()).buildings[0]
+    assert wide.geom.bounds == (0, 0, 12, 12)
 
 
 def test_the_roof_is_fitted_to_the_widened_footprint():
@@ -862,7 +875,7 @@ def test_a_widened_lod2_footprint_is_printed_as_a_prism(monkeypatch):
     import skylineframe.prepare as prepare_module
 
     monkeypatch.setattr(prepare_module, "to_solid", lambda surfaces: calls.append(surfaces))
-    out = prepare(Features(lod2=[lod2_box(0, 0, 3, 20, 100.0, 112.0)]), spec())
+    out = prepare(Features(lod2=[lod2_box(0, 0, 3, 20, 100.0, 112.0)]), spec(print_optimized=False))
     assert calls == []
     assert len(out.buildings) == 1
     b = out.buildings[0]

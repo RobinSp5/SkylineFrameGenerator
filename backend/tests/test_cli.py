@@ -151,6 +151,13 @@ def test_terrain_is_off_by_default_and_can_be_switched_on(monkeypatch, tmp_path)
     assert spec.terrain is True and spec.terrain_exaggeration == 2.5
 
 
+def test_print_optimization_is_on_by_default_and_can_be_switched_off(monkeypatch, tmp_path):
+    spec, _ = run_cli(monkeypatch, tmp_path, [])
+    assert spec.print_optimized is True and spec.min_line_mm == 0.8
+    spec, _ = run_cli(monkeypatch, tmp_path, ["--no-optimize"])
+    assert spec.print_optimized is False and spec.min_line_mm == 0.4
+
+
 def _run_with_stats(monkeypatch, tmp_path, stats: dict, args: list[str]):
     def fake_run(spec, out_dir, cache_dir, progress=None, name=None):
         return RunResult(ExportPaths(out_dir / "model.stl", out_dir / "model.3mf", out_dir / "preview.glb"), stats)

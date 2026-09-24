@@ -70,6 +70,7 @@ export function setupControls(root: HTMLElement): Controls {
   const zfactor = el<HTMLInputElement>(root, "zfactor");
   const moreSummary = el<HTMLSpanElement>(root, "more-summary");
   const mode = el<HTMLFieldSetElement>(root, "mode");
+  const optimize = el<HTMLInputElement>(root, "optimize");
   const lod2 = el<HTMLInputElement>(root, "lod2");
   const terrain = el<HTMLInputElement>(root, "terrain");
   const terrainz = el<HTMLInputElement>(root, "terrainz");
@@ -210,6 +211,7 @@ export function setupControls(root: HTMLElement): Controls {
     lod2: lod2.checked,
     terrain: terrain.checked,
     terrain_exaggeration: Number(terrainz.value),
+    print_optimized: optimize.checked,
   });
 
   const showDownloads = (id: string | null, job?: Pick<JobState, "file_stem">) => {

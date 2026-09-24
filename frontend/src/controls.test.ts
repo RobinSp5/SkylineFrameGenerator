@@ -143,6 +143,13 @@ describe("setupControls", () => {
     expect(field<HTMLOutputElement>("zfactor-out").value).toBe("2.3×");
   });
 
+  it("optimizes for printing by default and sends the switch", () => {
+    const controls = setupControls(root);
+    expect(controls.read().print_optimized).toBe(true);
+    field<HTMLInputElement>("optimize").checked = false;
+    expect(controls.read().print_optimized).toBe(false);
+  });
+
   it("names the place from the picked search result", () => {
     const controls = setupControls(root);
     expect(field("place-name").textContent).toBe("Selected area");

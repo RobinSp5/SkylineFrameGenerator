@@ -40,6 +40,10 @@ def generate(
     lod2: Annotated[bool, typer.Option("--lod2/--no-lod2", help="Use official LoD2 building models where available")] = True,
     terrain: Annotated[bool, typer.Option("--terrain/--no-terrain", help="Model the terrain relief (Copernicus DEM)")] = False,
     terrain_z: Annotated[float, typer.Option(help="Terrain exaggeration factor, separate from --z")] = 1.0,
+    optimize: Annotated[
+        bool,
+        typer.Option("--optimize/--no-optimize", help="Widen thin parts to two nozzle lines (0.8 mm) so the model slices cleanly"),
+    ] = True,
     name: Annotated[
         str | None, typer.Option(help="Model name for the 3MF object and the STL header, e.g. 'Frankfurt – Altstadt'")
     ] = None,
@@ -65,6 +69,7 @@ def generate(
             lod2=lod2,
             terrain=terrain,
             terrain_exaggeration=terrain_z,
+            print_optimized=optimize,
         )
         result = run(spec, out, cache, progress=lambda stage, msg: typer.echo(f"[{stage}] {msg}"), name=name)
     except (SkylineError, ValidationError) as exc:

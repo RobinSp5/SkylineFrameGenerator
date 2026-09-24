@@ -93,6 +93,12 @@ class FrameSpec(BaseModel):
     # tower, and z_exaggeration already means "buildings" to every existing client.
     terrain: bool = False
     terrain_exaggeration: float = Field(default=1.0, gt=0, le=5)
+    # Thin parts get two nozzle lines instead of one. A footprint widened to a single 0.4 mm line
+    # is a pin up to several mm tall, and Bambu Studio flags a model full of them as having
+    # "floating regions"; at 0.8 mm the same Eppstein and Frankfurt models slice without a warning.
+    # The price: a house narrower than 0.8 mm prints as a block at its real height instead of
+    # with its LoD2 roof (Eppstein 1:15 000: 47 roof bodies instead of 702).
+    print_optimized: bool = True
     road_depth_mm: float = Field(default=0.4, gt=0)
     water_depth_mm: float = Field(default=0.6, gt=0)
     road_width_mm: dict[str, float] = Field(default_factory=lambda: dict(DEFAULT_ROAD_WIDTH_MM))
@@ -114,6 +120,11 @@ class FrameSpec(BaseModel):
             if getattr(self, name) >= self.plate_thickness_mm:
                 raise ValueError(f"{name} must be smaller than plate_thickness_mm")
         return self
+
+    @property
+    def min_line_mm(self) -> float:
+        """Narrowest footprint that is printed as it is; anything thinner is widened to this."""
+        return MIN_FEATURE_MM if self.print_optimized else MIN_LINE_MM
 
     @property
     def scale(self) -> float:

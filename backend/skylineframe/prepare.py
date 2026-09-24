@@ -19,7 +19,7 @@ from .features import Block, Building, Features, Road, Water
 from .heights import DEFAULT_GABLE_YES_MIN_M2, OUTBUILDING_KINDS, default_roof, estimate_height_m
 from .lod2.solidify import faces_of, footprint_of_faces, height_of_faces, to_solid
 from .project import square_local
-from .spec import MIN_FEATURE_MM, MIN_LINE_MM, TINY_FOOTPRINT_MM2, FrameSpec, Mode
+from .spec import MIN_FEATURE_MM, TINY_FOOTPRINT_MM2, FrameSpec, Mode
 
 SIMPLIFY_TOLERANCE_MM = 0.05
 # Fraction of the weld radius used to collapse the chords its round joins leave behind.
@@ -662,7 +662,7 @@ def prepare(features: Features, spec: FrameSpec) -> Prepared:
     # the 0.8 mm erosion and vanish into a slab (spec 4a §2.1). Widened here, before
     # resolve_roof, so the roof rectangle is the rectangle of the footprint that is printed.
     tiny_m2 = TINY_FOOTPRINT_MM2 / scale**2
-    half_line_m = MIN_LINE_MM / 2 / scale
+    half_line_m = spec.min_line_mm / 2 / scale
     printed = [b for b in footprints if b.geom.area >= tiny_m2]
     buildings = [_widened(b, half_line_m, square) for b in printed]
     for b in buildings:

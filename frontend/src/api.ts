@@ -12,6 +12,7 @@ export interface FrameSpecInput {
   lod2: boolean;
   terrain: boolean;
   terrain_exaggeration: number;
+  print_optimized: boolean;
 }
 
 export type JobStatus = "queued" | "running" | "done" | "error";
