@@ -16,7 +16,7 @@ export interface FrameSpecInput {
   print_optimized: boolean;
   // Colour print (trees green, water blue in the 3MF). Optional on purpose: the API rejects
   // unknown keys, so read() only sends it when it is true (see controls.ts).
-  multicolor?: boolean;
+  multicolor: boolean;
 }
 
 export type JobStatus = "queued" | "running" | "done" | "error";

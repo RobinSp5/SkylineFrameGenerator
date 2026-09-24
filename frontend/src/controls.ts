@@ -221,7 +221,8 @@ export function setupControls(root: HTMLElement): Controls {
     print_optimized: optimize.checked,
     // Only sent when on: the backend field is new and the API rejects unknown keys
     // (extra="forbid"), so an older backend keeps working as long as the switch stays off.
-    ...(multicolor.checked ? { multicolor: true } : {}),
+
+    multicolor: multicolor.checked,
   });
 
   const showDownloads = (id: string | null, job?: Pick<JobState, "file_stem">) => {

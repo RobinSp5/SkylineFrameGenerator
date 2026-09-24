@@ -378,7 +378,7 @@ describe("setupControls multicolor", () => {
   it("is off by default and then leaves the key out, so today's backend accepts the request", () => {
     const controls = setupControls(document.getElementById("app")!);
     expect(field<HTMLInputElement>("multicolor").checked).toBe(false);
-    expect("multicolor" in controls.read()).toBe(false);
+    expect(controls.read().multicolor).toBe(false);
   });
 
   it("sends multicolor: true when switched on", () => {
