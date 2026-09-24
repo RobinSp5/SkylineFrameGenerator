@@ -3,6 +3,10 @@
 Generates 3D-printable city cut-outs (buildings, optionally streets and water, on a square base plate)
 from OpenStreetMap data. Output: STL (single colour) and 3MF (multi-colour, one object per colour).
 
+https://github.com/user-attachments/assets/614b05d7-3558-42c3-a7cf-110bc110856a
+
+<p align="center"><em>Pick a place, frame the square, generate, and print.</em></p>
+
 ## Requirements
 
 - Python ≥ 3.13 and [uv](https://docs.astral.sh/uv/)
