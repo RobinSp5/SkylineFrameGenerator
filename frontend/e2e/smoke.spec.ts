@@ -103,3 +103,78 @@ test("backend error is shown to the user", async ({ page }) => {
   await expect(page.locator("#downloads")).toBeHidden();
   await expect(page.locator("#generate")).toBeEnabled();
 });
+
+test("a running job shows the generation overlay with its step, bar and times", async ({ page }) => {
+  let createdWith: Record<string, unknown> | null = null;
+  await page.route("**/api/jobs", (route) => {
+    createdWith = route.request().postDataJSON();
+    return route.fulfill({ status: 202, contentType: "application/json", body: JSON.stringify({ id: "job4" }) });
+  });
+  let release = false;
+  await page.route("**/api/jobs/job4", (route) => {
+    const body = release
+      ? { id: "job4", status: "done", stage: "export", message: "Ready", stats: { buildings: 42 }, progress: 1, progress_next: 1, elapsed_s: 20 }
+      : {
+          id: "job4",
+          status: "running",
+          stage: "mesh",
+          message: "Building solids for 2148 buildings in 143 blocks",
+          stats: {},
+          progress: 0.5,
+          progress_next: 0.7,
+          elapsed_s: 10,
+        };
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
+  });
+  await page.route("**/api/jobs/job4/preview.glb", (route) => route.fulfill({ status: 404, body: "" }));
+
+  await page.goto("/");
+  await page.locator("#multicolor").check();
+  await page.click("#generate");
+  const overlay = page.locator("#gen-overlay");
+  await expect(overlay).toBeVisible();
+  await expect(page.locator("#gen-title")).toHaveText("Generating model");
+  await expect(page.locator("[aria-current=step] .gen-step-label")).toHaveText("Building the 3D solids");
+  await expect(page.locator("#gen-count")).toHaveText("Step 5 of 6");
+  await expect(page.locator("#gen-eta")).toHaveText(/About \d+ s left/);
+  await expect(page.getByRole("progressbar")).toHaveAttribute("aria-valuenow", /^[5-6]\d$/);
+  expect(createdWith).toMatchObject({ multicolor: true });
+
+  release = true;
+  await expect(overlay).toBeHidden({ timeout: 5_000 });
+  await expect(page.locator("#downloads")).toBeVisible();
+});
+
+test("the colour print key is left out while the switch is off", async ({ page }) => {
+  const sent = await mockJob(page, "job5");
+  await page.goto("/");
+  await page.click("#generate");
+  await expect(page.locator("#downloads")).toBeVisible({ timeout: 10_000 });
+  expect(sent()).not.toHaveProperty("multicolor");
+});
+
+test("a failed run stays in the overlay and can be tried again", async ({ page }) => {
+  await page.route("**/api/jobs", (route) =>
+    route.fulfill({ status: 202, contentType: "application/json", body: JSON.stringify({ id: "job6" }) }),
+  );
+  let polls = 0;
+  await page.route("**/api/jobs/job6", (route) => {
+    polls += 1;
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ id: "job6", status: "error", stage: "prepare", message: "No buildings found in the selected area.", stats: {} }),
+    });
+  });
+  await page.goto("/");
+  await page.click("#generate");
+  await expect(page.locator("#gen-title")).toHaveText("Generation failed");
+  await expect(page.locator("#gen-error-text")).toHaveText("No buildings found in the selected area.");
+  await expect(page.locator("#gen-retry")).toBeFocused();
+  await page.click("#gen-retry");
+  await expect.poll(() => polls).toBeGreaterThan(1);
+  await expect(page.locator("#gen-retry")).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(page.locator("#gen-overlay")).toBeHidden();
+  await expect(page.locator("#generate")).toBeFocused();
+});

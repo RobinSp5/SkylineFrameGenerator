@@ -59,6 +59,35 @@
 
       <p class="map-hint mono" aria-hidden="true">Drag the square to move it · scroll to zoom</p>
 
+      <div id="gen-overlay" class="gen" hidden>
+        <section id="gen-card" class="gen-card" tabindex="-1" aria-labelledby="gen-title" aria-describedby="gen-subtitle">
+          <header class="gen-head">
+            <h2 id="gen-title">Generating model</h2>
+            <p id="gen-subtitle" class="hint"></p>
+          </header>
+          <p id="gen-announce" class="sr-only" role="status" aria-live="polite"></p>
+          <div id="gen-running" class="gen-running">
+            <div class="gen-figures" aria-hidden="true">
+              <p class="gen-percent mono"><span id="gen-percent">0</span><span class="unit">%</span></p>
+              <p id="gen-eta" class="gen-eta">Estimating…</p>
+            </div>
+            <div id="gen-bar" class="gen-bar" role="progressbar" aria-labelledby="gen-title" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+              <span id="gen-live" class="gen-live"></span>
+              <span id="gen-fill" class="gen-fill"></span>
+            </div>
+            <ol id="gen-steps" class="gen-steps" aria-label="Steps"></ol>
+            <p class="gen-foot hint mono"><span>Elapsed <span id="gen-elapsed">0:00</span></span><span id="gen-count"></span></p>
+          </div>
+          <div id="gen-error" class="gen-error" hidden>
+            <p id="gen-error-text" class="gen-error-text"></p>
+            <div class="gen-actions">
+              <button id="gen-retry" class="btn btn-primary" type="button">Try again</button>
+              <button id="gen-close" class="btn btn-secondary" type="button">Change settings</button>
+            </div>
+          </div>
+        </section>
+      </div>
+
       <aside id="sidebar" aria-label="Print settings">
         <button id="sheet-toggle" class="grabber" type="button" aria-expanded="true" aria-controls="sidebar-body">
           <span class="sr-only">Show or hide settings</span>
@@ -154,6 +183,13 @@
                   <span class="hint">From ESA WorldCover and OpenStreetMap</span>
                 </span>
                 <input id="trees" class="switch" type="checkbox" role="switch" checked />
+              </label>
+              <label class="switch-row">
+                <span class="switch-text">
+                  <span class="lbl">Colour print</span>
+                  <span class="hint">Trees green, water blue in the 3MF</span>
+                </span>
+                <input id="multicolor" class="switch" type="checkbox" role="switch" />
               </label>
             </div>
 

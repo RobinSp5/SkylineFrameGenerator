@@ -538,6 +538,142 @@ h1, h2, h3, p { margin: 0; }
   to { translate: 340% 0; }
 }
 
+/* ---------- Generation overlay: covers the map while a job runs ---------- */
+
+.gen {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  /* The panel stays readable beside it: 380 px wide plus its 16 px margins. */
+  right: 412px;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: color-mix(in srgb, var(--ground) 64%, transparent);
+  backdrop-filter: blur(3px) saturate(0.7);
+  -webkit-backdrop-filter: blur(3px) saturate(0.7);
+  opacity: 0;
+  transition: opacity 220ms var(--ease);
+}
+.gen.open { opacity: 1; }
+.gen-card {
+  width: min(440px, 100%);
+  padding: 26px 28px 18px;
+  background: var(--panel);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-panel);
+  box-shadow: var(--shadow-panel);
+  transform: translateY(10px);
+  transition: transform 320ms var(--ease);
+}
+.gen.open .gen-card { transform: none; }
+.gen-card:focus { outline: none; }
+.gen-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.gen-head h2 { font-size: 22px; font-weight: 600; letter-spacing: -0.02em; line-height: 1.15; }
+.gen-head p { margin-top: 4px; overflow-wrap: anywhere; }
+
+.gen-figures { display: flex; justify-content: space-between; align-items: baseline; gap: 16px; margin-top: 22px; }
+.gen-percent { font-size: 64px; font-weight: 500; letter-spacing: -0.045em; line-height: 0.9; }
+.gen-percent .unit { font-size: 26px; color: var(--muted); letter-spacing: 0; margin-left: 2px; }
+.gen-eta { font-size: 15px; font-weight: 500; text-align: right; }
+
+.gen-bar {
+  position: relative;
+  height: 10px;
+  margin-top: 16px;
+  border-radius: 5px;
+  background: var(--seg-bg);
+  overflow: hidden;
+}
+.gen-fill {
+  position: absolute;
+  inset: 0;
+  background: var(--accent);
+  transform-origin: left;
+  transform: scaleX(0);
+  transition: transform 300ms linear;
+}
+/* The stretch the current step will fill: tinted, with a light sweeping across it to show the
+   server is still at work even while the number stands still. */
+.gen-live {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 0;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  transition: left 300ms var(--ease), width 300ms var(--ease);
+}
+.gen-live::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  width: 50%;
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--accent) 60%, transparent), transparent);
+  animation: gen-sweep 1.8s var(--ease) infinite;
+}
+@keyframes gen-sweep {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(200%); }
+}
+
+.gen-steps { list-style: none; margin: 20px 0 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.gen-steps li {
+  display: grid;
+  grid-template-columns: 14px 1fr;
+  column-gap: 12px;
+  align-items: center;
+  padding: 4px 0;
+  font-size: 14px;
+  color: var(--muted);
+}
+.gen-steps li::before {
+  content: "";
+  grid-row: 1;
+  justify-self: center;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  box-sizing: border-box;
+  border: 1.5px solid var(--control-border);
+}
+/* Done steps take the bar's colour: the list and the bar tell the same story. */
+.gen-steps li[data-state="done"]::before { border-color: var(--accent); background: var(--accent); width: 8px; height: 8px; }
+.gen-steps li[data-state="current"] { color: var(--ink); font-weight: 500; }
+.gen-steps li[data-state="current"]::before {
+  width: 14px;
+  height: 14px;
+  border: 2px solid color-mix(in srgb, var(--accent) 25%, transparent);
+  border-top-color: var(--accent);
+  animation: gen-spin 0.9s linear infinite;
+}
+.gen-step-label { grid-column: 2; grid-row: 1; }
+.gen-step-detail {
+  grid-column: 2;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--muted);
+  margin-top: 1px;
+  overflow-wrap: anywhere;
+}
+@keyframes gen-spin { to { transform: rotate(360deg); } }
+
+.gen-foot {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--divider);
+}
+
+.gen-error-text { margin-top: 14px; font-size: 15px; line-height: 1.45; color: var(--error); font-weight: 500; overflow-wrap: anywhere; }
+.gen-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 22px; }
+.gen-actions .btn { height: 44px; font-size: 14px; }
+
 /* ---------- Touch: 44 px targets ---------- */
 
 @media (pointer: coarse) {
@@ -600,6 +736,11 @@ h1, h2, h3, p { margin: 0; }
   .panel-foot { padding: 12px 20px 16px; background: var(--panel); }
   .btn-primary { height: 50px; font-size: 16px; }
   .readout { font-size: 24px; }
+
+  /* The sheet has nothing to do while a job runs, so the card covers it as well. */
+  .gen { right: 0; z-index: 4; padding: 16px 16px calc(16px + env(safe-area-inset-bottom)); }
+  .gen-card { padding: 22px 20px 16px; }
+  .gen-percent { font-size: 56px; }
 }
 
 /* ---------- Reduced motion ---------- */
@@ -608,4 +749,12 @@ h1, h2, h3, p { margin: 0; }
   *, *::before, *::after { transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; }
   /* A frozen sliver would look like a stuck bar; show a steady partial fill instead. */
   .progress.indeterminate span { animation: none; width: 100%; transform: scaleX(0.35); }
+  /* The tinted stretch alone marks the current step; a still ring marks the step in the list. */
+  .gen-live::after { animation: none; display: none; }
+  .gen-steps li[data-state="current"]::before { animation: none; border-color: var(--accent); background: color-mix(in srgb, var(--accent) 25%, transparent); }
+  .gen-card { transform: none; }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .gen { background: var(--ground); backdrop-filter: none; -webkit-backdrop-filter: none; }
 }

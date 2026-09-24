@@ -14,6 +14,9 @@ export interface FrameSpecInput {
   terrain_exaggeration: number;
   trees: boolean;
   print_optimized: boolean;
+  // Colour print (trees green, water blue in the 3MF). Optional on purpose: the API rejects
+  // unknown keys, so read() only sends it when it is true (see controls.ts).
+  multicolor?: boolean;
 }
 
 export type JobStatus = "queued" | "running" | "done" | "error";
@@ -29,6 +32,13 @@ export interface JobState {
   // stem ("Frankfurt-am-Main_Altstadt_1500m_10cm"); empty until the job has started.
   name?: string;
   file_stem?: string;
+  // Weighted share of the run done when the current stage started, and where that stage ends
+  // (backend app/jobs.py stage_weights); 1 once done. Absent on an older backend.
+  progress?: number;
+  progress_next?: number;
+  /** Server-side seconds since the worker picked the job up; 0 while queued. */
+  elapsed_s?: number;
+  started_at?: number | null;
 }
 
 export interface GeocodeHit {

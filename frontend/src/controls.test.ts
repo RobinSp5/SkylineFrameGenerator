@@ -368,3 +368,38 @@ describe("setupControls lod2", () => {
     expect(field<HTMLAnchorElement>("dl-sources").getAttribute("href")).toBe("/api/jobs/job1/SOURCES.txt");
   });
 });
+
+describe("setupControls multicolor", () => {
+  beforeEach(() => {
+    document.body.innerHTML = APP;
+  });
+
+  it("is off by default and then leaves the key out, so today's backend accepts the request", () => {
+    const controls = setupControls(document.getElementById("app")!);
+    expect(field<HTMLInputElement>("multicolor").checked).toBe(false);
+    expect("multicolor" in controls.read()).toBe(false);
+  });
+
+  it("sends multicolor: true when switched on", () => {
+    const controls = setupControls(document.getElementById("app")!);
+    field<HTMLInputElement>("multicolor").checked = true;
+    expect(controls.read().multicolor).toBe(true);
+  });
+
+  it("sits with the other switches and says what it does", () => {
+    setupControls(document.getElementById("app")!);
+    const input = field<HTMLInputElement>("multicolor");
+    expect(input.getAttribute("role")).toBe("switch");
+    const row = input.closest("label")!;
+    expect(row.textContent).toContain("Colour print");
+    expect(row.textContent).toContain("Trees green, water blue in the 3MF");
+    expect(row.parentElement).toBe(field<HTMLInputElement>("trees").closest("label")!.parentElement);
+  });
+});
+
+describe("progressOf with the backend fraction", () => {
+  it("uses the weighted progress when the backend sends it", () => {
+    expect(progressOf({ status: "running", stage: "mesh", message: "Building", progress: 0.62 }).fraction).toBe(0.62);
+    expect(progressOf({ status: "running", stage: "name", message: "Looking up", progress: 0 }).fraction).toBe(0);
+  });
+});

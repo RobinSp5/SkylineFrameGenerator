@@ -3,8 +3,24 @@ import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 
+/** Printer white: the whole model in one neutral colour when it prints in a single filament. */
+export const NEUTRAL_COLOR = 0xecebe6;
+
+export interface LoadOptions {
+  /** Show the parts in their print colours (GLB vertex colours: buildings white, trees green,
+   * water blue, roads grey). Off: everything in NEUTRAL_COLOR, as a single-colour print looks. */
+  multicolor?: boolean;
+}
+
+/** The material a preview mesh gets: vertex colours for a colour print, one neutral colour otherwise. */
+export function previewMaterialParams(multicolor: boolean): THREE.MeshStandardMaterialParameters {
+  return multicolor
+    ? { vertexColors: true, roughness: 0.85 }
+    : { vertexColors: false, color: NEUTRAL_COLOR, roughness: 0.85 };
+}
+
 export interface Viewer {
-  load(url: string): Promise<void>;
+  load(url: string, options?: LoadOptions): Promise<void>;
   clear(): void;
   /** Pixels covered by floating UI; the model is centred in the rest of the canvas. */
   setInsets(insets: { right?: number; bottom?: number }): void;
@@ -82,7 +98,7 @@ export function createViewer(container: HTMLElement): Viewer {
       insets = { right: next.right ?? 0, bottom: next.bottom ?? 0 };
       resize();
     },
-    async load(url) {
+    async load(url, options = {}) {
       clear();
       const gltf = await loader.loadAsync(url);
       model = gltf.scene;
@@ -91,7 +107,7 @@ export function createViewer(container: HTMLElement): Viewer {
         if (obj instanceof THREE.Mesh) {
           // The GLTF's own material is replaced and never used again; drop it before it is orphaned.
           for (const material of materialsOf(obj)) material.dispose();
-          obj.material = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85 });
+          obj.material = new THREE.MeshStandardMaterial(previewMaterialParams(options.multicolor === true));
         }
       });
       scene.add(model);

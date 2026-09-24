@@ -2,8 +2,9 @@
 import "./style.css";
 import { createJob, waitForJob, jobFileUrl } from "./api";
 import { setupControls, summarize } from "./controls";
-import { splitPlace } from "./format";
+import { formatCm, splitPlace } from "./format";
 import { createMap } from "./map";
+import { setupOverlay } from "./overlay";
 import { initTheme, nextPreference, preference, setPreference, type ThemePreference } from "./theme";
 import { setupSearch } from "./search";
 import { createViewer } from "./viewer";
@@ -66,37 +67,64 @@ setupSearch(controls.elements.search, controls.elements.searchResults, (hit) => 
 });
 controls.onAdjust(() => controls.setStatus(""));
 
-controls.onGenerate(async () => {
+const overlay = setupOverlay(root);
+const generateButton = document.getElementById("generate") as HTMLButtonElement;
+let generating = false;
+
+async function generate(): Promise<void> {
+  if (generating) return;
+  generating = true;
   const spec = controls.read();
   controls.setBusy(true);
   controls.showDownloads(null);
   controls.setStatus("");
+  const place = document.getElementById("place-name")?.textContent || "Selected area";
+  overlay.start(spec, `${place} · ${spec.side_m} m on ${formatCm(spec.plate_size_mm / 10)} cm`);
   // Drop the previous model up front: a failing run must not leave a stale preview beside the error.
   viewer?.clear();
   const abort = new AbortController();
   const timeout = setTimeout(() => abort.abort(new Error("Timed out")), JOB_TIMEOUT_MS);
+  const fail = (message: string) => {
+    controls.setStatus(message, true);
+    overlay.fail(message);
+  };
   try {
     const { id } = await createJob(spec, abort.signal);
-    const job = await waitForJob(id, (j) => controls.setProgress(j), 1000, { signal: abort.signal });
+    const job = await waitForJob(
+      id,
+      (j) => {
+        controls.setProgress(j);
+        overlay.update(j);
+      },
+      1000,
+      { signal: abort.signal },
+    );
     if (job.status === "error") {
-      controls.setStatus(job.message || "Generation failed", true);
+      fail(job.message || "Generation failed");
       return;
     }
     const summary = summarize(job.stats ?? {});
     controls.setStatus(summary);
     controls.showResult(job, spec);
+    overlay.finish(document.getElementById("dl-3mf"));
     if (!viewer) return;
     try {
-      await viewer.load(jobFileUrl(id, "preview.glb"));
+      await viewer.load(jobFileUrl(id, "preview.glb"), { multicolor: spec.multicolor === true });
       controls.setStage("preview");
     } catch (err) {
       console.error(err);
       controls.setStatus(`${summary} (preview unavailable)`);
     }
   } catch (err) {
-    controls.setStatus(err instanceof Error ? err.message : String(err), true);
+    fail(err instanceof Error ? err.message : String(err));
   } finally {
     clearTimeout(timeout);
     controls.setBusy(false);
+    generating = false;
   }
-});
+}
+
+controls.onGenerate(generate);
+overlay.onRetry(generate);
+// Closing a failed run's card leaves the settings as they were, ready to change and run again.
+overlay.onClose(() => generateButton.focus());

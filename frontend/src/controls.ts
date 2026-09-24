@@ -15,7 +15,7 @@ export interface Controls {
   setPlace(displayName: string | null): void;
   setBusy(busy: boolean): void;
   /** Shows a running job's stage on the generate button. */
-  setProgress(job: Pick<JobState, "status" | "stage" | "message">): void;
+  setProgress(job: Pick<JobState, "status" | "stage" | "message" | "progress">): void;
   setStatus(text: string, isError?: boolean): void;
   showDownloads(id: string | null, job?: Pick<JobState, "file_stem">): void;
   /** Switches the panel to the result of a finished job generated from `spec`. */
@@ -49,8 +49,12 @@ function setRadio(group: HTMLElement, value: string): void {
 const STAGES = ["fetch", "terrain", "prepare", "trees", "mesh", "export"];
 
 /** Button label and bar fill for a running job; fraction null means "no idea yet" (indeterminate). */
-export function progressOf(job: Pick<JobState, "status" | "stage" | "message">): { label: string; fraction: number | null } {
+export function progressOf(
+  job: Pick<JobState, "status" | "stage" | "message" | "progress">,
+): { label: string; fraction: number | null } {
   if (job.status === "queued" || !job.stage) return { label: job.message || "Waiting for the server", fraction: null };
+  // The backend's weighted fraction wins; the stage index is the fallback for an older backend.
+  if (typeof job.progress === "number") return { label: job.message || job.stage, fraction: job.progress };
   const index = STAGES.indexOf(job.stage);
   const fraction = index < 0 ? null : (index + 1) / (STAGES.length + 1);
   return { label: job.message || job.stage, fraction };
@@ -76,6 +80,7 @@ export function setupControls(root: HTMLElement): Controls {
   const terrainz = el<HTMLInputElement>(root, "terrainz");
   const terrainzOut = el<HTMLOutputElement>(root, "terrainz-out");
   const trees = el<HTMLInputElement>(root, "trees");
+  const multicolor = el<HTMLInputElement>(root, "multicolor");
   const zfactorOut = el<HTMLOutputElement>(root, "zfactor-out");
   const generate = el<HTMLButtonElement>(root, "generate");
   const generateLabel = el<HTMLSpanElement>(root, "generate-label");
@@ -214,6 +219,9 @@ export function setupControls(root: HTMLElement): Controls {
     terrain_exaggeration: Number(terrainz.value),
     trees: trees.checked,
     print_optimized: optimize.checked,
+    // Only sent when on: the backend field is new and the API rejects unknown keys
+    // (extra="forbid"), so an older backend keeps working as long as the switch stays off.
+    ...(multicolor.checked ? { multicolor: true } : {}),
   });
 
   const showDownloads = (id: string | null, job?: Pick<JobState, "file_stem">) => {
@@ -268,8 +276,8 @@ export function setupControls(root: HTMLElement): Controls {
     setProgress(job) {
       const { label, fraction } = progressOf(job);
       generateLabel.textContent = label;
-      // Mirrored into the (visually hidden while busy) live region so screen readers hear it.
-      status.textContent = label;
+      // Not mirrored into the status live region: the generation overlay announces each step.
+      status.textContent = "";
       status.classList.remove("error");
       progress.classList.toggle("indeterminate", fraction === null);
       progressBar.style.transform = `scaleX(${fraction ?? 0})`;
