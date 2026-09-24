@@ -222,8 +222,12 @@ def _check(path: Path) -> None:
         raise TileError(str(exc) or type(exc).__name__) from exc
 
 
-def _download(url: str, path: Path, client: httpx.Client) -> str | None:
-    """Stream the tile into `path`. Returns _OCEAN on a 404; raises TileError on anything else."""
+def _download(url: str, path: Path, client: httpx.Client, max_bytes: int | None = None) -> str | None:
+    """Stream the tile into `path`. Returns _OCEAN on a 404; raises TileError on anything else.
+
+    max_bytes defaults to MAX_TILE_BYTES, read at call time; WorldCover tiles pass their own.
+    """
+    limit = max_bytes or MAX_TILE_BYTES
     # uuid4, not the pid: the API runs jobs on a thread pool, so two jobs for the same tile
     # would otherwise stage under one name and truncate each other (see lod2/hessen.py).
     staged = path.with_name(path.name + f".{uuid.uuid4().hex}.tmp")
@@ -237,8 +241,8 @@ def _download(url: str, path: Path, client: httpx.Client) -> str | None:
             with staged.open("wb") as handle:
                 for chunk in response.iter_bytes():
                     size += len(chunk)
-                    if size > MAX_TILE_BYTES:
-                        raise TileError(f"tile too large (over {MAX_TILE_BYTES} bytes)")
+                    if size > limit:
+                        raise TileError(f"tile too large (over {limit} bytes)")
                     handle.write(chunk)
         _check(staged)
         # Into place only once complete and readable: a truncated entry would poison the tile.
