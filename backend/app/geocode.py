@@ -163,6 +163,12 @@ def place_label(address: dict) -> str | None:
     """
     district = _address_part(address, DISTRICT_KEYS)
     place = _address_part(address, PLACE_KEYS)
+    # A German Ortsteil comes back as a village inside a municipality ("Vockenhausen" in
+    # "Eppstein"): the municipality is the place people know, the village names the part of it.
+    municipality = _address_part(address, ("municipality",))
+    village = _address_part(address, ("village",))
+    if place == village and municipality and municipality.casefold() != village.casefold():
+        place, district = municipality, district or village
     if place and district and district.casefold() != place.casefold():
         return f"{place}{LABEL_SEPARATOR}{district}"
     return place or district

@@ -172,7 +172,7 @@ FRANKFURT_REVERSE = {
         ({"city_district": "Innenstadt", "city": "Frankfurt am Main"}, "Frankfurt am Main – Innenstadt"),
         ({"quarter": "Westend-Süd", "city": "Frankfurt am Main"}, "Frankfurt am Main – Westend-Süd"),
         ({"neighbourhood": "Nordend", "city": "Frankfurt am Main"}, "Frankfurt am Main – Nordend"),
-        ({"village": "Niederjosbach", "municipality": "Eppstein"}, "Niederjosbach"),
+        ({"village": "Niederjosbach", "municipality": "Eppstein"}, "Eppstein – Niederjosbach"),
         ({"municipality": "Eppstein"}, "Eppstein"),
         ({"suburb": "Altstadt"}, "Altstadt"),
         ({"suburb": "  ", "city": " Mainz "}, "Mainz"),
@@ -248,3 +248,13 @@ def test_reverse_raises_when_rate_limited_upstream():
     g = make_replying_geocoder(httpx.Response(429, text="slow down"))
     with pytest.raises(GeocodeError):
         g.reverse(50.11, 8.68)
+
+
+def test_place_label_names_a_german_ortsteil_after_its_municipality():
+    from app.geocode import place_label
+
+    assert place_label({"village": "Vockenhausen", "municipality": "Eppstein"}) == "Eppstein – Vockenhausen"
+    assert place_label({"village": "Eppstein", "municipality": "Eppstein"}) == "Eppstein"
+    assert place_label({"village": "Lorsbach", "municipality": "Hofheim am Taunus", "suburb": "Nord"}) == (
+        "Hofheim am Taunus – Nord"
+    )
