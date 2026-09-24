@@ -43,9 +43,10 @@ MIN_LINE_MM = 0.4
 # Fixed print height of a block. The block is only a ground plate under the houses now, and
 # every house is at least min_building_height_mm tall, so it rises 0.4 mm above it (spec 4a §2.3).
 SOCKEL_MM = 0.4
-# Below this a footprint (a ~5 m² shed at 1:15 000) only feeds its block and gets no body of its
-# own (spec 4a §2.1).
-TINY_FOOTPRINT_MM2 = 0.1
+# Below this a footprint (a ~4.5 m² shed at 1:15 000) only feeds its block and gets no body of
+# its own (spec 4a §2.1). It also keeps out the corner slivers an LoD2 model leaves of the OSM
+# outline it replaces: 4 443 of them sit under 5 m² in the Eppstein square.
+TINY_FOOTPRINT_MM2 = 0.02
 LEVEL_HEIGHT_M = 3.2  # metres per building level when only building:levels is tagged
 
 

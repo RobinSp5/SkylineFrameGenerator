@@ -16,7 +16,7 @@ from shapely.ops import unary_union
 from shapely.validation import make_valid
 
 from .features import Block, Building, Features, Road, Water
-from .heights import estimate_height_m
+from .heights import default_roof, estimate_height_m
 from .lod2.solidify import faces_of, footprint_of_faces, height_of_faces, to_solid
 from .project import square_local
 from .spec import MIN_FEATURE_MM, MIN_LINE_MM, TINY_FOOTPRINT_MM2, FrameSpec, Mode
@@ -169,6 +169,18 @@ def estimate_missing_heights(buildings: list[Building]) -> None:
     for b in buildings:
         if b.height_m <= 0 and not b.is_part:
             b.height_m = estimate_height_m(b.kind, b.geom.area)
+
+
+def assign_default_roofs(buildings: list[Building]) -> None:
+    """Give untagged OSM houses a gable roof (spec 4a §2.4). In place.
+
+    Runs on the unclipped footprints for the same reason as the height estimate: the 200 m² limit
+    is a property of the house, not of the piece the square leaves of it. A tagged roof:shape wins
+    even when it is flat, and LoD2 models carry their real roof in the body.
+    """
+    for b in buildings:
+        if b.roof is None and not b.roof_tagged and not b.is_part and not b.lod2:
+            b.roof = default_roof(b.kind, b.geom.area)
 
 
 def lod2_buildings(features: Features) -> list[Building]:
@@ -595,6 +607,8 @@ def prepare(features: Features, spec: FrameSpec) -> Prepared:
     # shallow copies and leaves the caller's Buildings alone.
     buildings = [replace(b) for b in features.buildings]
     estimate_missing_heights(buildings)
+    # Before the spec.roofs switch below, so --no-roofs turns the default roofs off as well.
+    assign_default_roofs(buildings)
     # spec.lod2 is checked in fetch as well; checking it here too means a caller that hands in
     # LoD2 data with the flag off (the pipeline tests do exactly that) gets the OSM-only model.
     lod2 = lod2_buildings(features) if spec.lod2 else []

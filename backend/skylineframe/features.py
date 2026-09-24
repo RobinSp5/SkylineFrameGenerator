@@ -62,6 +62,9 @@ class Building:
     # because a body costs two orders of magnitude more than the footprint work (spec §5).
     surfaces: tuple[Ring, ...] = ()
     solid_m: m3d.Manifold | None = None  # watertight body in local metres, z = 0 at the ground
+    # roof:shape was tagged at all, flat and unsupported shapes included. `roof` is None for both
+    # "tagged flat" and "untagged", and only the untagged house may get a default roof (spec 4a §2.4).
+    roof_tagged: bool = False
 
 
 @dataclass

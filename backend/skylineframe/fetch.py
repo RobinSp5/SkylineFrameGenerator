@@ -237,6 +237,7 @@ def parse_overpass(data: dict, spec: FrameSpec) -> Features:
                     osm_id=osm_id(feature["properties"]),
                     is_part=is_part,
                     kind=building_kind,
+                    roof_tagged=bool((tags.get("roof:shape") or "").strip()),
                 )
             )
         elif tags.get("highway") in ROAD_CLASSES and kind in ("LineString", "MultiLineString"):

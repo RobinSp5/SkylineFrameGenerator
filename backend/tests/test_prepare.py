@@ -8,6 +8,7 @@ from skylineframe.prepare import (
     SIMPLIFY_TOLERANCE_MM,
     _clip,
     _coverage,
+    assign_default_roofs,
     assign_parts,
     default_roof_height_m,
     drop_covered,
@@ -58,16 +59,16 @@ def test_building_outside_square_is_dropped():
 
 
 def test_tiny_footprint_reaches_the_model_through_its_block():
-    # TINY_FOOTPRINT_MM2 = 0.1 mm² at scale 0.1 => 10 m². The 3x3 shed is below it, so it is not
+    # TINY_FOOTPRINT_MM2 = 0.02 mm² at scale 0.1 => 2 m². The 1x1 shed is below it, so it is not
     # a body of its own — but it is 1 m away from the house, so the close (radius 4 m) welds both
     # into one sockel block and none of its area is lost (spec 4a §2.1).
-    assert TINY_FOOTPRINT_MM2 == 0.1
-    feats = Features(buildings=[bld(box(0, 0, 10, 10)), bld(box(11, 0, 14, 3))])
+    assert TINY_FOOTPRINT_MM2 == 0.02
+    feats = Features(buildings=[bld(box(0, 0, 10, 10)), bld(box(11, 0, 12, 1))])
     out = prepare(feats, spec())
     assert len(out.buildings) == 1
     assert out.buildings[0].geom.area == pytest.approx(100)
     assert len(out.blocks) == 1
-    assert out.blocks[0].geom.area > 109
+    assert out.blocks[0].geom.area > 101
     # abs: the chord simplify of the close shaves ~0.05 m² off the block corners, so the
     # coverage is 1.0 up to that tolerance and never exactly 1.0.
     assert out.footprint_coverage == pytest.approx(1.0, abs=1e-3)
@@ -384,14 +385,14 @@ def test_sockel_is_not_lifted_to_the_building_minimum():
 
 
 def test_unprintable_block_is_dropped_and_lowers_the_coverage():
-    # The 3x3 shed stands alone: at 0.09 mm² it is below TINY_FOOTPRINT_MM2, so it is no body of
+    # The 1x1 shed stands alone: at 0.01 mm² it is below TINY_FOOTPRINT_MM2, so it is no body of
     # its own, and its block is the shed itself, which eroding by 4 m empties. The block goes and
-    # 9 of 109 m² of building area are missing from the model.
-    feats = Features(buildings=[bld(box(0, 0, 10, 10)), bld(box(200, 200, 203, 203))])
+    # 1 of 101 m² of building area is missing from the model.
+    feats = Features(buildings=[bld(box(0, 0, 10, 10)), bld(box(200, 200, 201, 201))])
     out = prepare(feats, spec())
     assert len(out.blocks) == 1
     assert len(out.buildings) == 1
-    assert out.footprint_coverage == pytest.approx(100 / 109, abs=1e-3)
+    assert out.footprint_coverage == pytest.approx(100 / 101, abs=1e-3)
 
 
 def test_a_small_house_below_the_old_threshold_is_a_body_of_its_own():
@@ -755,7 +756,7 @@ def test_drop_covered_splits_a_remainder_that_falls_into_two_pieces():
 
 
 def test_coverage_sees_a_remainder_that_reaches_nothing():
-    # A building whose main lobe an LoD2 model takes over and whose 3x3 m annex stands 190 m
+    # A building whose main lobe an LoD2 model takes over and whose 1x1 m annex stands 190 m
     # away: the annex is the remainder, it is too small to be printed on its own and too far from
     # anything to be welded into a printable block, so its area leaves the model. Subtracting
     # instead of dropping recovers what can be recovered, and the ratio still has to report the
@@ -763,7 +764,7 @@ def test_coverage_sees_a_remainder_that_reaches_nothing():
     feats = Features(
         buildings=[
             Building(
-                MultiPolygon([box(-10, -10, 10, 10), box(200, 200, 203, 203)]),
+                MultiPolygon([box(-10, -10, 10, 10), box(200, 200, 201, 201)]),
                 height_m=8.0,
                 osm_id="way/1",
                 kind="yes",
@@ -773,9 +774,10 @@ def test_coverage_sees_a_remainder_that_reaches_nothing():
     )
     out = prepare(feats, spec())
     assert [b.osm_id for b in out.buildings] == ["lod2/hessen/B1"]
-    assert [round(b.geom.area) for b in out.blocks] == [409]  # the annex has no block of its own
-    # 400 of the 409 m² that stood here are modelled; the 9 m² annex is gone.
-    assert out.footprint_coverage == pytest.approx(400 / 409, abs=1e-3)
+    # 400 m² plus the block hair around it: the annex has no block of its own.
+    assert [round(b.geom.area) for b in out.blocks] == [409]
+    # 400 of the 401 m² that stood here are modelled; the 1 m² annex is gone.
+    assert out.footprint_coverage == pytest.approx(400 / 401, abs=1e-3)
 
 
 def test_coverage_counts_displaced_area_in_the_denominator():
@@ -804,8 +806,8 @@ def test_the_uncovered_remainder_stays_in_the_model():
 
 
 def test_a_lod2_building_that_only_reaches_a_block_is_never_solidified(monkeypatch):
-    # 3x3 m => 0.09 mm², below TINY_FOOTPRINT_MM2, so it is no body of its own (spec 4a §2.1).
-    # It stands 1 m from a 20x20 house, so the close (radius 4 m) welds both into one block and
+    # 1x1 m => 0.01 mm², below TINY_FOOTPRINT_MM2, so it is no body of its own (spec 4a §2.1).
+    # It stands 3 m from a 20x20 house, so the close (radius 4 m) welds both into one block and
     # none of its area is lost. Solidifying it would be two orders of magnitude of work for
     # geometry that is thrown away (spec §5).
     calls = []
@@ -820,7 +822,7 @@ def test_a_lod2_building_that_only_reaches_a_block_is_never_solidified(monkeypat
     monkeypatch.setattr(prepare_module, "to_solid", spy)
     feats = Features(
         buildings=[Building(box(4, 0, 24, 20), height_m=10.0, osm_id="way/9", kind="yes")],
-        lod2=[lod2_box(0, 0, 3, 3, 100.0, 110.0)],
+        lod2=[lod2_box(0, 0, 1, 1, 100.0, 110.0)],
     )
     out = prepare(feats, spec())
     assert calls == []
@@ -829,7 +831,7 @@ def test_a_lod2_building_that_only_reaches_a_block_is_never_solidified(monkeypat
     # It still reaches the model through its block, exactly like a small OSM footprint: one block
     # around both footprints, and no area lost.
     assert len(out.blocks) == 1
-    assert out.blocks[0].geom.area > 409  # 400 m² house + 9 m² shed + the 1 m the close filled
+    assert out.blocks[0].geom.area > 401  # 400 m² house + 1 m² shed + the 3 m the close filled
     # abs: the chord simplify of the close shaves a little off the corners of the small shed.
     assert out.footprint_coverage == pytest.approx(1.0, abs=1e-3)
 
@@ -906,3 +908,38 @@ def test_without_lod2_data_nothing_changes():
     assert [b.osm_id for b in out.buildings] == ["way/1"]
     assert out.lod2_rejected == 0
     assert all(b.solid_m is None and b.surfaces == () for b in out.buildings)
+
+
+# --- default roofs (spec 4a §2.4) ---------------------------------------
+
+
+def test_assign_default_roofs_gives_an_untagged_house_a_gable():
+    house = Building(box(0, 0, 10, 8), 7.0, kind="house")
+    assign_default_roofs([house])
+    assert house.roof == RoofSpec(shape="gabled")
+
+
+def test_assign_default_roofs_respects_a_tagged_flat_roof():
+    # roof:shape=flat parses to roof None, exactly like an untagged house.
+    flat = Building(box(0, 0, 10, 8), 7.0, kind="house", roof_tagged=True)
+    assign_default_roofs([flat])
+    assert flat.roof is None
+
+
+def test_assign_default_roofs_leaves_parts_lod2_and_tagged_roofs_alone():
+    part = Building(box(0, 0, 10, 8), 7.0, kind="house", is_part=True)
+    official = Building(box(0, 0, 10, 8), 7.0, kind="house", lod2=True)
+    hipped = RoofSpec(shape="hipped")
+    tagged = Building(box(0, 0, 10, 8), 7.0, kind="house", roof=hipped, roof_tagged=True)
+    assign_default_roofs([part, official, tagged])
+    assert part.roof is None
+    assert official.roof is None
+    assert tagged.roof is hipped
+
+
+def test_prepare_builds_the_default_roof_and_no_roofs_turns_it_off():
+    house = Building(box(-6, -4, 6, 4), 7.0, kind="house")
+    with_roof = prepare(Features(buildings=[house]), spec())
+    assert [b.roof.shape for b in with_roof.buildings] == ["gabled"]
+    without = prepare(Features(buildings=[house]), spec(roofs=False))
+    assert [b.roof for b in without.buildings] == [None]

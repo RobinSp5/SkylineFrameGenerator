@@ -496,3 +496,13 @@ def test_fetch_lod2_survives_a_provider_that_raises(tmp_path, monkeypatch, caplo
         assert fetch_lod2(frankfurt, tmp_path) == ([], "")
     assert "exploding" in caplog.text
     assert "No space left on device" in caplog.text
+
+
+def test_parse_overpass_records_whether_roof_shape_was_tagged():
+    # An unsupported shape parses to no roof, but it was tagged: that house is not "untagged"
+    # and must not receive the default gable roof (spec 4a §2.4).
+    buildings = by_id(parse_overpass(PARTS_SAMPLE, spec()))
+    assert buildings["way/205"].roof is None
+    assert buildings["way/205"].roof_tagged is True
+    assert buildings["way/201"].roof_tagged is True
+    assert buildings["way/200"].roof_tagged is False
