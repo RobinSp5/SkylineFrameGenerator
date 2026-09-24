@@ -11,7 +11,9 @@ from shapely.geometry import box
 from skylineframe.grid import masked_grid_solid
 from skylineframe.spec import FrameSpec, Mode
 from skylineframe.terrain.heightfield import Heightfield
+from skylineframe.trees.crown import CLUMP_M, HEIGHT_MAX_FACTOR, HEIGHT_MIN_FACTOR, LOBES_MAX, crown_lobes
 from skylineframe.trees.geometry import (
+    MIN_CAP_MM,
     TREE_CELL_MM,
     TREE_CLEARANCE_MM,
     cap_height,
@@ -107,6 +109,183 @@ def test_fitting_nothing_gives_nothing():
     assert fitted_trees([], [box(0, 0, 1, 1)], spec()) == []
 
 
+def test_the_dome_takes_one_shape_per_point():
+    # The canopy evaluates every lobe of the forest in one call: crown and height per point.
+    r = np.array([0.0, 0.5, 0.0, 0.25])
+    crown = np.array([2.0, 2.0, 1.0, 1.0])
+    height = np.array([0.5, 0.5, 1.2, 1.2])
+    z = cap_height(r, crown, height)
+    assert z[0] == pytest.approx(0.5)
+    assert z[1] == pytest.approx(cap_height(np.array([0.5]), 2.0, 0.5)[0])
+    assert z[2] == pytest.approx(1.2)
+    assert z[3] == pytest.approx(cap_height(np.array([0.25]), 1.0, 1.2)[0])
+
+
+# --- the crown ----------------------------------------------------------------------------------
+
+
+def forest(n: int = 400, crown: float = 1.0, height: float = 1.2) -> list[Tree]:
+    """Trees on a jittered grid half a crown apart, the way layer.py places a WorldCover forest."""
+    side = int(np.sqrt(n))
+    step = crown * 0.53
+    i, j = (a.ravel() for a in np.meshgrid(np.arange(side), np.arange(side)))
+    x = -10 + i * step + 0.1 * np.sin(7 * i + 3 * j)
+    y = -10 + j * step + 0.1 * np.cos(5 * i + j)
+    return [Tree(float(xi), float(yi), crown, height) for xi, yi in zip(x, y, strict=True)]
+
+
+def test_a_crown_is_a_cloud_of_lobes():
+    s = spec()
+    tree = Tree(0.3, -0.7, 4.0, 2.0)
+    lobes = crown_lobes([tree], s)
+    assert 5 <= len(lobes.radius) <= 2 + LOBES_MAX
+    assert np.all(lobes.tree == 0)
+    # The tallest lobe is the top of the tree: the data height, give or take its clump.
+    assert tree.height_mm * HEIGHT_MIN_FACTOR - 1e-9 <= lobes.height.max() <= tree.height_mm * HEIGHT_MAX_FACTOR
+
+
+def test_every_lobe_is_printable_and_inside_the_cleared_crown():
+    s = spec()
+    min_lobe = s.min_line_mm / 2
+    places = [(-7.1, 3.3), (2.0, 2.0), (11.7, -4.2), (0.01, 0.0)]
+    shapes = [(min_crown_mm(s), 0.4), (1.0, 1.2), (1.6, 0.5), (4.0, 2.0), (9.0, 3.0)]
+    trees = [Tree(x, y, c, h) for x, y in places for c, h in shapes]
+    lobes = crown_lobes(trees, s)
+    for k, tree in enumerate(trees):
+        mine = lobes.tree == k
+        x, y, r, h = lobes.x[mine], lobes.y[mine], lobes.radius[mine], lobes.height[mine]
+        # No lobe narrower than a line at its base, so none of them is a pin sticking up.
+        assert np.all(r >= min_lobe - 1e-9)
+        # The crown never grows: every lobe stays inside the crown the fitting cleared.
+        assert np.all(np.hypot(x - tree.x_mm, y - tree.y_mm) + r <= tree.crown_mm / 2 + 1e-9)
+        # And it never shrinks below the printable crown: the widest lobe spans that on its own.
+        assert 2 * r.max() >= min_crown_mm(s) - 1e-9
+        assert h.max() >= min_tree_height_mm(s) - 1e-9
+
+
+def test_a_forest_grows_in_clumps():
+    # Trees of one height in the data: neighbours rise and fall together, so the canopy forms
+    # clumps a few crowns across, the cauliflower a forest is from above.
+    s = spec()
+    trees = [Tree(float(x), float(y), 1.0, 1.2) for x in np.arange(-40, 40, 0.5) for y in np.arange(-40, 40, 0.5)]
+    lobes = crown_lobes(trees, s)
+    tops = np.zeros(len(trees))
+    np.maximum.at(tops, lobes.tree, lobes.height)
+    size = CLUMP_M * s.scale
+    xy = np.array([(t.x_mm, t.y_mm) for t in trees])
+    block = np.floor((xy + 40) / size).astype(int)
+    keys, which = np.unique(block, axis=0, return_inverse=True)
+    means = np.bincount(which.ravel(), tops) / np.bincount(which.ravel())
+    assert len(keys) > 50
+    assert means.std() > 0.05  # per-tree jitter alone averages out to ~0.005 over a block
+    assert 1.2 * HEIGHT_MIN_FACTOR - 1e-9 <= tops.min() and tops.max() <= 1.2 * HEIGHT_MAX_FACTOR
+
+
+def test_a_small_tree_is_not_jittered_below_the_print_minimum():
+    s = spec()
+    tree = Tree(5.0, 5.0, min_crown_mm(s), min_tree_height_mm(s))
+    lobes = crown_lobes([tree], s)
+    assert min_tree_height_mm(s) <= lobes.height.max() <= min_tree_height_mm(s) * HEIGHT_MAX_FACTOR
+    assert 2 * lobes.radius.max() == pytest.approx(min_crown_mm(s))
+
+
+def test_the_crown_is_the_same_every_time_and_differs_from_tree_to_tree():
+    s = spec()
+    trees = [Tree(0.0, 0.0, 4.0, 2.0), Tree(10.0, 0.0, 4.0, 2.0)]
+    first, again = canopy(trees, s), canopy(list(trees), s)
+    assert np.array_equal(first.z_mm, again.z_mm)
+    # Same tree, 10 mm (50 cells) apart: the two crowns are not copies of each other.
+    left = first.z_mm[230:271, 230:271]
+    right = first.z_mm[230:271, 280:321]
+    assert np.abs(left - right).max() > 0.1
+
+
+def neighbour_max(z: np.ndarray) -> np.ndarray:
+    """The highest of the eight neighbours of every inner node."""
+    ny, nx = z.shape
+    shifted = [z[1 + dj : ny - 1 + dj, 1 + di : nx - 1 + di] for dj in (-1, 0, 1) for di in (-1, 0, 1) if dj or di]
+    return np.max(shifted, axis=0)
+
+
+def local_maxima(z: np.ndarray) -> int:
+    inner = z[1:-1, 1:-1]
+    neighbours = neighbour_max(z)
+    return int(np.sum((inner > neighbours) & (inner > 0)))
+
+
+def test_a_large_crown_is_lumpy_not_a_dome():
+    s = spec()
+    field = canopy([Tree(0.0, 0.0, 6.0, 2.5)], s)
+    assert local_maxima(field.z_mm) >= 3
+    # Not radially symmetric: the height on a ring round the centre varies from side to side.
+    angles = np.linspace(0, 2 * np.pi, 36, endpoint=False)
+    ring = field.sample(2.0 * np.cos(angles), 2.0 * np.sin(angles))
+    assert ring.max() - ring.min() > 0.3
+
+
+def test_the_footprint_stays_inside_the_crown_and_covers_the_minimum():
+    s = spec()
+    for tree in [Tree(0.0, 0.0, min_crown_mm(s), 1.2), Tree(0.0, 0.0, 3.0, 1.0), Tree(0.0, 0.0, 6.0, 2.5)]:
+        field = canopy([tree], s)
+        n = field.z_mm.shape[0]
+        g = field.origin_mm[0] + np.arange(n) * field.cell_mm
+        gx, gy = np.meshgrid(g, g)
+        r = np.hypot(gx - tree.x_mm, gy - tree.y_mm)
+        assert np.all(r[field.z_mm > 0] < tree.crown_mm / 2)
+        # The middle of a crown as wide as the printable minimum is solid.
+        assert np.all(field.z_mm[r < min_crown_mm(s) / 2 - field.cell_mm] >= MIN_CAP_MM)
+
+
+def test_a_tall_crown_is_still_a_height_field_with_its_top_inside():
+    s = spec()
+    field = canopy([Tree(0.0, 0.0, 1.0, 3.0)], s)
+    assert 3.0 * HEIGHT_MIN_FACTOR - 1e-9 <= field.z_mm.max() <= 3.0 * HEIGHT_MAX_FACTOR
+
+
+def dome_canopy(trees: list[Tree], s: FrameSpec) -> np.ndarray:
+    """The canopy of before the lobes: one dome per tree, the highest winning."""
+    grid = canopy([], s)
+    n = grid.z_mm.shape[0]
+    g = grid.origin_mm[0] + np.arange(n) * grid.cell_mm
+    gx, gy = np.meshgrid(g, g)
+    z = np.zeros_like(grid.z_mm)
+    for t in trees:
+        z = np.maximum(z, cap_height(np.hypot(gx - t.x_mm, gy - t.y_mm), t.crown_mm, t.height_mm))
+    return z
+
+
+def test_a_lumpy_forest_costs_no_more_triangles_than_the_domes():
+    from skylineframe.mesh import tree_solid
+
+    s = spec()
+    trees = forest()
+    lumpy = tree_solid(trees, s, None)
+    grid = canopy([], s)
+    z = dome_canopy(trees, s)
+    node = z >= MIN_CAP_MM
+    top = np.where(node, z, -1.0)
+    cells = node[:-1, :-1] | node[:-1, 1:] | node[1:, :-1] | node[1:, 1:]
+    domes = masked_grid_solid(grid, top, -2.0, cells)
+    assert lumpy.num_tri() <= 1.10 * domes.num_tri()
+
+
+def test_a_lumpy_forest_is_not_an_egg_carton():
+    # Same trees, same heights in the data: the canopy tops are no longer all at one height.
+    s = spec()
+    trees = forest()
+    lumpy, domes = canopy(trees, s).z_mm, dome_canopy(trees, s)
+    assert lumpy.max() <= 1.2 * HEIGHT_MAX_FACTOR
+    assert peak_spread(lumpy) > 2 * peak_spread(domes)
+
+
+def peak_spread(z: np.ndarray) -> float:
+    """Standard deviation of the heights of the local maxima."""
+    inner = z[1:-1, 1:-1]
+    neighbours = neighbour_max(z)
+    peaks = inner[(inner >= neighbours) & (inner > 0)]
+    return float(peaks.std())
+
+
 # --- the canopy -------------------------------------------------------------------------------
 
 
@@ -116,9 +295,11 @@ def test_the_canopy_is_one_height_field_on_a_fine_grid_with_the_highest_crown_wi
     assert field.cell_mm <= TREE_CELL_MM
     assert field.origin_mm == (-50.0, -50.0)
     assert field.z_mm.shape == (501, 501)
-    assert field.sample(1.0, 0.0) == pytest.approx(3.0)  # the taller tree stands in the lower one
-    assert field.sample(-1.0, 0.0) == pytest.approx(cap_height(np.array([1.0]), 4.0, 1.0)[0], abs=1e-9)
-    assert field.sample(-30.0, 20.0) == pytest.approx(1.5)
+    # The taller tree stands in the lower one: its top wins, a little below the data at most.
+    near = field.z_mm[245:256, 250:261]
+    assert 3.0 * HEIGHT_MIN_FACTOR - 1e-9 <= near.max() <= 3.0 * HEIGHT_MAX_FACTOR
+    assert 1.5 * HEIGHT_MIN_FACTOR - 1e-9 <= field.sample(-30.0, 20.0) <= 1.5 * HEIGHT_MAX_FACTOR
+    assert field.z_mm.max() == near.max()
     assert field.sample(20.0, 20.0) == 0.0
 
 

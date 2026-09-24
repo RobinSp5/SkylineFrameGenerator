@@ -1,8 +1,9 @@
 """How trees print (spec 6 §5): fitted between what else is on the plate, then one height field.
 
-A tree is a dome over its crown. All of them together are a single canopy height field on a grid
-of at most TREE_CELL_MM, the maximum of their domes, and mesh.py turns that into one solid: a
-forest is tens of thousands of trees, and a solid per tree would be tens of thousands of booleans.
+A crown is a cloud of overlapping domes, its lobes (crown.py). All of them together are a single
+canopy height field on a grid of at most TREE_CELL_MM, the maximum of their domes, and mesh.py
+turns that into one solid: a forest is tens of thousands of trees, and a solid per tree would be
+tens of thousands of booleans.
 """
 
 import numpy as np
@@ -11,6 +12,7 @@ from shapely.geometry import Polygon
 
 from ..spec import FrameSpec
 from ..terrain.heightfield import Heightfield
+from .crown import crown_lobes, min_crown_mm, min_tree_height_mm
 from .model import Tree
 
 TREE_CELL_MM = 0.2  # canopy grid: half a nozzle line, five nodes across the smallest dome
@@ -25,32 +27,23 @@ TREE_CLEARANCE_MM = 0.3
 MIN_CAP_MM = 0.05
 
 
-def min_crown_mm(spec: FrameSpec) -> float:
-    """Narrowest printed crown: a dome is wider than a line at the top, so its base must be wider
-    still (spec 6 §2.3). Without print optimization, one line."""
-    return spec.min_line_mm * 1.25 if spec.print_optimized else spec.min_line_mm
-
-
-def min_tree_height_mm(spec: FrameSpec) -> float:
-    """Lowest printed tree: lower than the lowest house, but still a visible bump."""
-    return spec.min_building_height_mm * 0.5 if spec.print_optimized else 0.0
-
-
-def cap_height(r: np.ndarray, crown_mm: float, height_mm: float) -> np.ndarray:
+def cap_height(r: np.ndarray, crown_mm: float | np.ndarray, height_mm: float | np.ndarray) -> np.ndarray:
     """Height of a dome at distance r from its centre, 0 outside the crown.
 
     Up to a hemisphere this is the spherical cap through the crown rim and the top. A tree taller
     than its crown radius would need a cap bulging out past its own base, an overhang, so it is a
     hemisphere stretched upwards instead: the same at height == radius, and still a height field.
+    Crown and height are one dome, or one per point of r.
     """
-    a, h = crown_mm / 2, height_mm
     r = np.asarray(r, dtype=float)
+    a, h = np.broadcast_arrays(np.asarray(crown_mm, dtype=float) / 2, np.asarray(height_mm, dtype=float), r)[:2]
     inside = r < a
-    if h <= a:
-        big_r = (a * a + h * h) / (2 * h)
-        z = h - big_r + np.sqrt(np.maximum(big_r * big_r - r * r, 0.0))
-    else:
-        z = h * np.sqrt(np.maximum(1.0 - (r / a) ** 2, 0.0))
+    low = h <= a
+    safe_h = np.where(low, h, 1.0)
+    big_r = (a * a + h * h) / (2 * safe_h)
+    cap = h - big_r + np.sqrt(np.maximum(big_r * big_r - r * r, 0.0))
+    stretched = h * np.sqrt(np.maximum(1.0 - (r / np.where(inside, a, 1.0)) ** 2, 0.0))
+    z = np.where(low, cap, stretched)
     return np.where(inside, np.maximum(z, 0.0), 0.0)
 
 
@@ -99,9 +92,9 @@ def canopy_grid(spec: FrameSpec) -> Heightfield:
 
 
 def canopy(trees: list[Tree], spec: FrameSpec) -> Heightfield:
-    """The height of the highest dome over every node of the plate grid, 0 where no tree stands.
+    """The height of the highest lobe over every node of the plate grid, 0 where no tree stands.
 
-    Every (tree, node of its bounding box) pair is evaluated at once, the way thicken.py samples
+    Every (lobe, node of its bounding box) pair is evaluated at once, the way thicken.py samples
     a roof: one pass of numpy for the whole forest.
     """
     grid = canopy_grid(spec)
@@ -109,28 +102,19 @@ def canopy(trees: list[Tree], spec: FrameSpec) -> Heightfield:
         return grid
     ny, nx = grid.z_mm.shape
     cell, (ox, oy) = grid.cell_mm, grid.origin_mm
-    x = np.array([t.x_mm for t in trees])
-    y = np.array([t.y_mm for t in trees])
-    a = np.array([t.crown_mm / 2 for t in trees])
+    lobes = crown_lobes(trees, spec)
+    x, y, a = lobes.x, lobes.y, lobes.radius
     i0 = np.clip(np.ceil((x - a - ox) / cell), 0, nx - 1).astype(int)
     i1 = np.clip(np.floor((x + a - ox) / cell), 0, nx - 1).astype(int)
     j0 = np.clip(np.ceil((y - a - oy) / cell), 0, ny - 1).astype(int)
     j1 = np.clip(np.floor((y + a - oy) / cell), 0, ny - 1).astype(int)
     wi, wj = np.clip(i1 - i0 + 1, 0, None), np.clip(j1 - j0 + 1, 0, None)
     count = wi * wj
-    t = np.repeat(np.arange(len(trees)), count)
+    t = np.repeat(np.arange(len(x)), count)
     k = np.arange(count.sum()) - np.repeat(np.cumsum(count) - count, count)
     i, j = i0[t] + k % wi[t], j0[t] + k // wi[t]
     r = np.hypot(ox + i * cell - x[t], oy + j * cell - y[t])
-    z = np.zeros(len(t))
-    # Grouped by shape, not per tree: a WorldCover forest has one crown size and a handful of
-    # heights, and cap_height works on arrays.
-    shapes = np.array([(t_.crown_mm, t_.height_mm) for t_ in trees])
-    keys, inverse = np.unique(shapes, axis=0, return_inverse=True)
-    inverse = inverse.ravel()[t]
-    for key, (crown, height) in enumerate(keys):
-        sel = inverse == key
-        z[sel] = cap_height(r[sel], crown, height)
+    z = cap_height(r, 2 * a[t], lobes.height[t])
     field = np.zeros((ny, nx))
     np.maximum.at(field, (j, i), z)
     return Heightfield(field, cell, grid.origin_mm)
