@@ -177,6 +177,8 @@ def run(
         # Trees (spec 6 §5.6): the count is what prints, after the fitting dropped the rest.
         "trees": len(scaled.trees),
         "trees_source": trees_source,
+        # Whether model.3mf is a Bambu Studio project with the parts on coloured filaments.
+        "multicolor": spec.multicolor,
         **paths.diagnostics,
     }
     note = getattr(layer, "note", "") if layer is not None else ""

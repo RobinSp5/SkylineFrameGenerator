@@ -7,6 +7,7 @@ import typer
 from pydantic import ValidationError
 
 from .errors import SkylineError
+from .export import filament_summary
 from .pipeline import run
 from .spec import PRESETS, FrameSpec, Mode, Preset
 
@@ -41,6 +42,13 @@ def generate(
     terrain: Annotated[bool, typer.Option("--terrain/--no-terrain", help="Model the terrain relief (Copernicus DEM)")] = False,
     terrain_z: Annotated[float, typer.Option(help="Terrain exaggeration factor, separate from --z")] = 1.0,
     trees: Annotated[bool, typer.Option("--trees/--no-trees", help="Trees from ESA WorldCover and OpenStreetMap")] = True,
+    multicolor: Annotated[
+        bool,
+        typer.Option(
+            "--multicolor/--no-multicolor",
+            help="3MF as a Bambu Studio project (X2D, AMS): trees green, water blue, the rest white",
+        ),
+    ] = False,
     optimize: Annotated[
         bool,
         typer.Option("--optimize/--no-optimize", help="Widen thin parts to two nozzle lines (0.8 mm) so the model slices cleanly"),
@@ -71,6 +79,7 @@ def generate(
             terrain=terrain,
             terrain_exaggeration=terrain_z,
             trees=trees,
+            multicolor=multicolor,
             print_optimized=optimize,
         )
         result = run(spec, out, cache, progress=lambda stage, msg: typer.echo(f"[{stage}] {msg}"), name=name)
@@ -110,6 +119,8 @@ def generate(
         if stats.get("trees_note"):
             line += f", {stats['trees_note']}"
         typer.echo(line)
+    if spec.multicolor:
+        typer.echo(f"Filaments: {filament_summary()}")
     typer.echo(f"Non-manifold edges after vertex merge: {int(stats.get('nonmanifold_edges', 0))}")
     typer.echo(f"Degenerate faces after vertex merge: {int(stats.get('degenerate_faces', 0))}")
     typer.echo(

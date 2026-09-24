@@ -208,6 +208,16 @@ def test_generate_is_silent_about_trees_when_they_were_switched_off(monkeypatch,
     assert "Trees" not in result.output
 
 
+def test_multicolor_is_off_by_default_and_can_be_switched_on(monkeypatch, tmp_path):
+    spec, result = run_cli(monkeypatch, tmp_path, [])
+    assert spec.multicolor is False
+    assert "Filaments" not in result.output
+    spec, result = run_cli(monkeypatch, tmp_path, ["--multicolor"])
+    assert spec.multicolor is True
+    # Tells the user which spools to load, in the order Bambu Studio numbers them.
+    assert "Filaments: 1 white (base, buildings, roads), 2 green (trees), 3 blue (water)" in result.output
+
+
 def _captured_name(monkeypatch, tmp_path, args: list[str]):
     captured = {}
 

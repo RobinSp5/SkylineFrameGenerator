@@ -380,6 +380,20 @@ def test_run_with_trees_prints_them_as_their_own_part(tmp_path, frankfurt_spec, 
     assert result.stats["stl_bytes"] > plain.stats["stl_bytes"]
 
 
+def test_multicolor_reaches_the_3mf_and_the_stats(tmp_path, frankfurt_spec, frankfurt_data):
+    import zipfile
+
+    fetch = lambda s, c: parse_overpass(frankfurt_data, s)  # noqa: E731
+    plain = run(frankfurt_spec, tmp_path / "plain", tmp_path / "cache", fetch=fetch)
+    colour = run(frankfurt_spec.model_copy(update={"multicolor": True}), tmp_path / "colour", tmp_path / "cache", fetch=fetch)
+    assert plain.stats["multicolor"] is False and colour.stats["multicolor"] is True
+    with zipfile.ZipFile(plain.paths.threemf) as z:
+        assert "Metadata/project_settings.config" not in z.namelist()
+    with zipfile.ZipFile(colour.paths.threemf) as z:
+        assert "Metadata/project_settings.config" in z.namelist()
+    assert plain.paths.stl.read_bytes() == colour.paths.stl.read_bytes()
+
+
 def test_osm_trees_reach_the_tree_layer_in_local_metres(tmp_path, frankfurt_spec, frankfurt_data, monkeypatch):
     # The data half adds Features.trees; until then the pipeline reads it with a default.
     from skylineframe import pipeline
