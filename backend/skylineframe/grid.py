@@ -65,3 +65,71 @@ def grid_solid(hf: Heightfield, top: Surface, bottom: Surface) -> m3d.Manifold:
         tri_verts=np.ascontiguousarray(np.concatenate([top_t, bot_t, walls]), dtype=np.uint32),
     )
     return m3d.Manifold(mesh)
+
+
+def _closed(cells: np.ndarray) -> np.ndarray:
+    """The mask with every pinch filled: two cells that meet only in a grid node would share that
+    vertex between two separate wall fans, and the solid would not be 2-manifold there. Filling
+    the other two cells of such a 2 x 2 square can create a new pinch next to it, so it repeats."""
+    cells = cells.copy()
+    while True:
+        a, b = cells[:-1, :-1], cells[:-1, 1:]
+        c, d = cells[1:, :-1], cells[1:, 1:]
+        pinch = (a & d & ~b & ~c) | (b & c & ~a & ~d)
+        if not pinch.any():
+            return cells
+        cells[:-1, :-1] |= pinch
+        cells[:-1, 1:] |= pinch
+        cells[1:, :-1] |= pinch
+        cells[1:, 1:] |= pinch
+
+
+def masked_grid_solid(hf: Heightfield, top: np.ndarray, bottom: float, cells: np.ndarray) -> m3d.Manifold:
+    """grid_solid over only the chosen cells: the closed solid between the top surface and a flat
+    bottom, with vertical walls wherever a chosen cell borders one that is not.
+
+    `cells` has one entry per grid cell, shape (ny - 1, nx - 1). A few thousand trees scattered over
+    a plate touch a small share of its cells, and meshing the whole window between them would put
+    a flat slab of hundreds of thousands of triangles into every boolean that follows. The cells
+    may form any number of separate islands: they are still one mesh and one Manifold.
+    """
+    cells = _closed(np.asarray(cells, dtype=bool))
+    ny, nx = hf.z_mm.shape
+    cj, ci = np.nonzero(cells)
+    node = np.arange(ny * nx).reshape(ny, nx)
+    a, b = node[cj, ci], node[cj, ci + 1]
+    c, d = node[cj + 1, ci + 1], node[cj + 1, ci]
+    # Counter-clockwise edges of every chosen cell, seen from above; an edge is on the outline when
+    # the cell across it is not chosen.
+    padded = np.pad(cells, 1)
+    pj, pi = cj + 1, ci + 1
+    edges = [
+        (a, b, ~padded[pj - 1, pi]),  # south
+        (b, c, ~padded[pj, pi + 1]),  # east
+        (c, d, ~padded[pj + 1, pi]),  # north
+        (d, a, ~padded[pj, pi - 1]),  # west
+    ]
+    used = np.unique(np.concatenate([a, b, c, d]))
+    index = np.full(ny * nx, -1, dtype=np.int64)
+    index[used] = np.arange(len(used))
+    n = len(used)
+    xs = hf.origin_mm[0] + (used % nx) * hf.cell_mm
+    ys = hf.origin_mm[1] + (used // nx) * hf.cell_mm
+    verts = np.concatenate(
+        [np.column_stack([xs, ys, np.asarray(top).ravel()[used]]), np.column_stack([xs, ys, np.full(n, float(bottom))])]
+    )
+    ta, tb, tc, td = index[a], index[b], index[c], index[d]
+    tris = [
+        np.column_stack([ta, tb, tc]),
+        np.column_stack([ta, tc, td]),
+        np.column_stack([tc, tb, ta]) + n,
+        np.column_stack([td, tc, ta]) + n,
+    ]
+    for p, q, outline in edges:
+        tp, tq = index[p[outline]], index[q[outline]]
+        tris += [np.column_stack([tp + n, tq + n, tq]), np.column_stack([tp + n, tq, tp])]
+    mesh = m3d.Mesh(
+        vert_properties=np.ascontiguousarray(verts, dtype=np.float32),
+        tri_verts=np.ascontiguousarray(np.concatenate(tris), dtype=np.uint32),
+    )
+    return m3d.Manifold(mesh)
