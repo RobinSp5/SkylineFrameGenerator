@@ -5,6 +5,8 @@ from dataclasses import dataclass, field
 import manifold3d as m3d
 from shapely.geometry.base import BaseGeometry
 
+from .trees.model import OsmTree
+
 # One ring of an LoD2 face: (x, y, z) triples, closing vertex already dropped. Tuples rather
 # than lists because these sit in dataclass fields that carry a default.
 Ring = tuple[tuple[float, float, float], ...]
@@ -96,3 +98,5 @@ class Features:
     # Raw LoD2 models as they came off the provider; prepare makes buildings out of them.
     lod2: list[Lod2Building] = field(default_factory=list)
     lod2_source: str = ""  # provider name, "" when no LoD2 data is in play (spec §8)
+    # natural=tree nodes and the sampled points of natural=tree_row ways (spec 6 §4.3).
+    trees: list[OsmTree] = field(default_factory=list)

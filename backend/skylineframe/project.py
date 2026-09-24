@@ -12,6 +12,7 @@ from shapely.geometry.base import BaseGeometry
 from .errors import AreaError
 from .features import Features, Lod2Building, Road, Water
 from .spec import FrameSpec
+from .trees.model import OsmTree
 
 
 def local_transformer(spec: FrameSpec) -> Transformer:
@@ -86,6 +87,20 @@ def project_lod2(building: Lod2Building, tr: Transformer, rotation_deg: float) -
     return replace(building, surfaces=tuple(rings))
 
 
+def project_trees(trees: list[OsmTree], tr: Transformer, rotation_deg: float) -> list[OsmTree]:
+    """The to_local mapping for OSM tree points, in one transformer call (a New York square has
+    tens of thousands of mapped street trees)."""
+    if not trees:
+        return []
+    rad = math.radians(rotation_deg)
+    cos_a, sin_a = math.cos(rad), math.sin(rad)
+    xs, ys = tr.transform([t.x for t in trees], [t.y for t in trees])
+    return [
+        replace(t, x=x * cos_a - y * sin_a, y=x * sin_a + y * cos_a)
+        for t, x, y in zip(trees, xs, ys)
+    ]
+
+
 def project_features(features: Features, spec: FrameSpec) -> Features:
     tr = local_transformer(spec)
     # replace() instead of a positional rebuild: Building carries a dozen fields now, and a
@@ -96,4 +111,5 @@ def project_features(features: Features, spec: FrameSpec) -> Features:
         water=[Water(to_local(w.geom, spec, tr)) for w in features.water],
         lod2=[project_lod2(b, tr, spec.rotation_deg) for b in features.lod2],
         lod2_source=features.lod2_source,
+        trees=project_trees(features.trees, tr, spec.rotation_deg),
     )

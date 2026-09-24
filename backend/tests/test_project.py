@@ -154,3 +154,20 @@ def test_project_features_keeps_the_lod2_fields_of_a_building():
     # Building.surfaces is not projected here: prepare reads them from Features.lod2, and
     # projecting the same rings twice would silently double the transform.
     assert got.surfaces == surfaces
+
+
+def test_project_features_projects_and_rotates_osm_trees():
+    from skylineframe.trees.model import OsmTree
+
+    s = FrameSpec(center_lat=50.0, center_lon=8.0, side_m=1000, rotation_deg=30)
+    feats = Features(trees=[OsmTree(8.002, 50.001, 11.0, 5.0), OsmTree(8.0, 50.0)])
+    got = project_features(feats, s).trees
+    reference = to_local(Point(8.002, 50.001), s)
+    assert (got[0].x, got[0].y) == pytest.approx((reference.x, reference.y), abs=1e-6)
+    assert (got[0].height_m, got[0].crown_m) == (11.0, 5.0)
+    assert (got[1].x, got[1].y) == pytest.approx((0.0, 0.0), abs=1e-6)
+    assert got[1].height_m is None and got[1].crown_m is None
+
+
+def test_project_features_without_trees():
+    assert project_features(Features(), spec()).trees == []

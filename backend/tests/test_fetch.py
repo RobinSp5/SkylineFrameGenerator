@@ -506,3 +506,91 @@ def test_parse_overpass_records_whether_roof_shape_was_tagged():
     assert buildings["way/205"].roof_tagged is True
     assert buildings["way/201"].roof_tagged is True
     assert buildings["way/200"].roof_tagged is False
+
+
+# --- trees (spec 6 §4.3) -------------------------------------------------
+
+TREES = {
+    "elements": [
+        {"type": "node", "id": 100, "lat": 50.0, "lon": 8.0, "tags": {"natural": "tree", "height": "15 m", "diameter_crown": "6"}},
+        {"type": "node", "id": 101, "lat": 50.0001, "lon": 8.0001, "tags": {"natural": "tree"}},
+        # Mistagged values are no values: a 0 m tree and a 900 m crown are typos.
+        {"type": "node", "id": 102, "lat": 50.0002, "lon": 8.0002, "tags": {"natural": "tree", "height": "0", "diameter_crown": "900"}},
+        {"type": "node", "id": 103, "lat": 50.0003, "lon": 8.0003, "tags": {"natural": "tree", "height": "tall"}},
+        # A row 0.001 deg of longitude long, about 71.6 m at 50 N, crown tagged 10 m: 7 trees.
+        {"type": "node", "id": 110, "lat": 50.001, "lon": 8.0},
+        {"type": "node", "id": 111, "lat": 50.001, "lon": 8.001},
+        {"type": "way", "id": 120, "nodes": [110, 111], "tags": {"natural": "tree_row", "diameter_crown": "10", "height": "9"}},
+        # An untagged row, default crown 8 m: 9 trees on the same length.
+        {"type": "node", "id": 112, "lat": 50.002, "lon": 8.0},
+        {"type": "node", "id": 113, "lat": 50.002, "lon": 8.001},
+        {"type": "way", "id": 121, "nodes": [112, 113], "tags": {"natural": "tree_row"}},
+        # Neither: an untagged node and a node that is something else.
+        {"type": "node", "id": 130, "lat": 50.0, "lon": 8.0},
+        {"type": "node", "id": 131, "lat": 50.0, "lon": 8.0, "tags": {"amenity": "bench"}},
+    ]
+}
+
+
+def test_build_query_asks_for_trees_only_when_asked():
+    bb = (49.9, 7.9, 50.1, 8.1)
+    for mode in Mode:
+        assert '"natural"="tree' not in build_query(bb, mode)  # bare "tree" is in living_street
+        q = build_query(bb, mode, trees=True)
+        assert 'node["natural"="tree"](49.900000,7.900000,50.100000,8.100000);' in q
+        assert 'way["natural"="tree_row"](49.900000,7.900000,50.100000,8.100000);' in q
+        assert q.strip().endswith("(._;>;);\nout body qt;")
+    # Without trees the query, and so the cache key, is exactly the one before phase 6.
+    assert build_query(bb, Mode.full, trees=False) == build_query(bb, Mode.full)
+
+
+def test_parse_overpass_reads_tree_nodes_with_their_tags():
+    feats = parse_overpass(TREES, spec())
+    nodes = [t for t in feats.trees if t.y < 50.0005]
+    assert [(t.x, t.y, t.height_m, t.crown_m) for t in nodes] == [
+        (8.0, 50.0, 15.0, 6.0),
+        (8.0001, 50.0001, None, None),
+        (8.0002, 50.0002, None, None),
+        (8.0003, 50.0003, None, None),
+    ]
+
+
+def test_parse_overpass_samples_a_tree_row_every_crown_diameter():
+    feats = parse_overpass(TREES, spec())
+    tagged = sorted((t for t in feats.trees if t.y == pytest.approx(50.001)), key=lambda t: t.x)
+    untagged = sorted((t for t in feats.trees if t.y == pytest.approx(50.002)), key=lambda t: t.x)
+    assert len(tagged) == 7 and len(untagged) == 9
+    assert all(t.height_m == 9.0 and t.crown_m == 10.0 for t in tagged)
+    assert all(t.height_m is None and t.crown_m is None for t in untagged)
+    # Evenly spaced, and not doubled at the ends: two rows sharing an end node would otherwise
+    # both put a tree on it.
+    gaps = [b.x - a.x for a, b in zip(tagged, tagged[1:])]
+    assert gaps == pytest.approx([0.001 / 7] * 6)
+    assert tagged[0].x == pytest.approx(8.0 + 0.0005 / 7)
+
+
+def test_parse_overpass_keeps_a_row_shorter_than_one_crown():
+    data = {
+        "elements": [
+            {"type": "node", "id": 1, "lat": 50.0, "lon": 8.0},
+            {"type": "node", "id": 2, "lat": 50.0, "lon": 8.00001},
+            {"type": "way", "id": 3, "nodes": [1, 2], "tags": {"natural": "tree_row"}},
+        ]
+    }
+    assert len(parse_overpass(data, spec()).trees) == 1
+
+
+def test_parse_overpass_skips_a_row_with_a_missing_node():
+    data = {"elements": [{"type": "way", "id": 3, "nodes": [1, 2], "tags": {"natural": "tree_row"}}]}
+    assert parse_overpass(data, spec()).trees == []
+
+
+def test_parse_overpass_without_trees_leaves_the_list_empty():
+    assert parse_overpass(SAMPLE, spec(mode=Mode.full)).trees == []
+
+
+def test_fetch_features_asks_for_trees(tmp_path):
+    calls: list[tuple[str, str | None]] = []
+    feats = fetch_features(spec(side_m=400, lod2=False), tmp_path, client=make_client([TREES], calls))
+    assert "tree_row" in calls[0][0]
+    assert len(feats.trees) == 4 + 7 + 9

@@ -3,6 +3,7 @@
 import hashlib
 import json
 import logging
+import math
 import os
 import time
 import uuid
@@ -18,6 +19,8 @@ from .features import Building, Features, Lod2Building, Road, RoofSpec, Water
 from .lod2.provider import select_provider
 from .project import query_bbox
 from .spec import LEVEL_HEIGHT_M, ROAD_CLASSES, FrameSpec, Mode
+from .trees.defaults import TREE_CROWN_M
+from .trees.model import OsmTree
 
 log = logging.getLogger(__name__)
 
@@ -42,6 +45,10 @@ WATER_SELECTORS = (
 )
 
 MAX_ROOF_HEIGHT_M = 100.0
+# The tallest trees on earth are about 116 m tall with crowns of about 60 m; beyond is a typo.
+MAX_TREE_HEIGHT_M = 150.0
+MAX_CROWN_M = 60.0
+M_PER_DEG_LAT = 111_320.0
 
 # roof:shape values we can build (spec §7) plus the common synonyms; everything else is flat.
 ROOF_SHAPE_MAP: dict[str, str] = {
@@ -68,7 +75,9 @@ COMPASS_DEG: dict[str, float] = {
 }
 
 
-def build_query(bbox: tuple[float, float, float, float], mode: Mode) -> str:
+def build_query(bbox: tuple[float, float, float, float], mode: Mode, trees: bool = False) -> str:
+    """The Overpass query for one square. trees=False is, character for character, the query of
+    before phase 6, so its cache entries stay valid."""
     south, west, north, east = bbox
     bb = f"({south:.6f},{west:.6f},{north:.6f},{east:.6f})"
     parts = [
@@ -85,6 +94,9 @@ def build_query(bbox: tuple[float, float, float, float], mode: Mode) -> str:
         for selector in WATER_SELECTORS:
             parts.append(f"way{selector}{bb};")
             parts.append(f"relation{selector}{bb};")
+    if trees:
+        parts.append(f'node["natural"="tree"]{bb};')
+        parts.append(f'way["natural"="tree_row"]{bb};')
     body = "\n  ".join(parts)
     # (._;>;) unions the matched elements with everything they reference, so every way and node
     # is emitted exactly once *with* tags. The classic "out body; >; out skel qt;" would emit member
@@ -208,6 +220,65 @@ def _is_water(tags: dict) -> bool:
     )
 
 
+def _positive_metres(raw: str | None, limit: float) -> float | None:
+    """Like _metres, but 0 is a typo too: a tree without height or crown is no tree."""
+    value = _metres(raw, limit)
+    return value or None
+
+
+def _tree_row(coords: list[tuple[float, float]], height: float | None, crown: float | None) -> list[OsmTree]:
+    """Points along a natural=tree_row way, one per crown diameter (spec 6 §4.3).
+
+    The row is cut into n equal pieces, n the length over the crown rounded, and a tree stands in
+    the middle of each: evenly spaced, and never on an end node, which the next row may share.
+    Lengths are equirectangular metres at the row's latitude, plenty for a few hundred metres.
+    """
+    cos_lat = math.cos(math.radians(sum(lat for _lon, lat in coords) / len(coords)))
+    seg = [
+        math.hypot((b[0] - a[0]) * M_PER_DEG_LAT * cos_lat, (b[1] - a[1]) * M_PER_DEG_LAT)
+        for a, b in zip(coords, coords[1:])
+    ]
+    length = sum(seg)
+    n = max(1, round(length / (crown or TREE_CROWN_M)))
+    trees: list[OsmTree] = []
+    i, start = 0, 0.0  # current segment and the distance at which it starts
+    for k in range(n):
+        at = (k + 0.5) * length / n
+        while i < len(seg) - 1 and start + seg[i] < at:
+            start += seg[i]
+            i += 1
+        if not seg:
+            lon, lat = coords[0]
+        else:
+            t = (at - start) / seg[i] if seg[i] > 0 else 0.0
+            (lon0, lat0), (lon1, lat1) = coords[i], coords[i + 1]
+            lon, lat = lon0 + t * (lon1 - lon0), lat0 + t * (lat1 - lat0)
+        trees.append(OsmTree(lon, lat, height, crown))
+    return trees
+
+
+def parse_trees(data: dict) -> list[OsmTree]:
+    """natural=tree nodes and sampled natural=tree_row ways, in lon/lat, straight off the raw
+    elements: osm2geojson has nothing to add to a point, and a row needs only its node list."""
+    elements = data.get("elements", [])
+    nodes = {e["id"]: (e["lon"], e["lat"]) for e in elements if e.get("type") == "node" and "lon" in e}
+    trees: list[OsmTree] = []
+    for e in elements:
+        tags = e.get("tags") or {}
+        natural = tags.get("natural")
+        if natural not in ("tree", "tree_row"):
+            continue
+        height = _positive_metres(tags.get("height"), MAX_TREE_HEIGHT_M)
+        crown = _positive_metres(tags.get("diameter_crown"), MAX_CROWN_M)
+        if natural == "tree" and e.get("type") == "node" and "lon" in e:
+            trees.append(OsmTree(e["lon"], e["lat"], height, crown))
+        elif natural == "tree_row" and e.get("type") == "way":
+            refs = e.get("nodes") or []
+            if refs and all(ref in nodes for ref in refs):
+                trees.extend(_tree_row([nodes[ref] for ref in refs], height, crown))
+    return trees
+
+
 def parse_overpass(data: dict, spec: FrameSpec) -> Features:
     if len(data.get("elements", [])) > MAX_ELEMENTS:
         raise FetchError("The selected area contains too much map data; choose a smaller square or the simple mode.")
@@ -244,6 +315,7 @@ def parse_overpass(data: dict, spec: FrameSpec) -> Features:
             feats.roads.append(Road(geom, tags["highway"]))
         elif _is_water(tags) and kind in ("Polygon", "MultiPolygon"):
             feats.water.append(Water(geom))
+    feats.trees = parse_trees(data)
     return feats
 
 
@@ -376,7 +448,8 @@ def fetch_features(
     client: httpx.Client | None = None,
     lod2_client: httpx.Client | None = None,
 ) -> Features:
-    query = build_query(query_bbox(spec), spec.mode)
+    # FrameSpec.trees lands with the geometry half of phase 6; until then trees are always asked for.
+    query = build_query(query_bbox(spec), spec.mode, trees=getattr(spec, "trees", True))
     feats = parse_overpass(
         fetch_overpass(query, cache_dir, url=url or overpass_url(), client=client), spec
     )
