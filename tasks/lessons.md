@@ -27,3 +27,8 @@ Patterns learned from corrections in this project. Review at session start.
 - **Rule:** A redesign keeps every control the user already relies on at the same level of visibility unless they agree to demote it. Collapsible sections only take settings people rarely touch (plate thickness), never the ones that shape the model (size, heights, detail).
 - **Rule:** Never ship a dark map by inverting light raster tiles; check the dark map at real zoom in a screenshot before calling a theme done.
 - **Check:** Before finishing a UI change, list every input id before and after and confirm none moved into a collapsed or hidden container.
+
+## 2026-09-24 — Fix the cause for the whole world, not the city in front of you
+- **Correction:** Robin: "du sollst jetzt ja nicht für jede stadt irgendwas raussuchen, sondern es sollte eine lösung geben sodass es überall funktioniert" and "es soll weltweit gehen, du brauchst nicht für alles tests machen!" I had tuned thresholds on Frankfurt, then started bisecting Marburg and Darmstadt, then a 25-place slicing sweep.
+- **Rule:** When a printability or quality problem shows up in one place, look for the rule that makes it impossible by construction (fully supported from below, nothing thinner than two lines, geometry built exactly) before tuning a threshold. A threshold measured on one city is a symptom fix.
+- **Rule:** Verify a general fix with one or two spot checks in places that exercise different code paths (LoD2 vs OpenStreetMap, flat vs terrain), not a sweep. Ask before starting anything that runs for half an hour.
