@@ -424,6 +424,89 @@ def _build_on_terrain(scaled: Scaled, spec: FrameSpec, hf: Heightfield) -> MeshS
     return MeshSet(base=base, buildings=buildings, single=single, water=water, roads=roads)
 
 
+# --- export precision ---------------------------------------------------------------------------
+
+# An STL has no vertex indices: a slicer welds its corners by position, in float32. manifold3d
+# works in double precision and keeps two solids that touch in an edge or a point apart with
+# coincident but distinct vertices. Both break once welded: an edge shorter than float32 resolves
+# collapses its faces, and a pinch becomes an edge with four faces. Measured on Eppstein, 98 % of
+# the problem came from the LoD2 bodies themselves (sub-micron edges where the footprint cut
+# passes a roof vertex), the rest from buildings touching each other.
+PRINT_GRID_MM = 1e-3  # 1 µm; three orders of magnitude below a nozzle, far above float32 steps
+# A quarter of the grid: a separated copy can never come near a vertex on another grid point.
+PINCH_SEPARATION_MM = PRINT_GRID_MM / 4
+MAX_SEPARATION_PASSES = 8
+_LINK = ((0, 1), (1, 2), (2, 0), (1, 0), (2, 1), (0, 2))
+
+
+def _from_arrays(verts: np.ndarray, tris: np.ndarray) -> m3d.Manifold:
+    # Copies on purpose: manifold3d only takes writable, owned arrays.
+    return m3d.Manifold(
+        m3d.Mesh64(vert_properties=np.array(verts, dtype=np.float64), tri_verts=np.array(tris, dtype=np.uint64))
+    )
+
+
+def _arrays(man: m3d.Manifold) -> tuple[np.ndarray, np.ndarray]:
+    mesh = man.to_mesh64()
+    return np.array(mesh.vert_properties)[:, :3], np.asarray(mesh.tri_verts).astype(np.int64)
+
+
+def _separated(verts: np.ndarray, tris: np.ndarray, group: np.ndarray, size: np.ndarray) -> np.ndarray:
+    """Move every copy of a shared position a hair into its own solid, away from the others.
+
+    Each copy moves towards the centroid of its own ring of neighbours, which lies on its own side
+    of the pinch. Taking out the mean direction of all copies at that position makes them move
+    apart, not in parallel: two boxes of equal height that touch along an edge would otherwise
+    both have their corners pulled down the same way by the roof.
+    """
+    ring = np.zeros_like(verts)
+    degree = np.zeros(len(verts))
+    for a, b in _LINK:
+        np.add.at(ring, tris[:, a], verts[tris[:, b]])
+        np.add.at(degree, tris[:, a], 1.0)
+    own = ring / np.maximum(degree, 1.0)[:, None] - verts
+    own /= np.maximum(np.linalg.norm(own, axis=1), 1e-300)[:, None]
+    mean = np.zeros((int(group.max()) + 1, 3))
+    np.add.at(mean, group, own)
+    apart = own - mean[group] / size[group][:, None]
+    length = np.linalg.norm(apart, axis=1)
+    # When the copies' own directions nearly agree, the difference is noise; the own direction
+    # still separates them, and the loop in printable() checks that it did.
+    direction = np.where((length > 0.1)[:, None], apart / np.maximum(length, 1e-300)[:, None], own)
+    shared = size[group] > 1
+    out = verts.copy()
+    out[shared] += PINCH_SEPARATION_MM * direction[shared]
+    return out
+
+
+def printable(man: m3d.Manifold) -> m3d.Manifold:
+    """The solid as a slicer will see it: 2-manifold once its vertices are welded by position.
+
+    1. Every vertex is snapped to a PRINT_GRID_MM grid, and manifold3d rebuilds the solid: the
+       rebuild collapses the edges that became zero length. This is what removes the sub-micron
+       edges, which the feature-preserving simplify() refuses to touch.
+    2. Every position still held by more than one vertex is a pinch — solids touching in an edge
+       or a point. Its copies are moved PINCH_SEPARATION_MM apart (_separated).
+
+    The rebuild can itself split a vertex whose fan became two after a collapse, which creates a
+    new pinch, so both steps repeat until a rebuild leaves no shared position. Positions are
+    compared in float32 because that is what the STL stores. The shape moves by at most a micron:
+    bounding box and volume stay the same to well below what a nozzle resolves.
+    """
+    verts, tris = _arrays(man)
+    verts = np.round(verts / PRINT_GRID_MM) * PRINT_GRID_MM
+    result = man
+    for _ in range(MAX_SEPARATION_PASSES):
+        result = _from_arrays(verts, tris)
+        verts, tris = _arrays(result)
+        _, group, size = np.unique(verts.astype(np.float32), axis=0, return_inverse=True, return_counts=True)
+        group = group.ravel()
+        if (size == 1).all():
+            break
+        verts = _separated(verts, tris, group, size)
+    return _check(result, "printable")
+
+
 def to_trimesh(man: m3d.Manifold) -> trimesh.Trimesh:
     mesh = man.to_mesh()
     vertices = np.asarray(mesh.vert_properties)[:, :3]

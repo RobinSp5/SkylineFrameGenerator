@@ -9,7 +9,7 @@ import trimesh
 
 from .errors import ExportError
 from .lod2.sources import SOURCES_FILENAME, sources_text
-from .mesh import MeshSet, to_trimesh
+from .mesh import MeshSet, printable, to_trimesh
 from .naming import slugify
 from .spec import FrameSpec
 
@@ -51,6 +51,7 @@ def mesh_diagnostics(tm: trimesh.Trimesh) -> dict:
     vertices. An STL has no indices, so a slicer welds by position — exactly, in float32, which
     is all the file stores — and only then sees whether an edge is shared by exactly two faces.
     A face whose corners weld together counts as degenerate, and its edges as non-manifold.
+    export_all runs every mesh through mesh.printable first, so both numbers are 0 there.
     """
     _, inverse = np.unique(np.asarray(tm.vertices, dtype=np.float32), axis=0, return_inverse=True)
     faces = inverse.ravel()[np.asarray(tm.faces)]
@@ -104,9 +105,11 @@ def export_all(
     paths = ExportPaths(stl=out_dir / "model.stl", threemf=out_dir / "model.3mf", glb=out_dir / "preview.glb")
 
     # Verify everything first, so a failure never leaves a half-written set of files behind.
-    single = to_trimesh(meshset.single)
+    # printable() on every mesh: a slicer welds the STL by position and may do the same with the
+    # 3MF objects, and neither may then find an edge with more than two faces.
+    single = to_trimesh(printable(meshset.single))
     verify_single(single, spec)
-    parts = {part: to_trimesh(man) for part, man in meshset.parts().items()}
+    parts = {part: to_trimesh(printable(man)) for part, man in meshset.parts().items()}
     for part, tm in parts.items():
         verify_part(tm, part)
 

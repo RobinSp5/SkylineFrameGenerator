@@ -202,10 +202,42 @@ def test_pinch_cases_break_a_slicer_weld_as_modelled(case):
     assert _welded_nonmanifold_edges(single) + _welded_pinched_vertices(single) > 0
 
 
+@pytest.mark.parametrize("case", sorted(PINCHES))
+def test_exported_stl_is_two_manifold_after_welding(tmp_path, case):
+    meshes = build_meshes(Scaled(buildings=PINCHES[case]), spec(mode=Mode.simple))
+    paths = export_all(meshes, spec(mode=Mode.simple), tmp_path)
+    tm = trimesh.load(paths.stl, file_type="stl", process=False)
+    assert _welded_nonmanifold_edges(tm) == 0
+    assert _welded_pinched_vertices(tm) == 0
+    assert paths.diagnostics["nonmanifold_edges"] == 0
+    assert paths.diagnostics["degenerate_faces"] == 0
+
+
+@pytest.mark.parametrize("case", sorted(PINCHES))
+def test_exported_3mf_parts_are_two_manifold_after_welding(tmp_path, case):
+    meshes = build_meshes(Scaled(buildings=PINCHES[case]), spec(mode=Mode.simple))
+    paths = export_all(meshes, spec(mode=Mode.simple), tmp_path)
+    scene = trimesh.load(paths.threemf, file_type="3mf", process=False)
+    for name, part in scene.geometry.items():
+        assert _welded_nonmanifold_edges(part) == 0, name
+        assert _welded_pinched_vertices(part) == 0, name
+    assert paths.diagnostics["nonmanifold_edges_3mf"] == 0
+
+
 def test_mesh_diagnostics_counts_a_pinch_as_a_slicer_does():
     # The raw union: the edge the two boxes share is one edge for a slicer, with four faces.
     meshes = build_meshes(Scaled(buildings=PINCHES["edge"]), spec(mode=Mode.simple))
     assert mesh_diagnostics(to_trimesh(meshes.single))["nonmanifold_edges"] > 0
+
+
+def test_export_keeps_the_shape_of_a_pinched_model(tmp_path):
+    meshes = build_meshes(Scaled(buildings=PINCHES["edge"]), spec(mode=Mode.simple))
+    paths = export_all(meshes, spec(mode=Mode.simple), tmp_path)
+    tm = trimesh.load(paths.stl, file_type="stl")  # merges vertices, so watertight is meaningful
+    raw = to_trimesh(meshes.single)
+    assert tm.is_watertight
+    assert np.allclose(tm.bounds, raw.bounds, atol=0.01)
+    assert tm.volume == pytest.approx(raw.volume, abs=0.01)
 
 
 def test_export_writes_sources_txt(tmp_path, meshset):
