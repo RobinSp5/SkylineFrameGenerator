@@ -10,7 +10,8 @@ from skylineframe.mesh import build_meshes, printable, to_trimesh
 from skylineframe.scale import Prism, Scaled, scale_features
 from skylineframe.spec import FrameSpec, Mode
 from skylineframe.terrain.heightfield import Heightfield
-from skylineframe.trees.crown import HEIGHT_MAX_FACTOR, HEIGHT_MIN_FACTOR
+from skylineframe.trees.crown import HEIGHT_JITTER
+from skylineframe.trees.forest import FOREST_RELIEF
 from skylineframe.trees.geometry import TREE_CLEARANCE_MM
 from skylineframe.trees.model import Tree
 
@@ -53,7 +54,7 @@ def test_a_tree_becomes_its_own_part_on_the_flat_plate():
     assert 0.4 * cap_volume(4.0, 1.5) < ms.trees.volume() < cap_volume(4.0, 1.5)
     x0, y0, z0, x1, y1, z1 = ms.trees.bounding_box()
     assert z0 == pytest.approx(0.0, abs=1e-6)  # flush on the plate, like the buildings part
-    assert 1.5 * HEIGHT_MIN_FACTOR - 1e-3 <= z1 <= 1.5 * HEIGHT_MAX_FACTOR + 1e-3
+    assert 1.5 * (1 - HEIGHT_JITTER) - 1e-3 <= z1 <= 1.5 + 1e-3
     assert (x0 + x1) / 2 == pytest.approx(20.0, abs=0.4)
     assert x1 - x0 <= 4.0 + 0.6
     assert ms.single.volume() == pytest.approx(PLATE_VOLUME + 1000 + ms.trees.volume(), rel=1e-4)
@@ -75,7 +76,7 @@ def test_a_forest_of_thousands_of_trees_is_one_solid():
     trees = [Tree(float(x), float(y), 1.0, 1.2) for x, y in xy]
     ms = build_meshes(Scaled(buildings=[HOUSE], trees=trees), spec())
     assert len(ms.single.decompose()) == 1
-    assert 1.2 < ms.trees.bounding_box()[5] <= 1.2 * HEIGHT_MAX_FACTOR + 0.01  # tall clumps stand out
+    assert 1.0 < ms.trees.bounding_box()[5] <= 1.2 * (1 + FOREST_RELIEF) + 0.01  # the canopy billows
     assert_supported_from_below(ms.single)
     printable(ms.single)
 
@@ -129,7 +130,7 @@ def test_on_terrain_the_trees_stand_on_the_relief():
     ground = float(hf.sample(0.0, 20.0))  # 5 mm at the centre of the plate
     # The top is the dome plus the relief under it, which rises a little towards the uphill side.
     top = ms.trees.bounding_box()[5]
-    assert ground + 1.5 * HEIGHT_MIN_FACTOR - 0.05 <= top <= ground + 1.5 * HEIGHT_MAX_FACTOR + 0.25
+    assert ground + 1.5 * (1 - HEIGHT_JITTER) - 0.05 <= top <= ground + 1.5 + 0.25
     # The part follows the slope: its lowest point is the downhill foot of the crown, somewhere
     # between the base lobe (at least 0.7 of the radius) and the rim.
     assert ground - 0.1 * 2.0 - 0.05 <= ms.trees.bounding_box()[2] <= ground - 0.1 * 2.0 * 0.6

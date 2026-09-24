@@ -6,10 +6,8 @@ are, where they sit, how wide and how high they are, and a slight shrink of the 
 come from a hash of the tree's position: the same tree always gets the same crown, two trees
 never get the same one, and there is no random state.
 
-A forest is a cauliflower one size up: trees grow in clumps that rise and fall together. At
-1:15 000 a crown is already the narrowest printable dome and its lobes can move by a tenth of a
-millimetre at most, so there the clumps, CLUMP_M across, are what the eye reads. They are a
-smooth hash-valued field over the plate (value noise), the same for every tree in one place.
+Dense trees are a forest and print as one canopy instead (forest.py); these crowns are for the
+trees that stand alone, in a row or in a park.
 
 Printable by construction (spec 6 §2.3):
 - every lobe is a dome at least a line wide at its base (radius >= min_line_mm / 2), so no lobe
@@ -26,16 +24,11 @@ import numpy as np
 
 from ..spec import FrameSpec
 from .model import Tree
+from .noise import unit_hash
 
 LOBES_MIN, LOBES_MAX = 3, 6  # side lobes round the top one
 SIZE_JITTER = 0.1  # a crown is 0-10 % narrower than the data
 HEIGHT_JITTER = 0.1  # and 0-10 % lower
-CLUMP_M = 50.0  # a clump of trees, in metres of city: a few crowns across
-CLUMP_RELIEF = 0.25  # a clump is up to 25 % taller or lower than the data
-# Bounds of a tree top against the data height (before the print minimum lifts it).
-HEIGHT_MIN_FACTOR = 1 - CLUMP_RELIEF - HEIGHT_JITTER
-HEIGHT_MAX_FACTOR = 1 + CLUMP_RELIEF
-_MASK64 = (1 << 64) - 1
 
 
 class Lobes(NamedTuple):
@@ -59,30 +52,6 @@ def min_tree_height_mm(spec: FrameSpec) -> float:
     return spec.min_building_height_mm * 0.5 if spec.print_optimized else 0.0
 
 
-def _unit(kx: np.ndarray, ky: np.ndarray, salt: int) -> np.ndarray:
-    """A hash of the integer pair (kx, ky) in [0, 1): splitmix64, as layer.py places the trees."""
-    z = (kx.astype(np.int64).view(np.uint64) << np.uint64(32)) ^ (
-        ky.astype(np.int64).view(np.uint64) & np.uint64(0xFFFFFFFF)
-    )
-    z = z + np.uint64((salt * 0x9E3779B97F4A7C15) & _MASK64)
-    z = (z ^ (z >> np.uint64(30))) * np.uint64(0xBF58476D1CE4E5B9)
-    z = (z ^ (z >> np.uint64(27))) * np.uint64(0x94D049BB133111EB)
-    z = z ^ (z >> np.uint64(31))
-    return (z >> np.uint64(11)).astype(np.float64) / float(1 << 53)
-
-
-def clumps(x: np.ndarray, y: np.ndarray, size_mm: float) -> np.ndarray:
-    """A smooth field in [0, 1] with hills and hollows about size_mm apart: value noise, one hash
-    per lattice node, eased in between."""
-    fx, fy = np.asarray(x, float) / size_mm, np.asarray(y, float) / size_mm
-    ix, iy = np.floor(fx).astype(np.int64), np.floor(fy).astype(np.int64)
-    tx, ty = fx - ix, fy - iy
-    tx, ty = tx * tx * (3 - 2 * tx), ty * ty * (3 - 2 * ty)
-    v00, v10 = _unit(ix, iy, 0), _unit(ix + 1, iy, 0)
-    v01, v11 = _unit(ix, iy + 1, 0), _unit(ix + 1, iy + 1, 0)
-    return (v00 * (1 - tx) + v10 * tx) * (1 - ty) + (v01 * (1 - tx) + v11 * tx) * ty
-
-
 def crown_lobes(trees: list[Tree], spec: FrameSpec) -> Lobes:
     """The lobes of every crown: a base, a top and LOBES_MIN..LOBES_MAX side lobes per tree."""
     n = len(trees)
@@ -94,13 +63,11 @@ def crown_lobes(trees: list[Tree], spec: FrameSpec) -> Lobes:
     kx, ky = np.round(x * 1000).astype(np.int64), np.round(y * 1000).astype(np.int64)
 
     def u(salt: int) -> np.ndarray:
-        return _unit(kx, ky, salt)
+        return unit_hash(kx, ky, salt)
 
     # The whole tree a little smaller and lower, never below what was printable before.
     a = np.maximum(a * (1 - SIZE_JITTER * u(1)), np.minimum(a, min_crown_mm(spec) / 2))
-    # The height also follows its clump, which lifts a tree as often as it lowers it.
-    clump = CLUMP_RELIEF * (2 * clumps(x, y, CLUMP_M * spec.scale) - 1)
-    h = np.maximum(h * (1 + clump - HEIGHT_JITTER * u(2)), np.minimum(h, min_tree_height_mm(spec)))
+    h = np.maximum(h * (1 - HEIGHT_JITTER * u(2)), np.minimum(h, min_tree_height_mm(spec)))
     r_min = np.minimum(spec.min_line_mm / 2, a)
 
     def lobe_radius(share: np.ndarray) -> np.ndarray:

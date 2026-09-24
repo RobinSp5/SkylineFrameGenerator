@@ -1,9 +1,10 @@
 """How trees print (spec 6 §5): fitted between what else is on the plate, then one height field.
 
-A crown is a cloud of overlapping domes, its lobes (crown.py). All of them together are a single
-canopy height field on a grid of at most TREE_CELL_MM, the maximum of their domes, and mesh.py
-turns that into one solid: a forest is tens of thousands of trees, and a solid per tree would be
-tens of thousands of booleans.
+Dense trees are a forest and print as one billowing canopy (forest.py); every other tree is a
+cloud of overlapping domes, its lobes (crown.py). All of it together is a single canopy height
+field on a grid of at most TREE_CELL_MM, the higher of the two, and mesh.py turns that into one
+solid: a forest is tens of thousands of trees, and a solid per tree would be tens of thousands of
+booleans.
 """
 
 import numpy as np
@@ -13,7 +14,11 @@ from shapely.geometry import Polygon
 from ..spec import FrameSpec
 from ..terrain.heightfield import Heightfield
 from .crown import crown_lobes, min_crown_mm, min_tree_height_mm
+from .discs import MIN_CAP_MM, disc_nodes
+from .forest import forest_canopy, forest_crowns_mm, is_forest
 from .model import Tree
+
+__all__ = ["MIN_CAP_MM", "canopy", "cap_height", "fitted_trees", "min_crown_mm", "min_tree_height_mm", "surface_z"]
 
 TREE_CELL_MM = 0.2  # canopy grid: half a nozzle line, five nodes across the smallest dome
 # Gap between a crown and a building, a groove or the plate edge. The canopy surface runs straight
@@ -21,10 +26,6 @@ TREE_CELL_MM = 0.2  # canopy grid: half a nozzle line, five nodes across the sma
 # this keeps even that off every wall and out of every groove, so the trees never share a face
 # with anything and never fill a recess.
 TREE_CLEARANCE_MM = 0.3
-# A grid node where the dome is lower than this counts as ground. On terrain the dome sits on a
-# relief sampled on a coarser grid, and the rim of the dome would otherwise leave a skin a few
-# microns above the surface, too thin to print and a source of slivers in the union.
-MIN_CAP_MM = 0.05
 
 
 def cap_height(r: np.ndarray, crown_mm: float | np.ndarray, height_mm: float | np.ndarray) -> np.ndarray:
@@ -53,7 +54,8 @@ def fitted_trees(trees: list[Tree], obstacles: list[Polygon], spec: FrameSpec) -
     Obstacles are building footprints, sockel blocks, road and water areas in print millimetres;
     the plate edge counts as one too. A tree whose centre is on an obstacle, or whose crown would
     have to shrink below the printable minimum, is dropped. In print mode a smaller tree is first
-    lifted to the minimum, so an 8 m crown at 1:15 000 still prints as a dome.
+    lifted to the minimum, so an 8 m crown at 1:15 000 still prints as a dome. A WorldCover tree
+    in a forest asks for a crown of its own size first (forest.py), and is fitted like any other.
     """
     if not trees:
         return []
@@ -70,8 +72,8 @@ def fitted_trees(trees: list[Tree], obstacles: list[Polygon], spec: FrameSpec) -
         nearest[which] = dist
         room = np.minimum(room, nearest)
     fitted = []
-    for tree, space in zip(trees, room, strict=True):
-        crown = min(max(tree.crown_mm, min_crown), 2 * (space - TREE_CLEARANCE_MM))
+    for tree, wanted, space in zip(trees, forest_crowns_mm(trees, spec), room, strict=True):
+        crown = min(max(float(wanted), min_crown), 2 * (space - TREE_CLEARANCE_MM))
         if crown < min_crown or crown <= 0:
             continue
         height = max(tree.height_mm, min_height)
@@ -92,32 +94,18 @@ def canopy_grid(spec: FrameSpec) -> Heightfield:
 
 
 def canopy(trees: list[Tree], spec: FrameSpec) -> Heightfield:
-    """The height of the highest lobe over every node of the plate grid, 0 where no tree stands.
-
-    Every (lobe, node of its bounding box) pair is evaluated at once, the way thicken.py samples
-    a roof: one pass of numpy for the whole forest.
-    """
+    """The canopy over every node of the plate grid, 0 where no tree stands: the forest canopy,
+    and the highest lobe of every tree that stands alone."""
     grid = canopy_grid(spec)
     if not trees:
         return grid
-    ny, nx = grid.z_mm.shape
-    cell, (ox, oy) = grid.cell_mm, grid.origin_mm
-    lobes = crown_lobes(trees, spec)
-    x, y, a = lobes.x, lobes.y, lobes.radius
-    i0 = np.clip(np.ceil((x - a - ox) / cell), 0, nx - 1).astype(int)
-    i1 = np.clip(np.floor((x + a - ox) / cell), 0, nx - 1).astype(int)
-    j0 = np.clip(np.ceil((y - a - oy) / cell), 0, ny - 1).astype(int)
-    j1 = np.clip(np.floor((y + a - oy) / cell), 0, ny - 1).astype(int)
-    wi, wj = np.clip(i1 - i0 + 1, 0, None), np.clip(j1 - j0 + 1, 0, None)
-    count = wi * wj
-    t = np.repeat(np.arange(len(x)), count)
-    k = np.arange(count.sum()) - np.repeat(np.cumsum(count) - count, count)
-    i, j = i0[t] + k % wi[t], j0[t] + k // wi[t]
-    r = np.hypot(ox + i * cell - x[t], oy + j * cell - y[t])
-    z = cap_height(r, 2 * a[t], lobes.height[t])
-    field = np.zeros((ny, nx))
-    np.maximum.at(field, (j, i), z)
-    return Heightfield(field, cell, grid.origin_mm)
+    lone = [t for t, dense in zip(trees, is_forest(trees, spec), strict=True) if not dense]
+    field = forest_canopy(trees, spec, grid)
+    if lone:
+        lobes = crown_lobes(lone, spec)
+        t, i, j, r = disc_nodes(lobes.x, lobes.y, lobes.radius, grid)
+        np.maximum.at(field, (j, i), cap_height(r, 2 * lobes.radius[t], lobes.height[t]))
+    return Heightfield(field, grid.cell_mm, grid.origin_mm)
 
 
 def surface_z(hf: Heightfield, x: np.ndarray, y: np.ndarray) -> np.ndarray:
