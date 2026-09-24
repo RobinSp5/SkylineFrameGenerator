@@ -1,9 +1,10 @@
 import xml.etree.ElementTree as ET
 import zipfile
 
+import numpy as np
 import pytest
 import trimesh
-from shapely.geometry import box
+from shapely.geometry import Polygon, box
 
 from skylineframe.errors import ExportError
 from skylineframe.export import export_all, mesh_diagnostics, verify_part, verify_single
@@ -146,6 +147,65 @@ def test_export_all_reports_diagnostics(tmp_path, meshset):
     paths = export_all(meshset, spec(), tmp_path)
     assert paths.diagnostics["nonmanifold_edges"] == 0
     assert paths.diagnostics["degenerate_faces"] == 0
+
+
+def _welded_faces(tm: trimesh.Trimesh) -> np.ndarray:
+    """Faces over vertices welded by exact float32 position, the way a slicer reads an STL."""
+    _, inverse = np.unique(np.asarray(tm.vertices, dtype=np.float32), axis=0, return_inverse=True)
+    return inverse.ravel()[tm.faces]
+
+
+def _welded_nonmanifold_edges(tm: trimesh.Trimesh) -> int:
+    """Every welded edge not shared by exactly two faces; a face that collapses counts too."""
+    faces = _welded_faces(tm)
+    edges = np.sort(np.concatenate([faces[:, [0, 1]], faces[:, [1, 2]], faces[:, [2, 0]]]), axis=1)
+    _, counts = np.unique(edges, axis=0, return_counts=True)
+    return int(np.count_nonzero(counts != 2))
+
+
+def _welded_pinched_vertices(tm: trimesh.Trimesh) -> int:
+    """Welded vertices whose faces do not form one fan: two solids that touch in a point.
+    Collapsed faces are left out; _welded_nonmanifold_edges already counts them."""
+    faces = _welded_faces(tm)
+    faces = faces[(faces[:, 0] != faces[:, 1]) & (faces[:, 1] != faces[:, 2]) & (faces[:, 2] != faces[:, 0])]
+    pinched = 0
+    for vertex in np.unique(faces):
+        links = [tuple(int(w) for w in face if w != vertex) for face in faces if vertex in face]
+        graph = {}
+        for a, b in links:
+            graph.setdefault(a, set()).add(b)
+            graph.setdefault(b, set()).add(a)
+        seen, stack = set(), [next(iter(graph))]
+        while stack:
+            node = stack.pop()
+            if node not in seen:
+                seen.add(node)
+                stack.extend(graph[node] - seen)
+        pinched += len(seen) != len(graph)
+    return pinched
+
+
+# Two footprints that touch along one vertical edge, and a raised part that touches its base
+# only in one corner point: the pinches manifold3d keeps as coincident but distinct vertices.
+# "sliver" has an outline edge of 0.1 µm, below what float32 resolves at 10 mm, the way the
+# footprint cut leaves them on LoD2 bodies: welded, its wall faces collapse.
+PINCHES = {
+    "edge": [Prism(box(-10, -10, 0, 0), 5.0), Prism(box(0, 0, 10, 10), 5.0)],
+    "corner": [Prism(box(-10, -10, 0, 0), 5.0), Prism(box(0, 0, 10, 10), 8.0, z0_mm=5.0)],
+    "sliver": [Prism(Polygon([(0, 0), (10, 0), (10, 10), (10 - 1e-7, 10), (0, 10)]), 5.0)],
+}
+
+
+@pytest.mark.parametrize("case", sorted(PINCHES))
+def test_pinch_cases_break_a_slicer_weld_as_modelled(case):
+    single = to_trimesh(build_meshes(Scaled(buildings=PINCHES[case]), spec(mode=Mode.simple)).single)
+    assert _welded_nonmanifold_edges(single) + _welded_pinched_vertices(single) > 0
+
+
+def test_mesh_diagnostics_counts_a_pinch_as_a_slicer_does():
+    # The raw union: the edge the two boxes share is one edge for a slicer, with four faces.
+    meshes = build_meshes(Scaled(buildings=PINCHES["edge"]), spec(mode=Mode.simple))
+    assert mesh_diagnostics(to_trimesh(meshes.single))["nonmanifold_edges"] > 0
 
 
 def test_export_writes_sources_txt(tmp_path, meshset):

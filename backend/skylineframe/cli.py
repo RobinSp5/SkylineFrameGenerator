@@ -98,6 +98,10 @@ def generate(
         typer.echo(f"Terrain: {stats['terrain_note']} (flat plate)")
     typer.echo(f"Non-manifold edges after vertex merge: {int(stats.get('nonmanifold_edges', 0))}")
     typer.echo(f"Degenerate faces after vertex merge: {int(stats.get('degenerate_faces', 0))}")
+    typer.echo(
+        f"3MF parts after vertex merge: {int(stats.get('nonmanifold_edges_3mf', 0))} non-manifold edges, "
+        f"{int(stats.get('degenerate_faces_3mf', 0))} degenerate faces"
+    )
     typer.echo(f"STL: {result.paths.stl}")
     typer.echo(f"3MF: {result.paths.threemf}")
 

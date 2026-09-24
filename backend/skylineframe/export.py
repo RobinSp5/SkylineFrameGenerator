@@ -45,19 +45,22 @@ def verify_single(tm: trimesh.Trimesh, spec: FrameSpec) -> None:
 
 
 def mesh_diagnostics(tm: trimesh.Trimesh) -> dict:
-    """Slicer-style health check: merge coincident vertices first, then count broken topology.
+    """Slicer-style health check: weld the vertices first, then count broken topology.
 
-    Verification runs on the manifold topology, where buildings that merely touch keep their own
-    vertices. A slicer merges those first, and only then can it see whether an edge is shared by
-    exactly two faces. These numbers are reported, not enforced: touching buildings legitimately
-    share edges after a merge.
+    Verification runs on the manifold topology, where solids that merely touch keep their own
+    vertices. An STL has no indices, so a slicer welds by position — exactly, in float32, which
+    is all the file stores — and only then sees whether an edge is shared by exactly two faces.
+    A face whose corners weld together counts as degenerate, and its edges as non-manifold.
     """
-    merged = tm.copy()
-    merged.merge_vertices()
-    _, counts = np.unique(merged.edges_sorted, axis=0, return_counts=True)
+    _, inverse = np.unique(np.asarray(tm.vertices, dtype=np.float32), axis=0, return_inverse=True)
+    faces = inverse.ravel()[np.asarray(tm.faces)]
+    edges = np.sort(np.concatenate([faces[:, [0, 1]], faces[:, [1, 2]], faces[:, [2, 0]]]), axis=1)
+    _, counts = np.unique(edges, axis=0, return_counts=True)
+    corners = np.asarray(tm.vertices, dtype=np.float32).astype(np.float64)[np.asarray(tm.faces)]
+    area = 0.5 * np.linalg.norm(np.cross(corners[:, 1] - corners[:, 0], corners[:, 2] - corners[:, 0]), axis=1)
     return {
         "nonmanifold_edges": int(np.count_nonzero(counts != 2)),
-        "degenerate_faces": int(np.count_nonzero(merged.area_faces < DEGENERATE_AREA_MM2)),
+        "degenerate_faces": int(np.count_nonzero(area < DEGENERATE_AREA_MM2)),
     }
 
 
@@ -125,4 +128,7 @@ def export_all(
     paths.sources.write_text(text, encoding="utf-8")
 
     paths.diagnostics = mesh_diagnostics(single)
+    part_diagnostics = [mesh_diagnostics(tm) for tm in parts.values()]
+    paths.diagnostics["nonmanifold_edges_3mf"] = sum(d["nonmanifold_edges"] for d in part_diagnostics)
+    paths.diagnostics["degenerate_faces_3mf"] = sum(d["degenerate_faces"] for d in part_diagnostics)
     return paths
