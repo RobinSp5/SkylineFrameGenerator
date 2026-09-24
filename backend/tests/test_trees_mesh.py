@@ -11,7 +11,7 @@ from skylineframe.scale import Prism, Scaled, scale_features
 from skylineframe.spec import FrameSpec, Mode
 from skylineframe.terrain.heightfield import Heightfield
 from skylineframe.trees.crown import HEIGHT_JITTER
-from skylineframe.trees.forest import FOREST_RELIEF
+from skylineframe.trees.forest import FLORET_MAX_MM, FOREST_RELIEF
 from skylineframe.trees.geometry import TREE_CLEARANCE_MM
 from skylineframe.trees.model import Tree
 
@@ -76,7 +76,8 @@ def test_a_forest_of_thousands_of_trees_is_one_solid():
     trees = [Tree(float(x), float(y), 1.0, 1.2) for x, y in xy]
     ms = build_meshes(Scaled(buildings=[HOUSE], trees=trees), spec())
     assert len(ms.single.decompose()) == 1
-    assert 1.0 < ms.trees.bounding_box()[5] <= 1.2 * (1 + FOREST_RELIEF) + 0.01  # the canopy billows
+    # The canopy billows, and florets ride on the billows.
+    assert 1.0 < ms.trees.bounding_box()[5] <= 1.2 * (1 + FOREST_RELIEF) + FLORET_MAX_MM + 0.01
     assert_supported_from_below(ms.single)
     printable(ms.single)
 

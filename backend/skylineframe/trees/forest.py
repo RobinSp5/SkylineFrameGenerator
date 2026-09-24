@@ -10,13 +10,17 @@ of different sizes with a rounded, lumpy edge. So where trees stand dense:
   cloud noise (fBm of |noise|: round billows, creases between them) in local metres with
   wavelengths FOREST_WAVELENGTHS_M, of which only those at least NOISE_FLOOR_LINES lines long on
   the print are kept. No billow is narrower than that, and the creases point down;
+- on the billows, every tree is a floret: a low cap about its own crown wide and FLORET_SHARE of
+  the canopy height high, never more than FLORET_MAX_MM (one layer pair), both hashed per tree.
+  Neighbours overlap, so the top reads as packed crowns with shallow crevices between them; the
+  florets are relief about the billow surface, which keeps its mean;
 - towards the edge of the union, and of every clearing or road, it falls off in a rounded
   shoulder about EDGE_M wide, whose start the same kind of noise moves inwards by up to half that;
 - whatever of the footprint is narrower than one line is opened away.
 
 Printable by construction: the canopy only ever covers nodes inside the fitted crowns, so the
 clearance around buildings, roads and water is the fitting's as before; it is one height field on
-the canopy grid (2.5D); and no part of it, hill or footprint, is narrower than a line.
+the canopy grid (2.5D); and no part of it, hill, floret or footprint, is narrower than a line.
 """
 
 import numpy as np
@@ -27,11 +31,11 @@ from ..spec import FrameSpec
 from ..terrain.heightfield import Heightfield
 from .crown import min_crown_mm
 from .defaults import TREE_CROWN_M
-from .discs import MIN_CAP_MM, disc_nodes
+from .discs import MIN_CAP_MM, cap_height, disc_nodes
 from .model import Tree
 from .noise import billow, fbm, unit_hash
 
-__all__ = ["billow", "fbm", "forest_canopy", "forest_crowns_mm", "forest_wavelengths_m", "is_forest"]
+__all__ = ["billow", "fbm", "floret_shapes", "forest_canopy", "forest_crowns_mm", "forest_wavelengths_m", "is_forest"]
 
 FOREST_WAVELENGTHS_M = (80.0, 35.0, 15.0)  # clumps of three sizes, in metres of city
 NOISE_FLOOR_LINES = 2.5  # no wavelength shorter than this many lines on the print
@@ -43,6 +47,9 @@ FOREST_NEIGHBOURS = 3  # a tree with this many others within FOREST_RADIUS crown
 FOREST_RADIUS = 1.5
 EDGE_M = 6.0  # width of the rounded shoulder at a forest edge
 HEIGHT_SMOOTH_M = 15.0  # the data height is averaged over about this distance
+FLORET_WIDTH = (0.75, 1.0)  # a floret is this share of its tree's crown wide, at least a crown
+FLORET_SHARE = (0.15, 0.25)  # and this share of the local canopy high
+FLORET_MAX_MM = 0.4  # but never higher than a layer pair: no deep crevice between two florets
 
 
 def forest_wavelengths_m(spec: FrameSpec) -> list[float]:
@@ -77,6 +84,21 @@ def forest_crowns_mm(trees: list[Tree], spec: FrameSpec) -> np.ndarray:
         lo, hi = FOREST_CROWN_M
         crowns[varied] = (lo + (hi - lo) * u**2.5) * spec.scale
     return crowns
+
+
+def floret_shapes(trees: list[Tree], spec: FrameSpec) -> tuple[np.ndarray, np.ndarray]:
+    """Diameter (mm) and height share of each tree's floret, hashed from its place in metres.
+
+    At least as wide as the narrowest printed crown, so its top is wider than a line, and never
+    wider than its own crown, so it stays inside what the fitting cleared."""
+    xy_cm = np.round(np.array([(t.x_mm, t.y_mm) for t in trees]) / spec.scale * 100).astype(np.int64)
+    crown = np.array([t.crown_mm for t in trees])
+    lo, hi = FLORET_WIDTH
+    width = crown * (lo + (hi - lo) * unit_hash(xy_cm[:, 0], xy_cm[:, 1], 11))
+    diameter = np.clip(width, np.minimum(min_crown_mm(spec), crown), crown)
+    lo, hi = FLORET_SHARE
+    share = lo + (hi - lo) * unit_hash(xy_cm[:, 0], xy_cm[:, 1], 12)
+    return diameter, share
 
 
 def _disc(radius_mm: float, cell: float) -> np.ndarray:
@@ -117,6 +139,17 @@ def forest_canopy(trees: list[Tree], spec: FrameSpec, grid: Heightfield) -> np.n
     x_m, y_m = (ox + ii * cell) / spec.scale, (oy + jj * cell) / spec.scale
     waves = forest_wavelengths_m(spec)
     top = base * (1 + FOREST_RELIEF * billow(x_m, y_m, waves, salt=1))
+
+    # Florets: a cap per tree on the billows, as relief about its local mean.
+    diameter, share = floret_shapes(forest, spec)
+    t, i, j, r = disc_nodes(x, y, diameter / 2, grid)
+    under = np.zeros(z.shape)
+    under[cover] = top
+    bump = cap_height(r, diameter[t], np.minimum(share[t] * under[j, i], FLORET_MAX_MM))
+    florets = np.zeros(z.shape)
+    np.maximum.at(florets, (j, i), bump)
+    mean = ndimage.gaussian_filter(florets, sigma) / np.maximum(weight, 1e-12)
+    top = top + (florets - mean)[cover]
 
     # A rounded shoulder at every edge, its start pushed inwards by noise: lumpy, never outwards.
     edge = max(EDGE_M * spec.scale, min_crown_mm(spec) / 2)

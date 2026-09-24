@@ -5,19 +5,30 @@ import pytest
 from scipy import ndimage
 from shapely.geometry import Point, box
 
+import skylineframe.trees.forest as forest_module
 from skylineframe.spec import FrameSpec, Mode
 from skylineframe.trees.defaults import TREE_CROWN_M, TREE_HEIGHT_M
 from skylineframe.trees.forest import (
+    FLORET_MAX_MM,
+    FLORET_SHARE,
     FOREST_CROWN_M,
     FOREST_RELIEF,
     FOREST_WAVELENGTHS_M,
     billow,
     fbm,
+    floret_shapes,
     forest_canopy,
     forest_wavelengths_m,
     is_forest,
 )
-from skylineframe.trees.geometry import MIN_CAP_MM, TREE_CLEARANCE_MM, canopy, canopy_grid, fitted_trees
+from skylineframe.trees.geometry import (
+    MIN_CAP_MM,
+    TREE_CLEARANCE_MM,
+    canopy,
+    canopy_grid,
+    fitted_trees,
+    min_crown_mm,
+)
 from skylineframe.trees.model import Tree
 
 
@@ -184,12 +195,52 @@ def test_the_forest_canopy_billows_about_the_data_height():
     cell = canopy_grid(s).cell_mm
     inner = ndimage.distance_transform_edt(ndimage.binary_fill_holes(z > 0)) * cell > 20 * s.scale  # 20 m in
     assert np.mean(z[inner]) == pytest.approx(data, rel=0.1)
-    # Clouds, not domes: few local maxima (one per tree was the egg carton) ...
-    peaks = (z == ndimage.maximum_filter(z, size=3)) & inner
-    assert peaks.sum() < 0.2 * len(trees)
-    # ... and large ones, of varied height.
-    assert z[inner].std() > 0.1 * FOREST_RELIEF * data
+    # Large clouds of varied height ...
+    smooth = ndimage.gaussian_filter(z, 20 * s.scale / cell)
+    assert smooth[inner].std() > 0.1 * FOREST_RELIEF * data
     assert np.percentile(z[inner], 95) - np.percentile(z[inner], 5) > 0.3 * data
+
+
+# --- the florets --------------------------------------------------------------------------------
+
+
+def test_every_floret_is_a_printable_crown_of_its_own_size():
+    s = spec(1500, 100)
+    trees = fitted_trees(woods(s, -600, -600, 600, 600), [], s)
+    diameter, share = floret_shapes(trees, s)
+    crowns = np.array([t.crown_mm for t in trees])
+    assert np.all(diameter >= min_crown_mm(s) - 1e-9)  # its top is wider than a line
+    assert np.all(diameter <= crowns + 1e-9)  # and it never leaves its crown
+    lo, hi = FLORET_SHARE
+    assert np.all((share >= lo) & (share <= hi))
+    assert diameter.std() > 0.02 and share.std() > 0.02  # irregular, not a grid
+    assert np.array_equal(diameter, floret_shapes(list(trees), s)[0])
+
+
+@pytest.mark.parametrize(("side", "plate"), [(1500, 100), (1200, 150)])
+def test_the_canopy_is_a_cauliflower_florets_on_billows(side, plate, monkeypatch):
+    s = spec(side, plate)
+    half = side * 0.4
+    trees = fitted_trees(woods(s, -half, -half, half, half), [], s)
+    z = forest_field(s, trees)
+    cell = canopy_grid(s).cell_mm
+    depth = ndimage.distance_transform_edt(ndimage.binary_fill_holes(z > 0)) * cell
+    inner = depth > 20 * s.scale
+    n_inner = np.sum([inner[int(round((t.y_mm + plate / 2) / cell)), int(round((t.x_mm + plate / 2) / cell))] for t in trees])
+    # The trees are back as florets: a peak for every few trees, not one per tree (egg carton)
+    # and not one per hundred (jelly).
+    peaks = (z == ndimage.maximum_filter(z, size=3)) & inner
+    assert 0.1 * n_inner < peaks.sum() < 0.9 * n_inner
+    # The florets ride on the billows: they move the surface up or down by one layer pair at
+    # most, so no crevice between them is deeper than that.
+    monkeypatch.setattr(forest_module, "FLORET_SHARE", (0.0, 0.0))
+    billows = forest_field(s, trees)
+    assert np.abs(z - billows)[inner].max() <= FLORET_MAX_MM + 1e-9
+    assert np.abs(z - billows)[inner].max() > 0.5 * FLORET_MAX_MM * FLORET_SHARE[0] / FLORET_SHARE[1]
+    # And a floret is no pin: the relief it adds is a fraction of the canopy height.
+    relief = z - billows
+    assert np.percentile(relief[inner], 99) < FLORET_SHARE[1] * z[inner].mean()
+    assert relief[inner].std() > 0.01 * z[inner].mean()
 
 
 def test_the_forest_edge_is_rounded_not_a_step():

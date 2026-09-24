@@ -14,7 +14,7 @@ from shapely.geometry import Polygon
 from ..spec import FrameSpec
 from ..terrain.heightfield import Heightfield
 from .crown import crown_lobes, min_crown_mm, min_tree_height_mm
-from .discs import MIN_CAP_MM, disc_nodes
+from .discs import MIN_CAP_MM, cap_height, disc_nodes
 from .forest import forest_canopy, forest_crowns_mm, is_forest
 from .model import Tree
 
@@ -26,26 +26,6 @@ TREE_CELL_MM = 0.2  # canopy grid: half a nozzle line, five nodes across the sma
 # this keeps even that off every wall and out of every groove, so the trees never share a face
 # with anything and never fill a recess.
 TREE_CLEARANCE_MM = 0.3
-
-
-def cap_height(r: np.ndarray, crown_mm: float | np.ndarray, height_mm: float | np.ndarray) -> np.ndarray:
-    """Height of a dome at distance r from its centre, 0 outside the crown.
-
-    Up to a hemisphere this is the spherical cap through the crown rim and the top. A tree taller
-    than its crown radius would need a cap bulging out past its own base, an overhang, so it is a
-    hemisphere stretched upwards instead: the same at height == radius, and still a height field.
-    Crown and height are one dome, or one per point of r.
-    """
-    r = np.asarray(r, dtype=float)
-    a, h = np.broadcast_arrays(np.asarray(crown_mm, dtype=float) / 2, np.asarray(height_mm, dtype=float), r)[:2]
-    inside = r < a
-    low = h <= a
-    safe_h = np.where(low, h, 1.0)
-    big_r = (a * a + h * h) / (2 * safe_h)
-    cap = h - big_r + np.sqrt(np.maximum(big_r * big_r - r * r, 0.0))
-    stretched = h * np.sqrt(np.maximum(1.0 - (r / np.where(inside, a, 1.0)) ** 2, 0.0))
-    z = np.where(low, cap, stretched)
-    return np.where(inside, np.maximum(z, 0.0), 0.0)
 
 
 def fitted_trees(trees: list[Tree], obstacles: list[Polygon], spec: FrameSpec) -> list[Tree]:
