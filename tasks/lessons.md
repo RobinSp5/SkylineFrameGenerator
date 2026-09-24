@@ -16,3 +16,8 @@ Patterns learned from corrections in this project. Review at session start.
 - **Correction:** Robin: "das video sollte nur englisch sein". The /brag video kept the German UI labels verbatim ("Ort suchen", "Generieren") next to English overlay copy.
 - **Rule:** Public-facing marketing output (videos, share copy, launch posts) is English only. When a recreated UI is German, translate its labels in the recreation; never quote the German UI verbatim.
 - **Check:** Before rendering, grep the composition for umlauts and the known German UI strings.
+
+## 2026-09-24 — `git commit -a` swept unrelated work into a commit
+- **What happened:** A one-line terrain refactor was committed with `git commit -qam` while Robin's uncommitted frontend translation, `.gitignore` and `tasks/lessons.md` edits sat in the working tree. All of it landed in `02eb7fb` under a terrain message and was pushed to `main`.
+- **Rule:** Never use `git commit -a` / `-am` in this repo. Stage explicit paths (`git add backend/...`) and check `git diff --cached --stat` before every commit when the working tree has changes that are not mine.
+- **Check:** At session start, note which files are already modified; before each commit, confirm none of them are staged unless the user asked for it.
