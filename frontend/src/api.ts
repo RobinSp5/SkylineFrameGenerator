@@ -12,6 +12,7 @@ export interface FrameSpecInput {
   lod2: boolean;
   terrain: boolean;
   terrain_exaggeration: number;
+  trees: boolean;
   print_optimized: boolean;
 }
 

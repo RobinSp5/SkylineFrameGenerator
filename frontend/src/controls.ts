@@ -45,8 +45,8 @@ function setRadio(group: HTMLElement, value: string): void {
   }
 }
 
-/** Backend pipeline stages in run order (backend skylineframe/pipeline.py); terrain is optional. */
-const STAGES = ["fetch", "terrain", "prepare", "mesh", "export"];
+/** Backend pipeline stages in run order (backend skylineframe/pipeline.py); terrain and trees are optional. */
+const STAGES = ["fetch", "terrain", "prepare", "trees", "mesh", "export"];
 
 /** Button label and bar fill for a running job; fraction null means "no idea yet" (indeterminate). */
 export function progressOf(job: Pick<JobState, "status" | "stage" | "message">): { label: string; fraction: number | null } {
@@ -75,6 +75,7 @@ export function setupControls(root: HTMLElement): Controls {
   const terrain = el<HTMLInputElement>(root, "terrain");
   const terrainz = el<HTMLInputElement>(root, "terrainz");
   const terrainzOut = el<HTMLOutputElement>(root, "terrainz-out");
+  const trees = el<HTMLInputElement>(root, "trees");
   const zfactorOut = el<HTMLOutputElement>(root, "zfactor-out");
   const generate = el<HTMLButtonElement>(root, "generate");
   const generateLabel = el<HTMLSpanElement>(root, "generate-label");
@@ -211,6 +212,7 @@ export function setupControls(root: HTMLElement): Controls {
     lod2: lod2.checked,
     terrain: terrain.checked,
     terrain_exaggeration: Number(terrainz.value),
+    trees: trees.checked,
     print_optimized: optimize.checked,
   });
 
@@ -314,6 +316,12 @@ export function summarize(stats: Record<string, number | string>): string {
   const fromLod2 = count("lod2_buildings");
   if (source && fromLod2 > 0) {
     text += `, ${fromLod2} of which from LoD2 ${source.charAt(0).toUpperCase()}${source.slice(1)}`;
+  }
+  // Only the printed ones: trees=0 is also what a run with the switch off reports. trees_note is
+  // German backend text as well, and means the tree cover could not be loaded.
+  const printedTrees = count("trees");
+  if (printedTrees > 0) {
+    text += `, ${printedTrees} trees${stats.trees_note ? " (OpenStreetMap only)" : ""}`;
   }
   // terrain_note is German backend text for the CLI; the UI only needs to know it is there.
   if (stats.terrain_source) {

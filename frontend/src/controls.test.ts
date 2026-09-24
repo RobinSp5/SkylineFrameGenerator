@@ -239,8 +239,10 @@ describe("setupControls result", () => {
 describe("progressOf", () => {
   it("is indeterminate while queued and fills by stage", () => {
     expect(progressOf({ status: "queued", stage: "", message: "" })).toEqual({ label: "Waiting for the server", fraction: null });
-    expect(progressOf({ status: "running", stage: "fetch", message: "Loading" }).fraction).toBeCloseTo(1 / 6);
-    expect(progressOf({ status: "running", stage: "export", message: "Writing" }).fraction).toBeCloseTo(5 / 6);
+    // fetch, terrain, prepare, trees, mesh, export: six stages, seven steps on the bar.
+    expect(progressOf({ status: "running", stage: "fetch", message: "Loading" }).fraction).toBeCloseTo(1 / 7);
+    expect(progressOf({ status: "running", stage: "trees", message: "Placing trees" }).fraction).toBeCloseTo(4 / 7);
+    expect(progressOf({ status: "running", stage: "export", message: "Writing" }).fraction).toBeCloseTo(6 / 7);
     expect(progressOf({ status: "running", stage: "other", message: "" })).toEqual({ label: "other", fraction: null });
   });
 });
@@ -280,6 +282,49 @@ describe("summarize terrain", () => {
     expect(summarize({ buildings: 42, blocks: 3, roofs: 5, terrain_source: "", terrain_note: "Gelände nicht verfügbar" })).toBe(
       "Done: 42 buildings, 3 blocks, 5 roofs, terrain unavailable (flat plate)",
     );
+  });
+});
+
+describe("summarize trees", () => {
+  it("counts the printed trees before the terrain", () => {
+    expect(summarize({ buildings: 42, blocks: 3, roofs: 5, trees: 1234, trees_source: "worldcover" })).toBe(
+      "Done: 42 buildings, 3 blocks, 5 roofs, 1234 trees",
+    );
+    expect(
+      summarize({ buildings: 42, blocks: 3, roofs: 5, trees: 7, terrain_source: "copernicus", terrain_relief_mm: 10.414 }),
+    ).toBe("Done: 42 buildings, 3 blocks, 5 roofs, 7 trees, terrain 10.4 mm");
+  });
+
+  it("says nothing about trees when none were printed", () => {
+    expect(summarize({ buildings: 42, blocks: 3, roofs: 5, trees: 0, trees_source: "" })).toBe(
+      "Done: 42 buildings, 3 blocks, 5 roofs",
+    );
+  });
+
+  it("says so when the tree cover was not available", () => {
+    expect(summarize({ buildings: 42, blocks: 3, roofs: 5, trees: 12, trees_source: "", trees_note: "WorldCover nicht verfügbar" })).toBe(
+      "Done: 42 buildings, 3 blocks, 5 roofs, 12 trees (OpenStreetMap only)",
+    );
+  });
+});
+
+describe("setupControls trees", () => {
+  beforeEach(() => {
+    document.body.innerHTML = APP;
+  });
+
+  it("is on by default and sends the checkbox state", () => {
+    const controls = setupControls(document.getElementById("app")!);
+    expect(controls.read().trees).toBe(true);
+    field<HTMLInputElement>("trees").checked = false;
+    expect(controls.read().trees).toBe(false);
+  });
+
+  it("names its sources", () => {
+    setupControls(document.getElementById("app")!);
+    const row = field<HTMLInputElement>("trees").closest("label")!;
+    expect(row.textContent).toContain("Trees");
+    expect(row.textContent).toContain("From ESA WorldCover and OpenStreetMap");
   });
 });
 

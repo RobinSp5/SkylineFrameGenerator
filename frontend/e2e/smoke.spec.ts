@@ -58,7 +58,7 @@ test("page loads, square is drawn, generation flow shows downloads", async ({ pa
   await expect(page.locator("#status")).toContainText("42 buildings, 3 blocks, 5 roofs, 12 of which from LoD2 Hessen", {
     timeout: 10_000,
   });
-  expect(sent()).toMatchObject({ mode: "full", plate_size_mm: 125, side_m: 1500 });
+  expect(sent()).toMatchObject({ mode: "full", plate_size_mm: 125, side_m: 1500, trees: true });
   await expect(page.locator("#downloads")).toBeVisible();
   await expect(page.locator("#stat-buildings")).toHaveText("42");
   await expect(page.locator("#stat-lod2")).toHaveText("12");
