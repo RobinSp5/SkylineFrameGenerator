@@ -74,3 +74,11 @@ def test_heights_module_does_not_pull_in_the_network_stack():
     )
     result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True)
     assert result.stdout.strip() == ""
+
+
+@pytest.mark.parametrize(
+    ("area", "freestanding", "gabled"),
+    [(120.0, True, True), (29.9, True, False), (30.0, True, True), (200.0, True, False), (120.0, False, False)],
+)
+def test_default_roof_yes_only_when_freestanding_and_house_sized(area, freestanding, gabled):
+    assert (default_roof("yes", area, freestanding) is not None) is gabled

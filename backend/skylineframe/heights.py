@@ -41,9 +41,17 @@ def estimate_height_m(kind: str, area_m2: float) -> float:
 # only below a footprint where it is still a house rather than a block.
 DEFAULT_GABLE_KINDS: frozenset[str] = frozenset({"house", "detached", "semidetached_house", "bungalow"})
 DEFAULT_GABLE_RESIDENTIAL_MAX_M2 = 200.0
+# Most houses are not tagged as houses at all: 2 174 of the 2 467 buildings in the Eppstein square
+# are plain building=yes. A freestanding or semi-detached one of house size is a house almost
+# everywhere; one with a house on either side is a row or a block (a Brooklyn brownstone, a
+# Gründerzeit terrace), whose roofs are as often flat as not, and below 30 m² it is a shed or a
+# carport. prepare decides "freestanding" (spec 4a §2.4).
+DEFAULT_GABLE_YES_MIN_M2 = 30.0
+# Outbuildings: a garage mapped against the house wall does not turn the house into a row house.
+OUTBUILDING_KINDS: frozenset[str] = frozenset({"garage", "garages", "shed", "hut", "carport", "kiosk", "service"})
 
 
-def default_roof(kind: str, area_m2: float) -> RoofSpec | None:
+def default_roof(kind: str, area_m2: float, freestanding: bool = False) -> RoofSpec | None:
     """Roof for an OSM building without roof:shape, or None for flat (phase 4a spec §2.4).
 
     height_m stays 0.0 and direction_deg None: prepare derives both from the footprint.
@@ -51,5 +59,11 @@ def default_roof(kind: str, area_m2: float) -> RoofSpec | None:
     if kind in DEFAULT_GABLE_KINDS:
         return RoofSpec(shape="gabled")
     if kind == "residential" and area_m2 < DEFAULT_GABLE_RESIDENTIAL_MAX_M2:
+        return RoofSpec(shape="gabled")
+    if (
+        kind == "yes"
+        and freestanding
+        and DEFAULT_GABLE_YES_MIN_M2 <= area_m2 < DEFAULT_GABLE_RESIDENTIAL_MAX_M2
+    ):
         return RoofSpec(shape="gabled")
     return None

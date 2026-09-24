@@ -16,7 +16,7 @@ from shapely.ops import unary_union
 from shapely.validation import make_valid
 
 from .features import Block, Building, Features, Road, Water
-from .heights import default_roof, estimate_height_m
+from .heights import DEFAULT_GABLE_YES_MIN_M2, OUTBUILDING_KINDS, default_roof, estimate_height_m
 from .lod2.solidify import faces_of, footprint_of_faces, height_of_faces, to_solid
 from .project import square_local
 from .spec import MIN_FEATURE_MM, MIN_LINE_MM, TINY_FOOTPRINT_MM2, FrameSpec, Mode
@@ -27,6 +27,10 @@ ARC_SIMPLIFY_FRACTION = 0.1
 # The widening radius is bisected down to this fraction of half a line: 0.2 µm in print space at
 # MIN_LINE_MM = 0.4, far below anything a nozzle resolves, in about ten buffer pairs (spec 4a §2.2).
 WIDEN_TOLERANCE_FRACTION = 1e-3
+# Mitre limit of the widening buffer. Shapely's default of 5 lets an acute corner shoot out five
+# times the radius; 1.5 keeps right angles sharp (their mitre is √2 · r), so a rectangle stays a
+# rectangle for resolve_roof, and bevels anything sharper (spec 4a §2.2).
+WIDEN_MITRE_LIMIT = 1.5
 # Blocks stay a hair wider than the pure close so individual building walls are strictly inside
 # the block volume below block height; avoids coincident faces in the 3D union.
 BLOCK_HAIR_MM = 0.02
@@ -36,6 +40,9 @@ ROOF_HEIGHT_MIN_M = 2.0
 ROOF_HEIGHT_MAX_M = 6.0
 DOME_HEIGHT_FACTOR = 0.5
 ROUND_ROOF_SHAPES = ("dome", "round")
+# Two outlines closer than this share a wall as far as the map can tell: mapped party walls are
+# rarely drawn to the centimetre (spec 4a §2.4).
+FREESTANDING_GAP_M = 1.0
 LOD2_DISPLACE_FRACTION = 0.5  # spec §6.3: an OSM footprint covered by more than this is replaced
 # Floor under the remainder an LoD2 model leaves of an OSM footprint. Two outlines that describe
 # the same wall never agree to the micrometre, so their difference leaves corner triangles of a
@@ -102,12 +109,14 @@ def widen_to_line(poly: Polygon, half_line_m: float) -> Polygon:
 
     Mitre joins keep the corner count: a round buffer would put an arc fan on every corner of
     every small house, and a rectangle has to stay a rectangle for resolve_roof to put a roof on it.
+    WIDEN_MITRE_LIMIT bevels anything sharper than a right angle, so an acute corner moves out by
+    at most 1.5 · r instead of shooting out as a spike.
     """
     if not poly.buffer(-half_line_m).is_empty:
         return poly
 
     def grown(r: float) -> BaseGeometry:
-        return poly.buffer(r, join_style="mitre")
+        return poly.buffer(r, join_style="mitre", mitre_limit=WIDEN_MITRE_LIMIT)
 
     lo, hi = 0.0, half_line_m
     while hi - lo > half_line_m * WIDEN_TOLERANCE_FRACTION:
@@ -177,10 +186,28 @@ def assign_default_roofs(buildings: list[Building]) -> None:
     Runs on the unclipped footprints for the same reason as the height estimate: the 200 m² limit
     is a property of the house, not of the piece the square leaves of it. A tagged roof:shape wins
     even when it is flat, and LoD2 models carry their real roof in the body.
+
+    Freestanding means at most one house-sized outline within FREESTANDING_GAP_M: a semi-detached
+    house still counts, a house between two others is a row. Outbuildings and anything under
+    DEFAULT_GABLE_YES_MIN_M2 are no neighbours — in Eppstein most houses have their garage mapped
+    against the wall, and counting it left three of four houses flat. Parts are left out too: they
+    stand inside their own outline and would make every building with parts look attached.
     """
-    for b in buildings:
-        if b.roof is None and not b.roof_tagged and not b.is_part and not b.lod2:
-            b.roof = default_roof(b.kind, b.geom.area)
+    candidates = [b for b in buildings if b.roof is None and not b.roof_tagged and not b.is_part and not b.lod2]
+    if not candidates:
+        return
+    houses = [
+        b.geom
+        for b in buildings
+        if not b.is_part and b.kind not in OUTBUILDING_KINDS and b.geom.area >= DEFAULT_GABLE_YES_MIN_M2
+    ]
+    tree = STRtree(houses)
+    for b in candidates:
+        near = tree.query(b.geom, predicate="dwithin", distance=FREESTANDING_GAP_M)
+        # A house-sized candidate always finds itself, a smaller one never does.
+        own = 1 if b.kind not in OUTBUILDING_KINDS and b.geom.area >= DEFAULT_GABLE_YES_MIN_M2 else 0
+        freestanding = len(near) - own <= 1
+        b.roof = default_roof(b.kind, b.geom.area, freestanding)
 
 
 def lod2_buildings(features: Features) -> list[Building]:
@@ -524,8 +551,9 @@ def _coverage(
     """Share of the building area in the square that the model still carries (spec §6).
 
     The model is the union of the blocks and the buildings: a footprint whose block was dropped,
-    or trimmed away by a road corridor, still counts when it is a body of its own. A widened
-    building counts only up to its drawn outline, because `total` is the drawn footprints.
+    or trimmed away by a road corridor, still counts when it is a body of its own. `buildings`
+    are the drawn outlines, not the widened ones: a widening that spills over a neighbouring shed
+    whose block was dropped does not print that shed, so it must not count it either.
 
     `displaced` are the OSM footprints that LoD2 replaced, already clipped to the square. They go
     into the denominator and never into the numerator: the area they held stood in the square and
@@ -635,7 +663,8 @@ def prepare(features: Features, spec: FrameSpec) -> Prepared:
     # resolve_roof, so the roof rectangle is the rectangle of the footprint that is printed.
     tiny_m2 = TINY_FOOTPRINT_MM2 / scale**2
     half_line_m = MIN_LINE_MM / 2 / scale
-    buildings = [_widened(b, half_line_m, square) for b in footprints if b.geom.area >= tiny_m2]
+    printed = [b for b in footprints if b.geom.area >= tiny_m2]
+    buildings = [_widened(b, half_line_m, square) for b in printed]
     for b in buildings:
         resolve_roof(b, spec.rotation_deg)
 
@@ -648,7 +677,7 @@ def prepare(features: Features, spec: FrameSpec) -> Prepared:
     # Every body that is printed is now also solidified: that is thousands of LoD2 models instead
     # of a few dozen, and the spec 4a §3 runtime budget accounts for it.
     lod2_rejected = solidify_buildings(buildings)
-    coverage = _coverage(footprints, blocks, buildings, displaced)
+    coverage = _coverage(footprints, blocks, printed, displaced)
     if not full:
         return Prepared(
             buildings=buildings,

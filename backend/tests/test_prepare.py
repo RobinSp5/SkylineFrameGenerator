@@ -68,7 +68,8 @@ def test_tiny_footprint_reaches_the_model_through_its_block():
     assert len(out.buildings) == 1
     assert out.buildings[0].geom.area == pytest.approx(100)
     assert len(out.blocks) == 1
-    assert out.blocks[0].geom.area > 101
+    # The house alone makes a ~105 m² block; the shed only counts when it is welded in.
+    assert out.blocks[0].geom.contains(box(11, 0, 12, 1).centroid)
     # abs: the chord simplify of the close shaves ~0.05 m² off the block corners, so the
     # coverage is 1.0 up to that tolerance and never exactly 1.0.
     assert out.footprint_coverage == pytest.approx(1.0, abs=1e-3)
@@ -434,6 +435,22 @@ def test_widen_never_grows_by_more_than_half_a_line():
     grown = widen_to_line(needle, half_m)
     assert grown.bounds[2] - grown.bounds[0] <= 0.01 + 2 * half_m + 1e-9
     assert not grown.buffer(-half_m).is_empty
+
+
+def test_widen_bevels_an_acute_corner_instead_of_spiking():
+    # A sliver triangle: with shapely's default mitre limit of 5 its 2° tip grew 6 m past the
+    # outline at this scale, three times the 2 m (half a line) the spec allows (spec 4a §2.2).
+    half_m = MIN_LINE_MM / 2 / spec().scale
+    sliver = Polygon([(0, 0), (40, 0), (40, 1.5)])
+    grown = widen_to_line(sliver, half_m)
+    # Shapely puts the bevel a hair past 1.5 · r (3.04 m at r = 2 m); the default reached 10 m.
+    assert grown.bounds[0] >= -1.6 * half_m
+    assert not grown.buffer(-half_m).is_empty
+
+
+def test_widen_keeps_a_rectangle_a_rectangle():
+    grown = widen_to_line(box(0, 0, 3, 50), MIN_LINE_MM / 2 / spec().scale)
+    assert len(grown.exterior.coords) == 5
 
 
 def test_a_narrow_footprint_is_widened_in_prepare():
@@ -831,7 +848,8 @@ def test_a_lod2_building_that_only_reaches_a_block_is_never_solidified(monkeypat
     # It still reaches the model through its block, exactly like a small OSM footprint: one block
     # around both footprints, and no area lost.
     assert len(out.blocks) == 1
-    assert out.blocks[0].geom.area > 401  # 400 m² house + 1 m² shed + the 3 m the close filled
+    # The house alone makes a ~409 m² block; the shed only counts when it is welded in.
+    assert out.blocks[0].geom.contains(box(0, 0, 1, 1).centroid)
     # abs: the chord simplify of the close shaves a little off the corners of the small shed.
     assert out.footprint_coverage == pytest.approx(1.0, abs=1e-3)
 
@@ -943,3 +961,32 @@ def test_prepare_builds_the_default_roof_and_no_roofs_turns_it_off():
     assert [b.roof.shape for b in with_roof.buildings] == ["gabled"]
     without = prepare(Features(buildings=[house]), spec(roofs=False))
     assert [b.roof for b in without.buildings] == [None]
+
+
+def test_assign_default_roofs_gables_a_freestanding_yes_house_only():
+    # building=yes is how most houses are mapped. A freestanding or semi-detached one of house size
+    # gets a gable; the middle of a row stays flat; a 20 m² shed stays flat (spec 4a §2.4).
+    alone = Building(box(0, 0, 10, 8), 7.0, kind="yes")
+    row = [Building(box(100 + 10.5 * i, 0, 110 + 10.5 * i, 8), 7.0, kind="yes") for i in range(3)]
+    shed = Building(box(200, 0, 205, 4), 3.0, kind="yes")
+    assign_default_roofs([alone, *row, shed])
+    assert alone.roof == RoofSpec(shape="gabled")
+    # The two ends of the row have one neighbour each, like a semi-detached pair.
+    assert [b.roof is not None for b in row] == [True, False, True]
+    assert shed.roof is None
+
+
+def test_assign_default_roofs_does_not_count_a_garage_as_a_neighbour():
+    house = Building(box(0, 0, 10, 8), 7.0, kind="yes")
+    garage = Building(box(10.2, 0, 16, 8), 3.0, kind="garage")
+    shed = Building(box(-5.2, 0, -0.2, 4), 3.0, kind="yes")  # 20 m², under house size
+    other = Building(box(0, 8.2, 10, 16), 7.0, kind="yes")  # one real neighbour: semi-detached
+    assign_default_roofs([house, garage, shed, other])
+    assert house.roof == RoofSpec(shape="gabled")
+
+
+def test_assign_default_roofs_ignores_parts_when_looking_for_neighbours():
+    outline = Building(box(0, 0, 10, 8), 7.0, kind="yes")
+    part = Building(box(2, 2, 6, 6), 9.0, kind="yes", is_part=True)
+    assign_default_roofs([outline, part])
+    assert outline.roof == RoofSpec(shape="gabled")
