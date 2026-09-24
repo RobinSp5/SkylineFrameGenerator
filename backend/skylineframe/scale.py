@@ -12,6 +12,7 @@ from .lod2.solidify import SOLID_SIMPLIFY_MM, simplified
 from .prepare import Prepared
 from .roofs import MIN_ROOF_MM
 from .spec import SOCKEL_MM, FrameSpec
+from .thicken import thickened
 
 # Share of a part's footprint that has to rest on lower bodies of the same outline before the
 # part may start in the air (spec §8). Two towers of one complex often share a single corner
@@ -171,7 +172,10 @@ def _scaled_solid(b: Building, spec: FrameSpec) -> m3d.Manifold | None:
     # a box at the right minimum height.
     if solid.bounding_box()[5] < spec.min_building_height_mm:
         return None
-    return simplified(solid, SOLID_SIMPLIFY_MM)
+    solid = simplified(solid, SOLID_SIMPLIFY_MM)
+    # After the simplification, which moves vertices by up to SOLID_SIMPLIFY_MM and could thin a
+    # widened spire again. The thickening stays inside the trimmed body's own outline.
+    return thickened(solid, spec.min_line_mm) if spec.print_optimized else solid
 
 
 def _building_prism(b: Building, groups: dict[str, list[Building]], spec: FrameSpec) -> Prism:

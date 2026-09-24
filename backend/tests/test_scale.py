@@ -1,5 +1,7 @@
+import manifold3d as m3d
 import pytest
-from shapely.geometry import box
+from shapely.geometry import MultiPolygon, Polygon, box
+from shapely.ops import unary_union
 
 from skylineframe.features import Block, Building, RoofSpec
 from skylineframe.fetch import parse_overpass
@@ -277,3 +279,37 @@ def test_a_building_without_a_body_still_becomes_a_plain_prism():
     prism = scale_features(Prepared(buildings=[plain]), spec()).buildings[0]
     assert prism.solid_mm is None
     assert prism.height_mm == pytest.approx(building_height_mm(10.0, spec()))
+
+
+def spired_building() -> Building:
+    """A 50 x 50 x 20 m church with a 3 x 3 m spire to 60 m: 0.3 mm wide at 0.1 mm per metre."""
+    b = lod2_solid_building(-25, -25, 25, 25, 20.0)
+    b.solid_m = b.solid_m + m3d.Manifold.cube((3.0, 3.0, 40.0)).translate((-1.5, -1.5, 20.0))
+    b.ridge_m = 60.0
+    return b
+
+
+def section(solid: m3d.Manifold, z: float) -> Polygon | MultiPolygon:
+    return unary_union([Polygon(r) for r in solid.slice(z).to_polygons() if len(r) >= 3])
+
+
+def test_print_optimized_thickens_a_thin_spire_to_the_line_and_keeps_its_height():
+    s = spec()  # print_optimized is the default
+    prism = scale_features(Prepared(buildings=[spired_building()]), s).buildings[0]
+    assert prism.solid_mm.bounding_box()[5] == pytest.approx(60.0 * s.scale * s.z_exaggeration, abs=1e-3)
+    for z in (3.2, 5.0, 8.9):  # the church roof is at 3.0 mm, the tip at 9.0 mm
+        assert not section(prism.solid_mm, z).buffer(-(s.min_line_mm - 0.02) / 2).is_empty, z
+
+
+def test_without_print_optimized_the_spire_stays_as_it_is():
+    prism = scale_features(Prepared(buildings=[spired_building()]), spec(print_optimized=False)).buildings[0]
+    assert section(prism.solid_mm, 5.0).area == pytest.approx(0.09, abs=1e-3)
+
+
+def test_print_optimized_leaves_a_printable_body_as_it_was():
+    on = scale_features(Prepared(buildings=[lod2_solid_building(-10, -10, 10, 10, 30.0)]), spec()).buildings[0]
+    off = scale_features(
+        Prepared(buildings=[lod2_solid_building(-10, -10, 10, 10, 30.0)]), spec(print_optimized=False)
+    ).buildings[0]
+    assert on.solid_mm.volume() == pytest.approx(off.solid_mm.volume(), abs=1e-6)
+    assert on.solid_mm.num_tri() == off.solid_mm.num_tri()

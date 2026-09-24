@@ -97,7 +97,9 @@ class FrameSpec(BaseModel):
     # is a pin up to several mm tall, and Bambu Studio flags a model full of them as having
     # "floating regions"; at 0.8 mm the same Eppstein and Frankfurt models slice without a warning.
     # The price: a house narrower than 0.8 mm prints as a block at its real height instead of
-    # with its LoD2 roof (Eppstein 1:15 000: 47 roof bodies instead of 702).
+    # with its LoD2 roof (Eppstein 1:15 000: 47 roof bodies instead of 702). The same flag widens
+    # the thin parts of a LoD2 body — a church spire, a row of small gables — to the line width
+    # (thicken.py); without that the Frankfurt square still showed the warning.
     print_optimized: bool = True
     road_depth_mm: float = Field(default=0.4, gt=0)
     water_depth_mm: float = Field(default=0.6, gt=0)
