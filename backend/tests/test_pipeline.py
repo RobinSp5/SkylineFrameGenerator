@@ -30,6 +30,20 @@ def test_run_frankfurt_offline(tmp_path, frankfurt_spec, frankfurt_data):
     assert result.stats["footprint_coverage"] >= 0.95
 
 
+def test_run_passes_the_name_to_the_export(tmp_path, frankfurt_spec, frankfurt_data):
+    spec = frankfurt_spec.model_copy(update={"mode": Mode.simple})
+    result = run(
+        spec,
+        tmp_path / "out",
+        tmp_path / "cache",
+        fetch=lambda s, c: parse_overpass(frankfurt_data, s),
+        name="Frankfurt am Main – Altstadt",
+    )
+    assert result.paths.stl.read_bytes().startswith(b"Skyline Frame Frankfurt-am-Main_Altstadt")
+    # Files on disk keep their stable names; the place name is applied at download time.
+    assert result.paths.stl.name == "model.stl"
+
+
 def test_run_bankenviertel_has_building_parts(tmp_path, bankenviertel_spec, bankenviertel_data):
     result = run(
         bankenviertel_spec,

@@ -1,3 +1,6 @@
+import xml.etree.ElementTree as ET
+import zipfile
+
 import pytest
 import trimesh
 from shapely.geometry import box
@@ -8,6 +11,7 @@ from skylineframe.mesh import build_meshes, to_trimesh
 from skylineframe.scale import Prism, Scaled
 from skylineframe.spec import FrameSpec, Mode
 
+NS = "{http://schemas.microsoft.com/3dmanufacturing/core/2015/02}"
 DEFAULTS = dict(center_lat=50, center_lon=8, side_m=1000, plate_size_mm=100, plate_thickness_mm=3.0, mode=Mode.full)
 
 
@@ -47,6 +51,54 @@ def test_3mf_contains_named_parts(tmp_path, meshset):
     paths = export_all(meshset, spec(), tmp_path)
     scene = trimesh.load(paths.threemf, file_type="3mf")
     assert set(scene.geometry) == {"base", "buildings", "water", "roads"}
+
+
+def _3mf_model(path) -> ET.Element:
+    with zipfile.ZipFile(path) as z:
+        return ET.fromstring(z.read("3D/3dmodel.model"))
+
+
+def test_named_3mf_is_one_object_carrying_the_label(tmp_path, meshset):
+    label = "Frankfurt am Main – Altstadt"
+    paths = export_all(meshset, spec(), tmp_path, name=label)
+    model = _3mf_model(paths.threemf)
+    objects = {o.get("id"): o for o in model.iter(f"{NS}object")}
+    items = list(model.iter(f"{NS}item"))
+    # One build item: the slicer lists one object named after the place, with the parts inside.
+    assert len(items) == 1
+    top = objects[items[0].get("objectid")]
+    assert top.get("name") == label
+    children = [objects[c.get("objectid")].get("name") for c in top.iter(f"{NS}component")]
+    assert sorted(children) == ["base", "buildings", "roads", "water"]
+    # Trimesh (and so any other reader) still sees the four named parts.
+    scene = trimesh.load(paths.threemf, file_type="3mf")
+    assert set(scene.geometry) == {"base", "buildings", "water", "roads"}
+    assert sum(g.volume for g in scene.geometry.values()) == pytest.approx(
+        sum(to_trimesh(m).volume for m in meshset.parts().values()), rel=1e-6
+    )
+
+
+def test_unnamed_3mf_keeps_one_build_item_per_part(tmp_path, meshset):
+    paths = export_all(meshset, spec(), tmp_path)
+    items = list(_3mf_model(paths.threemf).iter(f"{NS}item"))
+    assert len(items) == 4
+
+
+def test_named_stl_carries_the_slug_in_its_header(tmp_path, meshset):
+    paths = export_all(meshset, spec(), tmp_path, name="Frankfurt am Main – Altstadt")
+    header = paths.stl.read_bytes()[:80]
+    assert header.rstrip(b"\0 ").decode("ascii") == "Skyline Frame Frankfurt-am-Main_Altstadt"
+    # A binary STL must never open with "solid", or readers take it for ASCII.
+    assert not header.startswith(b"solid")
+    tm = trimesh.load(paths.stl, file_type="stl")
+    assert tm.is_watertight and len(tm.faces) == len(to_trimesh(meshset.single).faces)
+
+
+def test_named_stl_header_is_capped_at_80_bytes(tmp_path, meshset):
+    paths = export_all(meshset, spec(), tmp_path, name="Sehr langer Ortsname " * 10)
+    tm = trimesh.load(paths.stl, file_type="stl")
+    assert tm.is_watertight
+    assert tm.extents[0] == pytest.approx(100, abs=0.01)
 
 
 def test_glb_contains_all_parts(tmp_path, meshset):

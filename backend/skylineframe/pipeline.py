@@ -38,7 +38,9 @@ def run(
     progress: ProgressCallback | None = None,
     fetch: FetchFn = fetch_features,
     terrain: TerrainFn | None = None,
+    name: str | None = None,
 ) -> RunResult:
+    """Build the model for spec into out_dir. `name` is the place label the 3MF and STL carry."""
     def report(stage: str, message: str) -> None:
         if progress:
             progress(stage, message)
@@ -89,6 +91,7 @@ def run(
             ATTRIBUTIONS.get(lod2_source),
             terrain=COPERNICUS if heightfield is not None else None,
         ),
+        name=name,
     )
 
     individual = len(prepared.buildings)

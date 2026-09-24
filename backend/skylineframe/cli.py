@@ -40,6 +40,9 @@ def generate(
     lod2: Annotated[bool, typer.Option("--lod2/--no-lod2", help="Use official LoD2 building models where available")] = True,
     terrain: Annotated[bool, typer.Option("--terrain/--no-terrain", help="Model the terrain relief (Copernicus DEM)")] = False,
     terrain_z: Annotated[float, typer.Option(help="Terrain exaggeration factor, separate from --z")] = 1.0,
+    name: Annotated[
+        str | None, typer.Option(help="Model name for the 3MF object and the STL header, e.g. 'Frankfurt – Altstadt'")
+    ] = None,
     out: Annotated[Path, typer.Option(help="Output directory")] = Path("out"),
     cache: Annotated[Path, typer.Option(help="Overpass cache directory")] = Path(".cache/overpass"),
 ) -> None:
@@ -63,7 +66,7 @@ def generate(
             terrain=terrain,
             terrain_exaggeration=terrain_z,
         )
-        result = run(spec, out, cache, progress=lambda stage, msg: typer.echo(f"[{stage}] {msg}"))
+        result = run(spec, out, cache, progress=lambda stage, msg: typer.echo(f"[{stage}] {msg}"), name=name)
     except (SkylineError, ValidationError) as exc:
         typer.echo(f"Error: {_message(exc)}", err=True)
         raise typer.Exit(code=1)

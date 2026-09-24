@@ -10,6 +10,7 @@ import trimesh
 from .errors import ExportError
 from .lod2.sources import SOURCES_FILENAME, sources_text
 from .mesh import MeshSet, to_trimesh
+from .naming import slugify
 from .spec import FrameSpec
 
 PART_COLORS: dict[str, tuple[int, int, int, int]] = {
@@ -20,6 +21,8 @@ PART_COLORS: dict[str, tuple[int, int, int, int]] = {
 }
 SIZE_TOLERANCE_MM = 0.01
 DEGENERATE_AREA_MM2 = 1e-9
+STL_HEADER_LEN = 80
+STL_HEADER_PREFIX = "Skyline Frame "
 
 
 @dataclass
@@ -63,23 +66,55 @@ def verify_part(tm: trimesh.Trimesh, name: str) -> None:
         raise ExportError(f"Part '{name}' is not watertight; please try a slightly different area.")
 
 
-def export_all(meshset: MeshSet, spec: FrameSpec, out_dir: Path, sources: str | None = None) -> ExportPaths:
+def threemf_scene(parts: dict[str, trimesh.Trimesh], name: str | None) -> trimesh.Scene:
+    """The parts as a 3MF scene; with a name, grouped under one object that carries it.
+
+    Trimesh writes a node with children as a 3MF component object and puts only the nodes on the
+    base frame into the build, so the slicer lists a single object named after the place with the
+    parts inside it. Without a name the parts stay separate top-level objects, as before.
+    """
+    if name is None:
+        return trimesh.Scene(parts)
+    scene = trimesh.Scene()
+    scene.graph.update(frame_from=scene.graph.base_frame, frame_to=name)
+    for part, tm in parts.items():
+        scene.add_geometry(tm, geom_name=part, node_name=part, parent_node_name=name)
+    return scene
+
+
+def write_stl_header(path: Path, name: str) -> None:
+    """Put the ASCII slug of the name into the 80-byte header of a binary STL.
+
+    The prefix keeps the header from ever starting with "solid", which would make readers take the
+    binary file for an ASCII one.
+    """
+    header = f"{STL_HEADER_PREFIX}{slugify(name)}".encode("ascii")[:STL_HEADER_LEN]
+    with path.open("r+b") as f:
+        f.write(header.ljust(STL_HEADER_LEN, b"\0"))
+
+
+def export_all(
+    meshset: MeshSet, spec: FrameSpec, out_dir: Path, sources: str | None = None, name: str | None = None
+) -> ExportPaths:
+    """Write the model files. `name` is the place label the 3MF object and the STL header carry."""
     out_dir.mkdir(parents=True, exist_ok=True)
     paths = ExportPaths(stl=out_dir / "model.stl", threemf=out_dir / "model.3mf", glb=out_dir / "preview.glb")
 
     # Verify everything first, so a failure never leaves a half-written set of files behind.
     single = to_trimesh(meshset.single)
     verify_single(single, spec)
-    parts = {name: to_trimesh(man) for name, man in meshset.parts().items()}
-    for name, tm in parts.items():
-        verify_part(tm, name)
+    parts = {part: to_trimesh(man) for part, man in meshset.parts().items()}
+    for part, tm in parts.items():
+        verify_part(tm, part)
 
     single.export(str(paths.stl), file_type="stl")
-    trimesh.Scene(parts).export(str(paths.threemf), file_type="3mf")
+    if name is not None:
+        write_stl_header(paths.stl, name)
+    threemf_scene(parts, name).export(str(paths.threemf), file_type="3mf")
 
     # Colours are for the preview only — the 3MF is already written at this point.
-    for name, tm in parts.items():
-        tm.visual.face_colors = PART_COLORS[name]
+    for part, tm in parts.items():
+        tm.visual.face_colors = PART_COLORS[part]
     trimesh.Scene(parts).export(str(paths.glb), file_type="glb")
 
     # Provenance travels with the model (spec §7). Written unconditionally: the ODbL notice is

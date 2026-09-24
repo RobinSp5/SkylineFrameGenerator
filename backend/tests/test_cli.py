@@ -13,7 +13,7 @@ runner = CliRunner()
 def test_generate_prints_paths(monkeypatch, tmp_path):
     captured = {}
 
-    def fake_run(spec, out_dir, cache_dir, progress=None):
+    def fake_run(spec, out_dir, cache_dir, progress=None, name=None):
         captured["spec"] = spec
         if progress:
             progress("fetch", "loading")
@@ -28,7 +28,7 @@ def test_generate_prints_paths(monkeypatch, tmp_path):
 
 
 def test_generate_reports_errors(monkeypatch, tmp_path):
-    def failing_run(spec, out_dir, cache_dir, progress=None):
+    def failing_run(spec, out_dir, cache_dir, progress=None, name=None):
         raise FetchError("Overpass down")
 
     monkeypatch.setattr(cli, "run", failing_run)
@@ -46,7 +46,7 @@ def test_generate_reports_invalid_spec(tmp_path):
 
 
 def test_generate_reports_area_error(monkeypatch, tmp_path):
-    def failing_run(spec, out_dir, cache_dir, progress=None):
+    def failing_run(spec, out_dir, cache_dir, progress=None, name=None):
         raise AreaError("Areas crossing the antimeridian (±180° longitude) are not supported.")
 
     monkeypatch.setattr(cli, "run", failing_run)
@@ -59,7 +59,7 @@ def run_cli(monkeypatch, tmp_path, args: list[str]) -> tuple[object, object]:
     """Invoke the CLI with a stubbed pipeline and return (captured spec, result)."""
     captured = {}
 
-    def fake_run(spec, out_dir, cache_dir, progress=None):
+    def fake_run(spec, out_dir, cache_dir, progress=None, name=None):
         captured["spec"] = spec
         return RunResult(
             ExportPaths(out_dir / "model.stl", out_dir / "model.3mf", out_dir / "preview.glb"),
@@ -132,7 +132,7 @@ def test_generate_prints_the_lod2_source(monkeypatch, tmp_path):
 
 
 def test_generate_says_so_when_no_lod2_source_was_used(monkeypatch, tmp_path):
-    def fake_run(spec, out_dir, cache_dir, progress=None):
+    def fake_run(spec, out_dir, cache_dir, progress=None, name=None):
         return RunResult(
             ExportPaths(out_dir / "model.stl", out_dir / "model.3mf", out_dir / "preview.glb"),
             {"buildings": 3, "lod2_source": ""},
@@ -152,7 +152,7 @@ def test_terrain_is_off_by_default_and_can_be_switched_on(monkeypatch, tmp_path)
 
 
 def _run_with_stats(monkeypatch, tmp_path, stats: dict, args: list[str]):
-    def fake_run(spec, out_dir, cache_dir, progress=None):
+    def fake_run(spec, out_dir, cache_dir, progress=None, name=None):
         return RunResult(ExportPaths(out_dir / "model.stl", out_dir / "model.3mf", out_dir / "preview.glb"), stats)
 
     monkeypatch.setattr(cli, "run", fake_run)
@@ -177,3 +177,25 @@ def test_generate_prints_the_note_when_terrain_was_unavailable(monkeypatch, tmp_
 def test_generate_is_silent_about_terrain_when_it_was_not_asked_for(monkeypatch, tmp_path):
     result = _run_with_stats(monkeypatch, tmp_path, {"buildings": 3, "terrain_source": ""}, [])
     assert "Terrain" not in result.output
+
+
+def _captured_name(monkeypatch, tmp_path, args: list[str]):
+    captured = {}
+
+    def fake_run(spec, out_dir, cache_dir, progress=None, name=None):
+        captured["name"] = name
+        return RunResult(ExportPaths(out_dir / "model.stl", out_dir / "model.3mf", out_dir / "preview.glb"), {})
+
+    monkeypatch.setattr(cli, "run", fake_run)
+    result = runner.invoke(cli.app, ["--lat", "50.1", "--lon", "8.6", "--out", str(tmp_path), *args])
+    assert result.exit_code == 0, result.output
+    return captured["name"]
+
+
+def test_name_is_passed_to_the_pipeline(monkeypatch, tmp_path):
+    assert _captured_name(monkeypatch, tmp_path, ["--name", "Frankfurt am Main – Altstadt"]) == "Frankfurt am Main – Altstadt"
+
+
+def test_without_a_name_the_cli_does_not_look_one_up(monkeypatch, tmp_path):
+    # The CLI stays offline for naming: no reverse geocoding, the files keep their model.* names.
+    assert _captured_name(monkeypatch, tmp_path, []) is None
