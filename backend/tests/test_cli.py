@@ -186,6 +186,28 @@ def test_generate_is_silent_about_terrain_when_it_was_not_asked_for(monkeypatch,
     assert "Terrain" not in result.output
 
 
+def test_trees_are_on_by_default_and_can_be_switched_off(monkeypatch, tmp_path):
+    spec, _ = run_cli(monkeypatch, tmp_path, [])
+    assert spec.trees is True
+    spec, _ = run_cli(monkeypatch, tmp_path, ["--no-trees"])
+    assert spec.trees is False
+
+
+def test_generate_prints_the_trees_and_where_they_come_from(monkeypatch, tmp_path):
+    result = _run_with_stats(monkeypatch, tmp_path, {"buildings": 3, "trees": 1234, "trees_source": "worldcover"}, [])
+    assert "Trees: 1234 (ESA WorldCover and OpenStreetMap)" in result.output
+    result = _run_with_stats(monkeypatch, tmp_path, {"buildings": 3, "trees": 12, "trees_source": ""}, [])
+    assert "Trees: 12 (OpenStreetMap)" in result.output
+    stats = {"buildings": 3, "trees": 12, "trees_source": "", "trees_note": "WorldCover nicht verfügbar"}
+    result = _run_with_stats(monkeypatch, tmp_path, stats, [])
+    assert "Trees: 12 (OpenStreetMap), WorldCover nicht verfügbar" in result.output
+
+
+def test_generate_is_silent_about_trees_when_they_were_switched_off(monkeypatch, tmp_path):
+    result = _run_with_stats(monkeypatch, tmp_path, {"buildings": 3, "trees": 0, "trees_source": ""}, ["--no-trees"])
+    assert "Trees" not in result.output
+
+
 def _captured_name(monkeypatch, tmp_path, args: list[str]):
     captured = {}
 

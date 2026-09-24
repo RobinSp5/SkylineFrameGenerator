@@ -325,3 +325,176 @@ def test_terrain_off_never_asks_for_a_heightfield_and_is_byte_identical(tmp_path
     assert with_param.stats["terrain_source"] == ""
     assert "terrain_note" not in with_param.stats
     assert "Copernicus" not in with_param.paths.sources.read_text(encoding="utf-8")
+
+
+# --- trees (spec 6 §5) -------------------------------------------------------------------------
+
+
+def tree_grid(step: float = 3.0) -> list:
+    """A grid of 2 mm trees over the whole 100 mm plate; the pipeline keeps the ones that are clear."""
+    from skylineframe.trees.model import Tree
+
+    coords = [-48.0 + step * k for k in range(int(96 / step) + 1)]
+    return [Tree(x, y, 2.0, 1.5) for x in coords for y in coords]
+
+
+def tree_layer_fake(trees, source="worldcover", **extra):
+    """A stand-in for trees.layer.tree_layer, which the data half provides, and the calls it got."""
+    from types import SimpleNamespace
+
+    calls = []
+
+    def layer(spec, osm_trees, cache_dir):
+        calls.append((list(osm_trees), cache_dir))
+        return SimpleNamespace(trees=list(trees), source=source, **extra)
+
+    return layer, calls
+
+
+def test_run_with_trees_prints_them_as_their_own_part(tmp_path, frankfurt_spec, frankfurt_data):
+    import trimesh
+
+    spec = frankfurt_spec.model_copy(update={"trees": True})
+    layer, calls = tree_layer_fake(tree_grid())
+    stages: list[str] = []
+    result = run(
+        spec,
+        tmp_path / "out",
+        tmp_path / "cache",
+        progress=lambda stage, msg: stages.append(stage),
+        fetch=lambda s, c: parse_overpass(frankfurt_data, s),
+        trees=layer,
+    )
+    assert stages == ["fetch", "prepare", "trees", "mesh", "export"]
+    assert calls == [([], tmp_path / "cache")]  # the fixture has no OSM trees
+    # The Römer square is dense: most of the grid stands on a house, a block or a road.
+    assert 0 < result.stats["trees"] < len(tree_grid())
+    assert result.stats["trees_source"] == "worldcover"
+    assert "trees_note" not in result.stats
+    assert "ESA WorldCover" in result.paths.sources.read_text(encoding="utf-8")
+    scene = trimesh.load(result.paths.threemf, file_type="3mf")
+    assert "trees" in scene.geometry
+    plain = run(
+        frankfurt_spec, tmp_path / "plain", tmp_path / "cache", fetch=lambda s, c: parse_overpass(frankfurt_data, s)
+    )
+    assert result.stats["stl_bytes"] > plain.stats["stl_bytes"]
+
+
+def test_osm_trees_reach_the_tree_layer_in_local_metres(tmp_path, frankfurt_spec, frankfurt_data, monkeypatch):
+    # The data half adds Features.trees; until then the pipeline reads it with a default.
+    from skylineframe import pipeline
+    from skylineframe.trees.model import OsmTree
+
+    projected = pipeline.project_features
+
+    def with_trees(features, spec):
+        out = projected(features, spec)
+        out.trees = [OsmTree(1.0, 2.0, 12.0, 6.0)]
+        return out
+
+    monkeypatch.setattr(pipeline, "project_features", with_trees)
+    layer, calls = tree_layer_fake([])
+    run(
+        frankfurt_spec.model_copy(update={"trees": True}),
+        tmp_path / "out",
+        tmp_path / "cache",
+        fetch=lambda s, c: parse_overpass(frankfurt_data, s),
+        trees=layer,
+    )
+    assert calls == [([OsmTree(1.0, 2.0, 12.0, 6.0)], tmp_path / "cache")]
+
+
+def test_trees_off_never_asks_for_trees_and_is_byte_identical(tmp_path, frankfurt_spec, frankfurt_data):
+    def must_not_run(s, osm, c):
+        raise AssertionError("trees loaded although spec.trees is False")
+
+    off = run(
+        frankfurt_spec.model_copy(update={"trees": False}),
+        tmp_path / "a",
+        tmp_path / "cache",
+        fetch=lambda s, c: parse_overpass(frankfurt_data, s),
+        trees=must_not_run,
+    )
+    # Trees asked for but none left to print: the same model, byte for byte.
+    layer, _ = tree_layer_fake([], source="")
+    empty = run(
+        frankfurt_spec.model_copy(update={"trees": True}),
+        tmp_path / "b",
+        tmp_path / "cache",
+        fetch=lambda s, c: parse_overpass(frankfurt_data, s),
+        trees=layer,
+    )
+    assert off.paths.stl.read_bytes() == empty.paths.stl.read_bytes()
+    assert off.stats["trees"] == 0 and off.stats["trees_source"] == ""
+    assert "trees_note" not in off.stats
+    assert "WorldCover" not in off.paths.sources.read_text(encoding="utf-8")
+
+
+def test_worldcover_is_only_credited_when_its_trees_reach_the_print(tmp_path, frankfurt_spec, frankfurt_data):
+    from skylineframe.trees.model import Tree
+
+    spec = frankfurt_spec.model_copy(update={"trees": True})
+    # Off the plate: fitted away, so nothing of WorldCover is in the model.
+    layer, _ = tree_layer_fake([Tree(500.0, 500.0, 2.0, 1.5)])
+    result = run(spec, tmp_path / "a", tmp_path / "cache", fetch=lambda s, c: parse_overpass(frankfurt_data, s), trees=layer)
+    assert result.stats["trees"] == 0
+    assert result.stats["trees_source"] == ""
+    assert "WorldCover" not in result.paths.sources.read_text(encoding="utf-8")
+    # OSM trees only: printed, but not credited to WorldCover.
+    layer, _ = tree_layer_fake(tree_grid(), source="")
+    result = run(spec, tmp_path / "b", tmp_path / "cache", fetch=lambda s, c: parse_overpass(frankfurt_data, s), trees=layer)
+    assert result.stats["trees"] > 0
+    assert result.stats["trees_source"] == ""
+    assert "WorldCover" not in result.paths.sources.read_text(encoding="utf-8")
+
+
+def test_the_tree_layer_note_is_passed_on(tmp_path, frankfurt_spec, frankfurt_data):
+    layer, _ = tree_layer_fake(tree_grid(), source="", note="WorldCover nicht verfügbar")
+    result = run(
+        frankfurt_spec.model_copy(update={"trees": True}),
+        tmp_path / "out",
+        tmp_path / "cache",
+        fetch=lambda s, c: parse_overpass(frankfurt_data, s),
+        trees=layer,
+    )
+    assert result.stats["trees_note"] == "WorldCover nicht verfügbar"
+
+
+def test_without_an_injected_layer_the_data_half_is_imported_lazily(
+    tmp_path, frankfurt_spec, frankfurt_data, monkeypatch
+):
+    import sys
+    from types import ModuleType
+
+    layer, calls = tree_layer_fake(tree_grid())
+    module = ModuleType("skylineframe.trees.layer")
+    module.tree_layer = layer
+    monkeypatch.setitem(sys.modules, "skylineframe.trees.layer", module)
+    result = run(
+        frankfurt_spec.model_copy(update={"trees": True}),
+        tmp_path / "out",
+        tmp_path / "cache",
+        fetch=lambda s, c: parse_overpass(frankfurt_data, s),
+    )
+    assert len(calls) == 1
+    assert result.stats["trees"] > 0
+
+
+def test_trees_on_terrain(tmp_path, frankfurt_spec, frankfurt_data):
+    import trimesh
+
+    spec = frankfurt_spec.model_copy(update={"trees": True, "terrain": True})
+    layer, _ = tree_layer_fake(tree_grid())
+    result = run(
+        spec,
+        tmp_path / "out",
+        tmp_path / "cache",
+        fetch=lambda s, c: parse_overpass(frankfurt_data, s),
+        terrain=lambda s, c: tilted(s),
+        trees=layer,
+    )
+    assert result.stats["trees"] > 0
+    assert result.stats["nonmanifold_edges"] == 0
+    stl = trimesh.load(result.paths.stl)
+    assert stl.is_watertight
+    assert stl.bounds[0][2] == pytest.approx(-spec.plate_thickness_mm, abs=1e-4)

@@ -1,6 +1,14 @@
 from datetime import date
 
-from skylineframe.lod2.sources import ATTRIBUTIONS, COPERNICUS, HESSEN, OSM, SOURCES_FILENAME, sources_text
+from skylineframe.lod2.sources import (
+    ATTRIBUTIONS,
+    COPERNICUS,
+    HESSEN,
+    OSM,
+    SOURCES_FILENAME,
+    WORLDCOVER,
+    sources_text,
+)
 
 
 def test_filename_and_registry():
@@ -65,3 +73,25 @@ def test_terrain_block_sits_between_lod2_and_osm():
     assert sources_text("2026-09-24", terrain=COPERNICUS) == (
         "Geometrie erzeugt mit Skyline Frame Generator am 2026-09-24.\n" + COPERNICUS_TEXT + "\n" + OSM.text + "\n"
     )
+
+
+WORLDCOVER_TEXT = (
+    "Bäume: © ESA WorldCover project 2021 / Contains modified Copernicus Sentinel data (2021) processed by ESA "
+    "WorldCover consortium, CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/)."
+)
+
+
+def test_worldcover_text_is_the_line_from_the_spec():
+    # Spec 6 §2: the mandatory CC BY 4.0 line, verbatim, and never a building source.
+    assert WORLDCOVER.name == "worldcover"
+    assert WORLDCOVER.text == WORLDCOVER_TEXT
+    assert "worldcover" not in ATTRIBUTIONS
+
+
+def test_trees_block_sits_after_the_terrain_and_before_osm():
+    text = sources_text("2026-09-24", HESSEN, terrain=COPERNICUS, trees=WORLDCOVER)
+    assert text.index("LoD2 Hessen") < text.index("WorldDEM-30") < text.index("WorldCover") < text.index("OpenStreetMap")
+    assert sources_text("2026-09-24", trees=WORLDCOVER) == (
+        "Geometrie erzeugt mit Skyline Frame Generator am 2026-09-24.\n" + WORLDCOVER_TEXT + "\n" + OSM.text + "\n"
+    )
+    assert "WorldCover" not in sources_text("2026-09-24", HESSEN, terrain=COPERNICUS)

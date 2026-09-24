@@ -4,24 +4,38 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
+from typing import Protocol
 
 from .errors import PipelineError
 from .export import ExportPaths, export_all
 from .features import Features
 from .fetch import fetch_features
-from .lod2.sources import ATTRIBUTIONS, COPERNICUS, sources_text
+from .lod2.sources import ATTRIBUTIONS, COPERNICUS, WORLDCOVER, sources_text
 from .mesh import build_meshes
 from .prepare import prepare
 from .project import project_features
 from .scale import scale_features
 from .spec import FrameSpec
 from .terrain.heightfield import Heightfield
+from .trees.model import OsmTree, Tree
 
 ProgressCallback = Callable[[str, str], None]
 FetchFn = Callable[[FrameSpec, Path], Features]
 # (spec, cache_dir) -> the relief, or None when the DEM could not be had (spec 4b §4.3).
 TerrainFn = Callable[[FrameSpec, Path], Heightfield | None]
 TERRAIN_UNAVAILABLE = "Gelände nicht verfügbar"
+
+
+class TreeLayerLike(Protocol):
+    """What trees.layer.tree_layer hands back (spec 6 §3). `note`, when the layer carries one, says
+    why a source is missing and goes into the stats as it is."""
+
+    trees: list[Tree]
+    source: str
+
+
+# (spec, OSM trees in local metres, cache_dir) -> the trees to print (spec 6 §3).
+TreesFn = Callable[[FrameSpec, list[OsmTree], Path], TreeLayerLike]
 
 
 @dataclass
@@ -39,6 +53,7 @@ def run(
     fetch: FetchFn = fetch_features,
     terrain: TerrainFn | None = None,
     name: str | None = None,
+    trees: TreesFn | None = None,
 ) -> RunResult:
     """Build the model for spec into out_dir. `name` is the place label the 3MF and STL carry."""
     def report(stage: str, message: str) -> None:
@@ -62,12 +77,31 @@ def run(
         heightfield = terrain(spec, cache_dir)
 
     report("prepare", "Clipping and cleaning geometry")
-    prepared = prepare(project_features(raw, spec), spec)
+    projected = project_features(raw, spec)
+    prepared = prepare(projected, spec)
     # A square of nothing but small sheds has no individual buildings but still has blocks,
     # and a block alone is a perfectly good model.
     if not prepared.buildings and not prepared.blocks:
         raise PipelineError("No buildings found in the selected area. Try a denser part of the city.")
-    scaled = scale_features(prepared, spec)
+
+    # Like the terrain: trees=False never touches the tree code, and the model stays byte-identical
+    # to the one before phase 6 (spec 6 §2). A missing WorldCover tile is the layer's business: it
+    # returns the OSM trees alone and says so in its note.
+    layer: TreeLayerLike | None = None
+    if spec.trees:
+        report("trees", "Placing trees (ESA WorldCover, OpenStreetMap)")
+        if trees is None:
+            # Imported here so a run without trees never loads the raster dependencies.
+            from .trees.layer import tree_layer
+
+            trees = tree_layer
+        layer = trees(spec, list(getattr(projected, "trees", [])), cache_dir)
+    scaled = scale_features(prepared, spec, layer.trees if layer is not None else ())
+    # WorldCover is credited when its trees reached the print, not when the tile merely loaded: a
+    # square of houses and streets can fit every one of them away. The layer does not say which
+    # printed tree came from where, so a print of only OSM trees next to a dropped WorldCover
+    # canopy would still name it: the one over-credit, and CC BY asks for credit, never against it.
+    trees_source = layer.source if layer is not None and scaled.trees else ""
 
     report("mesh", f"Building solids for {len(prepared.buildings)} buildings in {len(prepared.blocks)} blocks")
     meshes = build_meshes(scaled, spec, heightfield)
@@ -90,6 +124,7 @@ def run(
             date.today().isoformat(),
             ATTRIBUTIONS.get(lod2_source),
             terrain=COPERNICUS if heightfield is not None else None,
+            trees=WORLDCOVER if trees_source == WORLDCOVER.name else None,
         ),
         name=name,
     )
@@ -139,8 +174,14 @@ def run(
         # Terrain (spec 4b §5.6): the source is empty unless a relief is in the print. The note
         # only appears when terrain was asked for and could not be had.
         "terrain_source": COPERNICUS.name if heightfield is not None else "",
+        # Trees (spec 6 §5.6): the count is what prints, after the fitting dropped the rest.
+        "trees": len(scaled.trees),
+        "trees_source": trees_source,
         **paths.diagnostics,
     }
+    note = getattr(layer, "note", "") if layer is not None else ""
+    if note:
+        stats["trees_note"] = note
     if heightfield is not None:
         # The lowest node is 0 by contract, so the highest one is the relief.
         stats["terrain_relief_mm"] = round(float(heightfield.z_mm.max()), 2)

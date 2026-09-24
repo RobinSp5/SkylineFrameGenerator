@@ -51,12 +51,30 @@ COPERNICUS = Attribution(
 )
 
 
-def sources_text(date_iso: str, lod2: Attribution | None = None, terrain: Attribution | None = None) -> str:
-    """The content of SOURCES.txt for one run, one block per source used (spec §7, 4b §4.8)."""
+# The tree cover (spec 6 §2). CC BY 4.0 asks for the credit line, verbatim like the Copernicus one.
+# OpenStreetMap trees are covered by the OSM block below.
+WORLDCOVER = Attribution(
+    name="worldcover",
+    text=(
+        "Bäume: © ESA WorldCover project 2021 / Contains modified Copernicus Sentinel data (2021) processed by ESA "
+        "WorldCover consortium, CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/)."
+    ),
+)
+
+
+def sources_text(
+    date_iso: str,
+    lod2: Attribution | None = None,
+    terrain: Attribution | None = None,
+    trees: Attribution | None = None,
+) -> str:
+    """The content of SOURCES.txt for one run, one block per source used (spec §7, 4b §4.8, 6 §2)."""
     blocks = [HEADER.format(date=date_iso)]
     if lod2 is not None:
         blocks.append(lod2.text)
     if terrain is not None:
         blocks.append(terrain.text)
+    if trees is not None:
+        blocks.append(trees.text)
     blocks.append(OSM.text)
     return "\n".join(blocks) + "\n"

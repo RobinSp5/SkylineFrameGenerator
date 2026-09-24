@@ -93,6 +93,9 @@ class FrameSpec(BaseModel):
     # tower, and z_exaggeration already means "buildings" to every existing client.
     terrain: bool = False
     terrain_exaggeration: float = Field(default=1.0, gt=0, le=5)
+    # Trees from ESA WorldCover and OpenStreetMap, as domes on the ground (spec 6 §2). Off is the
+    # exact model of before, byte for byte.
+    trees: bool = True
     # Thin parts get two nozzle lines instead of one. A footprint widened to a single 0.4 mm line
     # is a pin up to several mm tall, and Bambu Studio flags a model full of them as having
     # "floating regions"; at 0.8 mm the same Eppstein and Frankfurt models slice without a warning.

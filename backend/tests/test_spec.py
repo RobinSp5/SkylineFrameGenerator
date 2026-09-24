@@ -108,3 +108,9 @@ def test_terrain_is_off_by_default_with_its_own_exaggeration():
 def test_terrain_exaggeration_is_limited_to_zero_to_five(value):
     with pytest.raises(ValidationError):
         FrameSpec(center_lat=50, center_lon=8, terrain_exaggeration=value)
+
+
+def test_trees_are_on_by_default():
+    # Spec 6 §2: trees belong in the model everywhere; trees=False is the model of before.
+    assert FrameSpec(center_lat=50, center_lon=8).trees is True
+    assert FrameSpec(center_lat=50, center_lon=8, trees=False).trees is False

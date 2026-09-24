@@ -7,9 +7,10 @@ from skylineframe.spec import FrameSpec, Mode
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
-# Same parameters as fixtures/record_frankfurt.py — keep in sync.
-FRANKFURT = FrameSpec(center_lat=50.1090, center_lon=8.6820, side_m=400, mode=Mode.full)
-BANKENVIERTEL = FrameSpec(center_lat=50.1105, center_lon=8.6747, side_m=300, mode=Mode.full)
+# Same parameters as fixtures/record_frankfurt.py — keep in sync. Trees off: the tree layer loads
+# WorldCover tiles over the network, and the tests that want trees inject a layer of their own.
+FRANKFURT = FrameSpec(center_lat=50.1090, center_lon=8.6820, side_m=400, mode=Mode.full, trees=False)
+BANKENVIERTEL = FrameSpec(center_lat=50.1105, center_lon=8.6747, side_m=300, mode=Mode.full, trees=False)
 
 
 @pytest.fixture

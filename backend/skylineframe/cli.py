@@ -40,6 +40,7 @@ def generate(
     lod2: Annotated[bool, typer.Option("--lod2/--no-lod2", help="Use official LoD2 building models where available")] = True,
     terrain: Annotated[bool, typer.Option("--terrain/--no-terrain", help="Model the terrain relief (Copernicus DEM)")] = False,
     terrain_z: Annotated[float, typer.Option(help="Terrain exaggeration factor, separate from --z")] = 1.0,
+    trees: Annotated[bool, typer.Option("--trees/--no-trees", help="Trees from ESA WorldCover and OpenStreetMap")] = True,
     optimize: Annotated[
         bool,
         typer.Option("--optimize/--no-optimize", help="Widen thin parts to two nozzle lines (0.8 mm) so the model slices cleanly"),
@@ -69,6 +70,7 @@ def generate(
             lod2=lod2,
             terrain=terrain,
             terrain_exaggeration=terrain_z,
+            trees=trees,
             print_optimized=optimize,
         )
         result = run(spec, out, cache, progress=lambda stage, msg: typer.echo(f"[{stage}] {msg}"), name=name)
@@ -101,6 +103,13 @@ def generate(
         typer.echo(f"Terrain: {terrain_source}, relief {float(stats.get('terrain_relief_mm', 0.0)):.2f} mm")
     elif stats.get("terrain_note"):
         typer.echo(f"Terrain: {stats['terrain_note']} (flat plate)")
+    # Only when trees were asked for, like the terrain line above.
+    if spec.trees:
+        origin = "ESA WorldCover and OpenStreetMap" if stats.get("trees_source") == "worldcover" else "OpenStreetMap"
+        line = f"Trees: {int(stats.get('trees', 0))} ({origin})"
+        if stats.get("trees_note"):
+            line += f", {stats['trees_note']}"
+        typer.echo(line)
     typer.echo(f"Non-manifold edges after vertex merge: {int(stats.get('nonmanifold_edges', 0))}")
     typer.echo(f"Degenerate faces after vertex merge: {int(stats.get('degenerate_faces', 0))}")
     typer.echo(
