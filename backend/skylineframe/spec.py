@@ -96,6 +96,9 @@ class FrameSpec(BaseModel):
     # Trees from ESA WorldCover and OpenStreetMap, as domes on the ground (spec 6 §2). Off is the
     # exact model of before, byte for byte.
     trees: bool = True
+    # A Bambu Studio project with every part on its own AMS filament: base, buildings and roads
+    # white, trees green, water blue. Off is the plain 3MF of before; the STL never changes.
+    multicolor: bool = False
     # Thin parts get two nozzle lines instead of one. A footprint widened to a single 0.4 mm line
     # is a pin up to several mm tall, and Bambu Studio flags a model full of them as having
     # "floating regions"; at 0.8 mm the same Eppstein and Frankfurt models slice without a warning.

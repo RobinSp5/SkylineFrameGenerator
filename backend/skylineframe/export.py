@@ -1,8 +1,14 @@
 """Write STL (single colour), 3MF (named parts) and GLB (coloured preview) after verifying the solid."""
 
+import io
+import json
+import re
+import xml.etree.ElementTree as ET
+import zipfile
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
+from xml.sax import saxutils
 
 import numpy as np
 import trimesh
@@ -20,6 +26,23 @@ PART_COLORS: dict[str, tuple[int, int, int, int]] = {
     "roads": (90, 90, 90, 255),
     "trees": (84, 130, 53, 255),
 }
+# Multicolour 3MF (FrameSpec.multicolor): the AMS filament each part prints with, numbered the
+# way Bambu Studio numbers them, and the colour of each filament. White for the city, so the
+# default look of the frame stays; green trees, blue water.
+PART_ORDER = ("base", "buildings", "roads", "trees", "water")
+PART_FILAMENTS: dict[str, int] = {"base": 1, "buildings": 1, "roads": 1, "trees": 2, "water": 3}
+FILAMENT_COLORS = ("#F2F2F2", "#4E7D3A", "#3F7FBF")
+FILAMENT_NAMES = ("white", "green", "blue")
+DEFAULT_OBJECT_NAME = "Skyline Frame"
+BAMBU_BED_MM = 256.0  # the X2D bed is square
+BAMBU_BACK_MARGIN_MM = 2.0
+# Front-left corner of the prime tower: centred left to right in front of the model. The tower is
+# 35 mm wide (prime_tower_width in the template); a 200 mm model leaves it 49 mm of depth.
+BAMBU_PRIME_TOWER_MM = (BAMBU_BED_MM / 2 - 17.5, 5.0)
+BAMBU_APPLICATION = "BambuStudio-02.08.02.61"  # the version the project settings come from
+BAMBU_NAMESPACE = "http://schemas.bambulab.com/package/2021"
+PROJECT_SETTINGS = Path(__file__).with_name("bambu_x2d_project_settings.json")
+OBJECT_TAG = re.compile(rb'<object id="(\d+)" name="([^"]*)"')
 SIZE_TOLERANCE_MM = 0.01
 DEGENERATE_AREA_MM2 = 1e-9
 STL_HEADER_LEN = 80
@@ -71,20 +94,116 @@ def verify_part(tm: trimesh.Trimesh, name: str) -> None:
         raise ExportError(f"Part '{name}' is not watertight; please try a slightly different area.")
 
 
-def threemf_scene(parts: dict[str, trimesh.Trimesh], name: str | None) -> trimesh.Scene:
+def threemf_scene(
+    parts: dict[str, trimesh.Trimesh], name: str | None, offset: tuple[float, float, float] | None = None
+) -> trimesh.Scene:
     """The parts as a 3MF scene; with a name, grouped under one object that carries it.
 
     Trimesh writes a node with children as a 3MF component object and puts only the nodes on the
     base frame into the build, so the slicer lists a single object named after the place with the
-    parts inside it. Without a name the parts stay separate top-level objects, as before.
+    parts inside it. Without a name the parts stay separate top-level objects, as before. `offset`
+    moves the named object in the build item's transform; the meshes themselves stay put.
     """
     if name is None:
         return trimesh.Scene(parts)
     scene = trimesh.Scene()
-    scene.graph.update(frame_from=scene.graph.base_frame, frame_to=name)
+    matrix = None if offset is None else trimesh.transformations.translation_matrix(offset)
+    scene.graph.update(frame_from=scene.graph.base_frame, frame_to=name, matrix=matrix)
     for part, tm in parts.items():
         scene.add_geometry(tm, geom_name=part, node_name=part, parent_node_name=name)
     return scene
+
+
+def filament_summary() -> str:
+    """Which spool goes where, in Bambu Studio's filament numbering."""
+    groups = []
+    for number, colour in enumerate(FILAMENT_NAMES, start=1):
+        parts = ", ".join(p for p in PART_ORDER if PART_FILAMENTS[p] == number)
+        groups.append(f"{number} {colour} ({parts})")
+    return ", ".join(groups)
+
+
+def bambu_offset(parts: dict[str, trimesh.Trimesh]) -> tuple[float, float, float]:
+    """Translation that puts the model at the back of the X2D bed, centred left to right.
+
+    Bambu Studio re-centres a foreign 3MF, but takes a project of its own as it is. The back and
+    not the middle: the prime tower stands in front (BAMBU_PRIME_TOWER_MM), and a 200 mm plate in
+    the middle of the 256 mm bed leaves it no room — Bambu Studio reports a path conflict.
+    """
+    bounds = np.vstack([tm.bounds for tm in parts.values()])
+    lo, hi = bounds.min(axis=0), bounds.max(axis=0)
+    return (BAMBU_BED_MM / 2 - (lo[0] + hi[0]) / 2, BAMBU_BED_MM - BAMBU_BACK_MARGIN_MM - hi[1], -lo[2])
+
+
+def _xml(root: ET.Element) -> bytes:
+    ET.indent(root)
+    return ET.tostring(root, encoding="utf-8", xml_declaration=True)
+
+
+def model_settings(object_id: str, name: str, part_ids: dict[str, str]) -> bytes:
+    """Bambu's Metadata/model_settings.config: one object, each part on its filament ("extruder")."""
+    config = ET.Element("config")
+    obj = ET.SubElement(config, "object", id=object_id)
+    ET.SubElement(obj, "metadata", key="name", value=name)
+    ET.SubElement(obj, "metadata", key="extruder", value="1")
+    for part, part_id in part_ids.items():
+        element = ET.SubElement(obj, "part", id=part_id, subtype="normal_part")
+        ET.SubElement(element, "metadata", key="name", value=part)
+        ET.SubElement(element, "metadata", key="extruder", value=str(PART_FILAMENTS[part]))
+    plate = ET.SubElement(config, "plate")
+    for key, value in (("plater_id", "1"), ("plater_name", ""), ("locked", "false")):
+        ET.SubElement(plate, "metadata", key=key, value=value)
+    instance = ET.SubElement(plate, "model_instance")
+    ET.SubElement(instance, "metadata", key="object_id", value=object_id)
+    ET.SubElement(instance, "metadata", key="instance_id", value="0")
+    return _xml(config)
+
+
+def project_settings() -> bytes:
+    """Bambu's Metadata/project_settings.config: the X2D, 0.20 mm Standard and three PLA spools.
+
+    The template is a full Bambu Studio 02.08.02.61 project config: a partial one is filled with
+    generic defaults instead of the X2D's, and every per-filament list must name the same number
+    of filaments, or the slicer fails. It was cut out of an X2D project with nine filaments by
+    keeping three of its "Bambu PLA Basic @BBL X2D 0.4 nozzle" entries.
+    """
+    settings = json.loads(PROJECT_SETTINGS.read_text(encoding="utf-8"))
+    settings["filament_colour"] = list(FILAMENT_COLORS)
+    settings["filament_multi_colour"] = list(FILAMENT_COLORS)
+    settings["wipe_tower_x"] = [f"{BAMBU_PRIME_TOWER_MM[0]:g}"]
+    settings["wipe_tower_y"] = [f"{BAMBU_PRIME_TOWER_MM[1]:g}"]
+    return json.dumps(settings, indent=4, ensure_ascii=False).encode("utf-8")
+
+
+def bambu_3mf(model_3mf: bytes, name: str) -> bytes:
+    """Turn trimesh's 3MF of one named object into a Bambu Studio project with coloured parts.
+
+    Bambu reads Metadata/*.config only from a file whose model names BambuStudio as its
+    application; anything else it imports as bare geometry on filament 1.
+    """
+    source = zipfile.ZipFile(io.BytesIO(model_3mf))
+    model = source.read("3D/3dmodel.model")
+    (item_id,) = re.findall(rb'<item [^>]*?objectid="(\d+)"', model)
+    names = {oid.decode(): saxutils.unescape(n.decode(), {"&quot;": '"'}) for oid, n in OBJECT_TAG.findall(model)}
+    top = item_id.decode()
+    part_ids = {names[oid]: oid for oid in names if oid != top}
+
+    start = model.index(b"<model ")
+    end = model.index(b">", start)
+    model = (
+        model[:end]
+        + f' xmlns:BambuStudio="{BAMBU_NAMESPACE}">'.encode()
+        + f'<metadata name="Application">{BAMBU_APPLICATION}</metadata>'.encode()
+        + b'<metadata name="BambuStudio:3mfVersion">1</metadata>'
+        + model[end + 1 :]
+    )
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
+        for info in source.infolist():
+            z.writestr(info, model if info.filename == "3D/3dmodel.model" else source.read(info))
+        z.writestr("Metadata/model_settings.config", model_settings(top, names[top], part_ids))
+        z.writestr("Metadata/project_settings.config", project_settings())
+    return out.getvalue()
 
 
 def write_stl_header(path: Path, name: str) -> None:
@@ -117,7 +236,12 @@ def export_all(
     single.export(str(paths.stl), file_type="stl")
     if name is not None:
         write_stl_header(paths.stl, name)
-    threemf_scene(parts, name).export(str(paths.threemf), file_type="3mf")
+    if spec.multicolor:
+        label = name if name is not None else DEFAULT_OBJECT_NAME
+        scene = threemf_scene(parts, label, offset=bambu_offset(parts))
+        paths.threemf.write_bytes(bambu_3mf(scene.export(file_type="3mf"), label))
+    else:
+        threemf_scene(parts, name).export(str(paths.threemf), file_type="3mf")
 
     # Colours are for the preview only — the 3MF is already written at this point.
     for part, tm in parts.items():

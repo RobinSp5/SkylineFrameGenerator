@@ -1,3 +1,6 @@
+import dataclasses
+import json
+import re
 import xml.etree.ElementTree as ET
 import zipfile
 
@@ -8,7 +11,14 @@ import trimesh
 from shapely.geometry import Polygon, box
 
 from skylineframe.errors import ExportError
-from skylineframe.export import export_all, mesh_diagnostics, verify_part, verify_single
+from skylineframe.export import (
+    FILAMENT_COLORS,
+    PART_FILAMENTS,
+    export_all,
+    mesh_diagnostics,
+    verify_part,
+    verify_single,
+)
 from skylineframe.mesh import build_meshes, to_trimesh
 from skylineframe.scale import Prism, Scaled
 from skylineframe.spec import FrameSpec, Mode
@@ -263,6 +273,130 @@ def test_sources_txt_is_written_only_after_verification(tmp_path, meshset, monke
     with pytest.raises(ExportError):
         export_all(meshset, spec(), out_dir, sources="x\n")
     assert list(out_dir.iterdir()) == []
+
+
+# --- multicolour 3MF for Bambu Studio -------------------------------------------------------------
+
+BAMBU_ENTRIES = {"Metadata/model_settings.config", "Metadata/project_settings.config"}
+
+
+@pytest.fixture
+def meshset_with_trees(meshset):
+    # A free-standing canopy on the plate: its own watertight part, like the real tree layer.
+    return dataclasses.replace(meshset, trees=m3d.Manifold.cube((4.0, 4.0, 2.0)).translate((20.0, -30.0, 3.0)))
+
+
+def _zip_entries(path) -> dict[str, bytes]:
+    with zipfile.ZipFile(path) as z:
+        return {n: z.read(n) for n in z.namelist()}
+
+
+def _without_uuids(data: bytes) -> bytes:
+    return re.sub(rb' p:UUID="[^"]*"', b"", data)
+
+
+def _model_settings(path) -> ET.Element:
+    with zipfile.ZipFile(path) as z:
+        return ET.fromstring(z.read("Metadata/model_settings.config"))
+
+
+def _project_settings(path) -> dict:
+    with zipfile.ZipFile(path) as z:
+        return json.loads(z.read("Metadata/project_settings.config"))
+
+
+def test_multicolor_is_off_by_default_and_leaves_the_3mf_as_before(tmp_path, meshset):
+    label = "Frankfurt am Main"
+    before = export_all(meshset, spec(), tmp_path / "a", name=label)
+    off = export_all(meshset, spec(multicolor=False), tmp_path / "b", name=label)
+    a, b = _zip_entries(before.threemf), _zip_entries(off.threemf)
+    assert a.keys() == b.keys() == {"3D/3dmodel.model", "_rels/.rels", "[Content_Types].xml"}
+    # Trimesh writes a random p:UUID per object; everything else is the same, byte for byte.
+    assert {n: _without_uuids(d) for n, d in a.items()} == {n: _without_uuids(d) for n, d in b.items()}
+    assert b"BambuStudio" not in b["3D/3dmodel.model"]
+
+
+def test_multicolor_3mf_is_one_bambu_object_with_parts_on_their_filaments(tmp_path, meshset_with_trees):
+    label = "Frankfurt am Main – Altstadt & Main"
+    paths = export_all(meshset_with_trees, spec(multicolor=True), tmp_path, name=label)
+    assert BAMBU_ENTRIES <= _zip_entries(paths.threemf).keys()
+    model = _3mf_model(paths.threemf)
+    apps = [m.text for m in model.iter(f"{NS}metadata") if m.get("name") == "Application"]
+    assert len(apps) == 1 and apps[0].startswith("BambuStudio-")  # Bambu reads its own configs only then
+    items = list(model.iter(f"{NS}item"))
+    assert len(items) == 1
+    objects = {o.get("id"): o for o in model.iter(f"{NS}object")}
+    top = objects[items[0].get("objectid")]
+    part_ids = {objects[c.get("objectid")].get("name"): c.get("objectid") for c in top.iter(f"{NS}component")}
+    assert set(part_ids) == {"base", "buildings", "roads", "water", "trees"}
+
+    settings = _model_settings(paths.threemf)
+    (obj,) = settings.findall("object")
+    assert obj.get("id") == top.get("id")
+    meta = {m.get("key"): m.get("value") for m in obj.findall("metadata")}
+    assert meta["name"] == label
+    parts = {p.get("id"): p for p in obj.findall("part")}
+    assert set(parts) == set(part_ids.values())
+    extruder = {}
+    for name, pid in part_ids.items():
+        pmeta = {m.get("key"): m.get("value") for m in parts[pid].findall("metadata")}
+        assert parts[pid].get("subtype") == "normal_part"
+        assert pmeta["name"] == name
+        extruder[name] = pmeta["extruder"]
+    assert extruder == {"base": "1", "buildings": "1", "roads": "1", "trees": "2", "water": "3"}
+
+
+def test_multicolor_project_sets_the_x2d_and_three_coloured_pla_filaments(tmp_path, meshset_with_trees):
+    paths = export_all(meshset_with_trees, spec(multicolor=True), tmp_path, name="Frankfurt")
+    project = _project_settings(paths.threemf)
+    assert project["printer_settings_id"] == "Bambu Lab X2D 0.4 nozzle"
+    assert project["printer_model"] == "Bambu Lab X2D"
+    assert project["filament_colour"] == list(FILAMENT_COLORS)
+    assert project["filament_multi_colour"] == list(FILAMENT_COLORS)
+    assert project["filament_type"] == ["PLA", "PLA", "PLA"]
+    assert len(project["filament_settings_id"]) == 3
+    # Every per-filament list must agree on three filaments, or Bambu Studio fails to slice. The
+    # filament_mixed_* lists hold one global entry in every Bambu project, whatever the count.
+    per_filament = [k for k, v in project.items() if k.startswith("filament_") and isinstance(v, list) and len(v) > 1]
+    assert len(per_filament) > 50
+    assert all(len(project[k]) % 3 == 0 for k in per_filament)
+    assert FILAMENT_COLORS == ("#F2F2F2", "#4E7D3A", "#3F7FBF")
+    assert PART_FILAMENTS == {"base": 1, "buildings": 1, "roads": 1, "trees": 2, "water": 3}
+
+
+@pytest.mark.parametrize("plate_mm", [100, 200])
+def test_multicolor_puts_the_model_at_the_back_and_the_prime_tower_in_front(tmp_path, plate_mm):
+    # A Bambu project is not re-centred on import: the build item must put the model on the bed.
+    # A 200 mm model in the middle of the 256 mm X2D bed leaves no room for the 35 mm prime
+    # tower, and Bambu Studio reports a conflict; at the back it leaves 50 mm in front.
+    s = spec(plate_size_mm=plate_mm, side_m=plate_mm * 10)
+    meshes = build_meshes(Scaled(buildings=[Prism(box(-5, -5, 5, 5), 10.0)]), s)
+    paths = export_all(meshes, s.model_copy(update={"multicolor": True}), tmp_path, name="Frankfurt")
+    lo, hi = trimesh.load(paths.threemf, file_type="3mf").bounds
+    assert (lo[0] + hi[0]) / 2 == pytest.approx(128.0, abs=1e-6)
+    assert hi[1] == pytest.approx(254.0, abs=1e-6)
+    assert lo[2] == pytest.approx(0.0, abs=1e-6)
+    project = _project_settings(paths.threemf)
+    assert project["prime_tower_width"] == "35"
+    assert (project["wipe_tower_x"], project["wipe_tower_y"]) == (["110.5"], ["5"])
+
+
+def test_multicolor_keeps_the_geometry_and_the_stl(tmp_path, meshset_with_trees):
+    off = export_all(meshset_with_trees, spec(), tmp_path / "a", name="Frankfurt")
+    on = export_all(meshset_with_trees, spec(multicolor=True), tmp_path / "b", name="Frankfurt")
+    assert off.stl.read_bytes() == on.stl.read_bytes()
+    scene = trimesh.load(on.threemf, file_type="3mf")
+    assert set(scene.geometry) == {"base", "buildings", "water", "roads", "trees"}
+    assert sum(g.volume for g in scene.geometry.values()) == pytest.approx(
+        sum(to_trimesh(m).volume for m in meshset_with_trees.parts().values()), rel=1e-6
+    )
+
+
+def test_multicolor_without_a_name_is_still_one_object(tmp_path, meshset):
+    paths = export_all(meshset, spec(multicolor=True), tmp_path)
+    assert len(list(_3mf_model(paths.threemf).iter(f"{NS}item"))) == 1
+    (obj,) = _model_settings(paths.threemf).findall("object")
+    assert {m.get("key"): m.get("value") for m in obj.findall("metadata")}["name"] == "Skyline Frame"
 
 
 def test_printable_drops_shells_without_material():
