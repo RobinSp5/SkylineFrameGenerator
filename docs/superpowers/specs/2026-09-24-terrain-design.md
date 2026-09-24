@@ -1,7 +1,7 @@
 # Gelände – Design Spec (Phase 4b)
 
 Datum: 2026-09-24
-Status: freigegeben (Design im Chat bestätigt)
+Status: umgesetzt auf `phase4b-terrain` (Design im Chat bestätigt)
 Baut auf: `2026-09-24-houses-not-slabs-design.md` (Phase 4a), in `main`
 
 ## 1. Ziel und Messung
@@ -39,10 +39,10 @@ Einstieg: `terrain_heightfield(spec, cache_dir, client=None) -> Heightfield | No
    `https://copernicus-dem-30m.s3.amazonaws.com/Copernicus_DSM_COG_10_{N|S}{lat:02d}_00_{E|W}{lon:03d}_00_DEM/<gleicher Name>.tif`
    (untere linke Ecke der 1°-Kachel; z. B. `N50_00_E008_00`). Float32, Deflate, Georeferenz in den TIFF-Tags 33550/33922 (Pixelgröße lon hängt von der Breite ab, bei 50° N 1/2400°). Lesen mit `tifffile` + `imagecodecs` (neue Abhängigkeiten in `pyproject.toml`). Gemessen: 30 MB, 1,5 s.
 2. **Cache:** `<cache_dir>/dem/<kachelname>.tif`, atomar schreiben (temp + rename), wie der LoD2-Cache.
-3. **Fehlende Kachel (HTTP 404, Ozean):** Höhe 0 m. Jeder andere Fehler (Netz, Timeout, kaputte Datei) → `None`; die Pipeline baut dann flach und meldet es (§6).
+3. **Fehlende Kachel (HTTP 404, Ozean):** Höhe 0 m; fehlen *alle* Kacheln, gilt das als Fehler (flach + Hinweis, keine Copernicus-Nennung). Lücken im DEM bekommen die Höhe des nächsten gültigen Pixels. Jeder andere Fehler (Netz, Timeout, kaputte Datei) → `None`; die Pipeline baut dann flach und meldet es (§6).
 4. **Mosaik** der Kacheln über `query_bbox(spec, margin_m=200)`; Ausschnitt rastert nur, was gebraucht wird.
 5. **Boden statt Oberfläche** (`ground.py`): Grauwert-Öffnung (`scipy.ndimage.grey_opening`) im DEM-Pixelraum mit Fenster ≈ 100 m (Pixelzahl aus der Pixelgröße in Metern, ungerade, mindestens 3), dann eine Glättung mit gleichem Fenster (`uniform_filter`), damit die Treppen der Öffnung verschwinden. Entfernt Bäume und Hochhäuser, lässt Hügel stehen.
-6. **Umrechnung auf das Druckraster:** Zellgröße `TERRAIN_CELL_MM = 0.5`. Jeder Rasterknoten (x_mm, y_mm) → lokale Meter (/ scale) → Rotation zurück (`-rotation_deg`, wie `project._rotated_square_metric`) → WGS84 über `local_transformer(spec)` invers → bilinear im DEM.
+6. **Umrechnung auf das Druckraster:** Zellgröße `TERRAIN_CELL_MM = 0.5`. Kubischer B-Spline ohne Vorfilter (`map_coordinates(order=3, prefilter=False)`): linear gab ein sichtbares 2-mm-Karomuster, ein interpolierender Spline schwingt an Klippen und Küsten über. Jeder Rasterknoten (x_mm, y_mm) → lokale Meter (/ scale) → Rotation zurück (`-rotation_deg`, wie `project._rotated_square_metric`) → WGS84 über `local_transformer(spec)` invers → bilinear im DEM.
 7. **Normierung:** `z_mm = (h − min h) · spec.scale · terrain_exaggeration`.
 8. **Quelle:** `Attribution` in `lod2/sources.py` (oder eigene Datei, gleiche Struktur) mit dem Pflichttext für bearbeitete Daten *und* dem Haftungssatz (Lizenz Art. 6 b/c):
    „Gelände: produced using Copernicus WorldDEM-30 © DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH 2014-2018 provided under COPERNICUS by the European Union and ESA; all rights reserved. The organisations in charge of the Copernicus programme by law or by delegation do not incur any liability for any use of the Copernicus WorldDEM-30."
@@ -74,3 +74,18 @@ Einstieg: `terrain_heightfield(spec, cache_dir, client=None) -> Heightfield | No
 ## 7. Tests (Mindestumfang)
 
 Kachelnamen N/S/E/W inkl. Vorzeichen-Kanten (−0,5° → S01/W001), 404 → 0 m, Netzfehler → `None`, Mosaik über Kachelgrenze, Öffnung entfernt 60-m-Beule und lässt 500-m-Hügel, Rotation (90° gedrehtes Quadrat sampelt gedrehtes Gelände), Normierung min = 0, Geländekörper-Volumen bei `Heightfield.flat` = heutige Platte, Gebäude auf Hang auf Minimum, Straßentiefe relativ zur Oberfläche konstant, SOURCES.txt mit Copernicus-Block nur bei Gelände. Netzwerk in Tests immer gemockt (httpx.MockTransport wie bei LoD2).
+
+## 8. Ergebnis (gemessen 2026-09-24, Eppstein 1500 m full, warmer Cache)
+
+| | ohne Gelände | mit Gelände |
+|---|---|---|
+| Laufzeit | 12,9 s | 15,5 s (+2,6 s; Kachel kalt +1,8 s einmalig) |
+| Relief | – | 10,41 mm |
+| STL | 9,3 MB | 19,2 MB (Sockel und Rillenböden folgen dem 0,5-mm-Raster) |
+| Frankfurt Relief | – | 2,0 mm (Hochhaus-Beulen weggefiltert) |
+
+`terrain=False`: STL SHA-256 identisch zu `main` vor Phase 4b. DEM-Ausfall: flach, „Gelände nicht verfügbar“, keine Copernicus-Nennung. Tests: 502 grün.
+
+Review-Befunde behoben: gestapelte Teile am Hang schwebten 0,4 mm (Absenkung wird jetzt den Stapel hinauf weitergereicht), DEM-Lücken wurden 0-m-Gruben, reine 404-Ausschnitte nannten Copernicus, nicht beschreibbarer Cache brach den Lauf ab.
+
+Offen: UI-Schalter und Regler (wartet auf Robins uncommittete Frontend-Änderungen), Slicer-Check in Bambu Studio.
