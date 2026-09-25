@@ -334,20 +334,22 @@ describe("setupControls terrain", () => {
     document.body.innerHTML = APP;
   });
 
-  it("is off by default and sends its factor only as a number", () => {
+  it("is on by default with its factor already enabled", () => {
     const controls = setupControls(document.getElementById("app")!);
-    expect(controls.read().terrain).toBe(false);
+    expect(controls.read().terrain).toBe(true);
     expect(controls.read().terrain_exaggeration).toBe(1);
-  });
-
-  it("enables the factor with the checkbox", () => {
-    const controls = setupControls(document.getElementById("app")!);
-    const terrain = field<HTMLInputElement>("terrain");
-    terrain.checked = true;
-    terrain.dispatchEvent(new Event("change"));
     expect(field<HTMLInputElement>("terrainz").disabled).toBe(false);
     field<HTMLInputElement>("terrainz").value = "1.5";
     expect(controls.read()).toMatchObject({ terrain: true, terrain_exaggeration: 1.5 });
+  });
+
+  it("disables the factor with the checkbox", () => {
+    const controls = setupControls(document.getElementById("app")!);
+    const terrain = field<HTMLInputElement>("terrain");
+    terrain.checked = false;
+    terrain.dispatchEvent(new Event("change"));
+    expect(field<HTMLInputElement>("terrainz").disabled).toBe(true);
+    expect(controls.read().terrain).toBe(false);
   });
 });
 
@@ -370,21 +372,35 @@ describe("setupControls lod2", () => {
   });
 });
 
+describe("setupControls overture", () => {
+  beforeEach(() => {
+    document.body.innerHTML = APP;
+  });
+
+  it("is off by default and sends the checkbox state", () => {
+    const controls = setupControls(document.getElementById("app")!);
+    expect(field<HTMLInputElement>("overture").checked).toBe(false);
+    expect(controls.read().overture).toBe(false);
+    field<HTMLInputElement>("overture").checked = true;
+    expect(controls.read().overture).toBe(true);
+  });
+});
+
 describe("setupControls multicolor", () => {
   beforeEach(() => {
     document.body.innerHTML = APP;
   });
 
-  it("is off by default and then leaves the key out, so today's backend accepts the request", () => {
+  it("is on by default", () => {
     const controls = setupControls(document.getElementById("app")!);
-    expect(field<HTMLInputElement>("multicolor").checked).toBe(false);
-    expect(controls.read().multicolor).toBe(false);
+    expect(field<HTMLInputElement>("multicolor").checked).toBe(true);
+    expect(controls.read().multicolor).toBe(true);
   });
 
-  it("sends multicolor: true when switched on", () => {
+  it("sends multicolor: false when switched off", () => {
     const controls = setupControls(document.getElementById("app")!);
-    field<HTMLInputElement>("multicolor").checked = true;
-    expect(controls.read().multicolor).toBe(true);
+    field<HTMLInputElement>("multicolor").checked = false;
+    expect(controls.read().multicolor).toBe(false);
   });
 
   it("sits with the other switches and says what it does", () => {
@@ -393,7 +409,7 @@ describe("setupControls multicolor", () => {
     expect(input.getAttribute("role")).toBe("switch");
     const row = input.closest("label")!;
     expect(row.textContent).toContain("Colour print");
-    expect(row.textContent).toContain("Trees green, water blue in the 3MF");
+    expect(row.textContent).toContain("Buildings, roads, water and trees on separate filaments");
     expect(row.parentElement).toBe(field<HTMLInputElement>("trees").closest("label")!.parentElement);
   });
 });

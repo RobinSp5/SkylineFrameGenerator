@@ -104,7 +104,14 @@
           <section id="config" class="config" aria-label="Settings">
             <div class="size">
               <div class="size-head">
-                <label for="size" class="lbl">Print size</label>
+                <span class="lbl-info">
+                  <label for="size" class="lbl">Print size</label>
+                  <button type="button" class="info" aria-describedby="tip-size">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M12 11.5v5" /><path d="M12 7.5h.01" /></svg>
+                    <span class="sr-only">What this does</span>
+                    <span id="tip-size" class="info-bubble" role="tooltip">The size of the finished plate, edge to edge. Buildings, streets and terrain scale to fit it.</span>
+                  </button>
+                </span>
                 <output id="size-out" for="size" class="readout mono"><span id="size-value">10.0</span> <span class="unit">cm</span></output>
               </div>
               <input id="size" class="range" type="range" min="4" max="25" step="0.5" value="10" aria-describedby="scale-out" />
@@ -116,7 +123,14 @@
             </div>
 
             <fieldset id="preset" class="seg seg-4">
-              <legend class="sr-only">Preset</legend>
+              <legend class="seg-legend lbl-info">
+                <span class="lbl">Preset</span>
+                <button type="button" class="info" aria-describedby="tip-preset">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M12 11.5v5" /><path d="M12 7.5h.01" /></svg>
+                  <span class="sr-only">What this does</span>
+                  <span id="tip-preset" class="info-bubble" role="tooltip">Skyline, Detail and Large are ready-made area/plate combinations. Custom lets you set both yourself below.</span>
+                </button>
+              </legend>
               <label title="1500 m on a 10 cm plate"><input type="radio" name="preset" value="skyline" checked /><span>Skyline</span></label>
               <label title="800 m on a 10 cm plate"><input type="radio" name="preset" value="detail" /><span>Detail</span></label>
               <label title="1500 m on a 20 cm plate"><input type="radio" name="preset" value="gross" /><span>Large</span></label>
@@ -126,14 +140,28 @@
             <div class="pair">
               <div class="field">
                 <div class="field-head">
-                  <label for="side" class="lbl">Area</label>
+                  <span class="lbl-info">
+                    <label for="side" class="lbl">Area</label>
+                    <button type="button" class="info" aria-describedby="tip-side">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M12 11.5v5" /><path d="M12 7.5h.01" /></svg>
+                      <span class="sr-only">What this does</span>
+                      <span id="tip-side" class="info-bubble" role="tooltip">How large a square of the real world gets printed, in metres. A bigger area shows more of the city, with less detail per building.</span>
+                    </button>
+                  </span>
                   <output id="side-out" for="side" class="hint mono">1500 m</output>
                 </div>
                 <input id="side" class="range" type="range" min="200" max="5000" step="50" value="1500" />
               </div>
               <div class="field">
                 <div class="field-head">
-                  <label for="rotation" class="lbl">Rotation</label>
+                  <span class="lbl-info">
+                    <label for="rotation" class="lbl">Rotation</label>
+                    <button type="button" class="info" aria-describedby="tip-rotation">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M12 11.5v5" /><path d="M12 7.5h.01" /></svg>
+                      <span class="sr-only">What this does</span>
+                      <span id="tip-rotation" class="info-bubble info-bubble--right" role="tooltip">Turns the print area on the map without moving it — handy for lining up a street or river with the plate edge.</span>
+                    </button>
+                  </span>
                   <output id="rotation-out" for="rotation" class="hint mono">0°</output>
                 </div>
                 <input id="rotation" class="range" type="range" min="-180" max="180" step="1" value="0" />
@@ -142,54 +170,124 @@
 
             <div class="group">
               <fieldset id="mode" class="seg seg-2">
-                <legend class="sr-only">Detail</legend>
+                <legend class="seg-legend lbl-info">
+                  <span class="lbl">Detail</span>
+                  <button type="button" class="info" aria-describedby="tip-mode">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M12 11.5v5" /><path d="M12 7.5h.01" /></svg>
+                    <span class="sr-only">What this does</span>
+                    <span id="tip-mode" class="info-bubble" role="tooltip">Buildings only prints just the houses. + Streets &amp; water adds road grooves and a recessed water surface.</span>
+                  </button>
+                </legend>
                 <label><input type="radio" name="mode" value="simple" checked /><span>Buildings only</span></label>
                 <label><input type="radio" name="mode" value="full" /><span>+ Streets &amp; water</span></label>
               </fieldset>
               <div class="terrainz-row factor-row">
-                <label for="zfactor" class="lbl">Building height</label>
+                <span class="lbl-info">
+                  <label for="zfactor" class="lbl">Building height</label>
+                  <button type="button" class="info" aria-describedby="tip-zfactor">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M12 11.5v5" /><path d="M12 7.5h.01" /></svg>
+                    <span class="sr-only">What this does</span>
+                    <span id="tip-zfactor" class="info-bubble" role="tooltip">Multiplies every building's height, so upper floors stay visible at this scale. 1× is true to scale.</span>
+                  </button>
+                </span>
                 <input id="zfactor" class="range" type="range" min="0.5" max="5" step="0.1" value="1.5" />
                 <output id="zfactor-out" for="zfactor" class="mono">1.5×</output>
               </div>
               <label class="switch-row">
                 <span class="switch-text">
-                  <span class="lbl">Optimize for 3D printing</span>
+                  <span class="lbl-info">
+                    <span class="lbl">Optimize for 3D printing</span>
+                    <button type="button" class="info" aria-describedby="tip-optimize">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M12 11.5v5" /><path d="M12 7.5h.01" /></svg>
+                      <span class="sr-only">What this does</span>
+                      <span id="tip-optimize" class="info-bubble" role="tooltip">Widens walls and other parts thinner than a nozzle line, so the slicer doesn't skip them.</span>
+                    </button>
+                  </span>
                   <span class="hint">Thin parts get two nozzle lines, slices without warnings</span>
                 </span>
                 <input id="optimize" class="switch" type="checkbox" role="switch" checked />
               </label>
               <label class="switch-row">
                 <span class="switch-text">
-                  <span class="lbl">Official 3D buildings</span>
+                  <span class="lbl-info">
+                    <span class="lbl">Official 3D buildings</span>
+                    <button type="button" class="info" aria-describedby="tip-lod2">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M12 11.5v5" /><path d="M12 7.5h.01" /></svg>
+                      <span class="sr-only">What this does</span>
+                      <span id="tip-lod2" class="info-bubble" role="tooltip">Uses real, government-surveyed 3D building models where published (currently Hessen, Germany) — true roof shapes and heights instead of a guess.</span>
+                    </button>
+                  </span>
                   <span class="hint">Real roofs where the state publishes LoD2</span>
                 </span>
                 <input id="lod2" class="switch" type="checkbox" role="switch" checked />
               </label>
               <label class="switch-row">
                 <span class="switch-text">
-                  <span class="lbl">Terrain</span>
+                  <span class="lbl-info">
+                    <span class="lbl">Overture buildings</span>
+                    <button type="button" class="info" aria-describedby="tip-overture">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M12 11.5v5" /><path d="M12 7.5h.01" /></svg>
+                      <span class="sr-only">What this does</span>
+                      <span id="tip-overture" class="info-bubble" role="tooltip">Fills in better building heights and roofs worldwide from Overture Maps, a dataset combining OpenStreetMap with satellite and survey data. Used only outside official coverage, and can slow generation down noticeably.</span>
+                    </button>
+                  </span>
+                  <span class="hint">Better heights and roofs worldwide, beyond LoD2 coverage</span>
+                </span>
+                <input id="overture" class="switch" type="checkbox" role="switch" />
+              </label>
+              <label class="switch-row">
+                <span class="switch-text">
+                  <span class="lbl-info">
+                    <span class="lbl">Terrain</span>
+                    <button type="button" class="info" aria-describedby="tip-terrain">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M12 11.5v5" /><path d="M12 7.5h.01" /></svg>
+                      <span class="sr-only">What this does</span>
+                      <span id="tip-terrain" class="info-bubble" role="tooltip">Shapes the plate to follow the real hills and valleys of the area, using satellite elevation data, instead of a flat base.</span>
+                    </button>
+                  </span>
                   <span class="hint">Hills and valleys from Copernicus</span>
                 </span>
-                <input id="terrain" class="switch" type="checkbox" role="switch" />
+                <input id="terrain" class="switch" type="checkbox" role="switch" checked />
               </label>
               <div class="terrainz-row">
-                <label for="terrainz" class="hint">Terrain height</label>
+                <span class="lbl-info">
+                  <label for="terrainz" class="hint">Terrain height</label>
+                  <button type="button" class="info" aria-describedby="tip-terrainz">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M12 11.5v5" /><path d="M12 7.5h.01" /></svg>
+                    <span class="sr-only">What this does</span>
+                    <span id="tip-terrainz" class="info-bubble" role="tooltip">Multiplies how strongly hills and valleys stand out. 1× is true to scale.</span>
+                  </button>
+                </span>
                 <input id="terrainz" class="range" type="range" min="0.5" max="3" step="0.1" value="1" disabled />
                 <output id="terrainz-out" for="terrainz" class="mono">1.0×</output>
               </div>
               <label class="switch-row">
                 <span class="switch-text">
-                  <span class="lbl">Trees</span>
+                  <span class="lbl-info">
+                    <span class="lbl">Trees</span>
+                    <button type="button" class="info" aria-describedby="tip-trees">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M12 11.5v5" /><path d="M12 7.5h.01" /></svg>
+                      <span class="sr-only">What this does</span>
+                      <span id="tip-trees" class="info-bubble" role="tooltip">Adds tree cover as raised canopy shapes, from satellite land-cover data and OpenStreetMap.</span>
+                    </button>
+                  </span>
                   <span class="hint">From ESA WorldCover and OpenStreetMap</span>
                 </span>
                 <input id="trees" class="switch" type="checkbox" role="switch" checked />
               </label>
               <label class="switch-row">
                 <span class="switch-text">
-                  <span class="lbl">Colour print</span>
-                  <span class="hint">Trees green, water blue in the 3MF</span>
+                  <span class="lbl-info">
+                    <span class="lbl">Colour print</span>
+                    <button type="button" class="info" aria-describedby="tip-multicolor">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M12 11.5v5" /><path d="M12 7.5h.01" /></svg>
+                      <span class="sr-only">What this does</span>
+                      <span id="tip-multicolor" class="info-bubble" role="tooltip">Exports a Bambu Studio project with buildings, roads, water and trees already on separate filaments, instead of one plain colour.</span>
+                    </button>
+                  </span>
+                  <span class="hint">Buildings, roads, water and trees on separate filaments</span>
                 </span>
-                <input id="multicolor" class="switch" type="checkbox" role="switch" />
+                <input id="multicolor" class="switch" type="checkbox" role="switch" checked />
               </label>
             </div>
 
@@ -201,7 +299,14 @@
               </summary>
               <div class="pair more-body">
                 <div class="field">
-                  <label for="thickness" class="lbl">Plate thickness</label>
+                  <span class="lbl-info">
+                    <label for="thickness" class="lbl">Plate thickness</label>
+                    <button type="button" class="info" aria-describedby="tip-thickness">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M12 11.5v5" /><path d="M12 7.5h.01" /></svg>
+                      <span class="sr-only">What this does</span>
+                      <span id="tip-thickness" class="info-bubble" role="tooltip">How thick the solid base plate is, not counting any terrain relief on top of it.</span>
+                    </button>
+                  </span>
                   <div class="num-wrap"><input id="thickness" class="num" type="number" min="1" max="10" step="0.5" value="3" /><span class="hint">mm</span></div>
                 </div>
               </div>

@@ -7,6 +7,7 @@ import { createMap } from "./map";
 import { setupOverlay } from "./overlay";
 import { initTheme, nextPreference, preference, setPreference, type ThemePreference } from "./theme";
 import { setupSearch } from "./search";
+import { setupTooltips } from "./tooltips";
 import { createViewer } from "./viewer";
 
 /** A generation run is abandoned after this long; the backend job itself keeps whatever it produced. */
@@ -14,6 +15,7 @@ const JOB_TIMEOUT_MS = 600_000;
 
 const root = document.getElementById("app")!;
 const controls = setupControls(root);
+setupTooltips(root);
 // Before the map: it picks its basemap style from the resolved theme.
 initTheme();
 const THEME_LABELS: Record<ThemePreference, string> = {
