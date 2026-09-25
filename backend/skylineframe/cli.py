@@ -39,16 +39,19 @@ def generate(
     roofs: Annotated[bool, typer.Option("--roofs/--no-roofs", help="Build roof bodies from roof:shape")] = True,
     parts: Annotated[bool, typer.Option("--parts/--no-parts", help="Render building:part instead of one box per outline")] = True,
     lod2: Annotated[bool, typer.Option("--lod2/--no-lod2", help="Use official LoD2 building models where available")] = True,
-    terrain: Annotated[bool, typer.Option("--terrain/--no-terrain", help="Model the terrain relief (Copernicus DEM)")] = False,
+    overture: Annotated[
+        bool, typer.Option("--overture/--no-overture", help="Use Overture Maps Buildings for height/roof, worldwide")
+    ] = False,
+    terrain: Annotated[bool, typer.Option("--terrain/--no-terrain", help="Model the terrain relief (Copernicus DEM)")] = True,
     terrain_z: Annotated[float, typer.Option(help="Terrain exaggeration factor, separate from --z")] = 1.0,
     trees: Annotated[bool, typer.Option("--trees/--no-trees", help="Trees from ESA WorldCover and OpenStreetMap")] = True,
     multicolor: Annotated[
         bool,
         typer.Option(
             "--multicolor/--no-multicolor",
-            help="3MF as a Bambu Studio project (X2D, AMS): trees green, water blue, the rest white",
+            help="3MF as a Bambu Studio project (X2D, AMS): one AMS filament per part, six colours",
         ),
-    ] = False,
+    ] = True,
     optimize: Annotated[
         bool,
         typer.Option("--optimize/--no-optimize", help="Widen thin parts to two nozzle lines (0.8 mm) so the model slices cleanly"),
@@ -76,6 +79,7 @@ def generate(
             roofs=roofs,
             parts=parts,
             lod2=lod2,
+            overture=overture,
             terrain=terrain,
             terrain_exaggeration=terrain_z,
             trees=trees,
@@ -105,6 +109,10 @@ def generate(
         typer.echo(f"LoD2 triangles: {int(stats.get('lod2_triangles', 0))}")
     else:
         typer.echo("LoD2 source: none (OpenStreetMap only)")
+    # Only when asked for, like the terrain and trees lines below: overture is opt-in, and most
+    # runs have nothing to say about it.
+    if spec.overture:
+        typer.echo(f"Overture buildings: {int(stats.get('overture_buildings', 0))}")
     # Only when terrain was asked for: a flat run has nothing to say about it. A failed DEM fetch
     # is not an error (spec 4b §5.6) — the model is flat and the note says why.
     terrain_source = str(stats.get("terrain_source", "") or "")

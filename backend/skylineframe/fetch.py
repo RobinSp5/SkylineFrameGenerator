@@ -15,7 +15,7 @@ import osm2geojson
 from shapely.geometry import shape
 
 from .errors import FetchError
-from .features import Building, Features, Lod2Building, Road, RoofSpec, Water
+from .features import Building, Features, Lod2Building, OvertureBuilding, Road, RoofSpec, Water
 from .lod2.provider import select_provider
 from .project import query_bbox
 from .spec import LEVEL_HEIGHT_M, ROAD_CLASSES, FrameSpec, Mode
@@ -441,6 +441,33 @@ def fetch_lod2(
     return (buildings, provider.name) if buildings else ([], "")
 
 
+def fetch_overture(
+    spec: FrameSpec,
+    cache_dir: Path,
+    client: httpx.Client | None = None,
+) -> tuple[list[OvertureBuilding], str]:
+    """Overture Maps buildings for this square plus a fixed source name, or ([], "").
+
+    overture.provider.fetch already degrades to [] with its own warning on every failure inside
+    it; this bare except is the same belt-and-braces fetch_lod2 puts around its provider call, for
+    whatever might go wrong outside that boundary rather than inside it (spec §9).
+    """
+    if not spec.overture:
+        return [], ""
+    # Deferred: skylineframe.overture.release imports USER_AGENT back from this module, so
+    # importing it at module load time would reach into skylineframe.fetch before this constant
+    # exists and cycle.
+    from .overture.provider import fetch as overture_fetch
+
+    bbox = query_bbox(spec)
+    try:
+        buildings = overture_fetch(bbox, cache_dir, client=client)
+    except Exception as exc:  # noqa: BLE001 - degrading to OSM is always better than failing
+        log.warning("Overture: %s; continuing with OpenStreetMap", exc)
+        return [], ""
+    return (buildings, "overture") if buildings else ([], "")
+
+
 def fetch_features(
     spec: FrameSpec,
     cache_dir: Path,
@@ -456,4 +483,5 @@ def fetch_features(
     # LoD2 is fetched raw here and turned into geometry in prepare: only the buildings that end
     # up printed individually are ever solidified (spec §5).
     feats.lod2, feats.lod2_source = fetch_lod2(spec, cache_dir, client=lod2_client)
+    feats.overture, feats.overture_source = fetch_overture(spec, cache_dir, client=client)
     return feats

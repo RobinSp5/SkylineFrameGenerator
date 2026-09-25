@@ -180,9 +180,9 @@ def test_parts_roofs_and_lod2_bodies_move_with_their_footprint():
         ]
     )
     ms = build_meshes(scaled, spec(), terrain=slope())
-    body, roofed = sorted(ms.buildings.decompose(), key=lambda m: m.bounding_box()[0])  # west to east
-    assert roofed.bounding_box()[5] == pytest.approx(SLOPE * 60 + 8.0, abs=1e-4)  # ridge from z_base
-    assert body.bounding_box()[5] == pytest.approx(SLOPE * 20 + 6.0, abs=1e-4)  # LoD2 top from z_base
+    # The plain, roofed prism and the LoD2 body are now two separate parts.
+    assert ms.buildings.bounding_box()[5] == pytest.approx(SLOPE * 60 + 8.0, abs=1e-4)  # ridge from z_base
+    assert ms.buildings_verified.bounding_box()[5] == pytest.approx(SLOPE * 20 + 6.0, abs=1e-4)  # LoD2 top from z_base
     assert_one_watertight_solid(ms.single)
 
 

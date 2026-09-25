@@ -95,13 +95,13 @@ def test_unknown_field_is_still_forbidden():
         FrameSpec(center_lat=50, center_lon=8, lod3=True)
 
 
-def test_terrain_is_off_by_default_with_its_own_exaggeration():
-    # Spec 4b §2: terrain is opt-in and scaled separately from the buildings.
+def test_terrain_is_on_by_default_with_its_own_exaggeration():
+    # Spec 4b §2: terrain is on by default and scaled separately from the buildings.
     spec = FrameSpec(center_lat=50, center_lon=8)
-    assert spec.terrain is False
+    assert spec.terrain is True
     assert spec.terrain_exaggeration == 1.0
-    on = FrameSpec(center_lat=50, center_lon=8, terrain=True, terrain_exaggeration=5)
-    assert on.terrain is True and on.terrain_exaggeration == 5
+    off = FrameSpec(center_lat=50, center_lon=8, terrain=False, terrain_exaggeration=5)
+    assert off.terrain is False and off.terrain_exaggeration == 5
 
 
 @pytest.mark.parametrize("value", [0, -1, 5.01])
@@ -110,10 +110,15 @@ def test_terrain_exaggeration_is_limited_to_zero_to_five(value):
         FrameSpec(center_lat=50, center_lon=8, terrain_exaggeration=value)
 
 
-def test_multicolor_is_off_by_default():
-    # The default print stays white and single-colour; the switch only changes the 3MF.
-    assert FrameSpec(center_lat=50, center_lon=8).multicolor is False
-    assert FrameSpec(center_lat=50, center_lon=8, multicolor=True).multicolor is True
+def test_multicolor_is_on_by_default():
+    # The default print is the Bambu Studio colour project; the switch only changes the 3MF.
+    assert FrameSpec(center_lat=50, center_lon=8).multicolor is True
+    assert FrameSpec(center_lat=50, center_lon=8, multicolor=False).multicolor is False
+
+
+def test_overture_is_off_by_default_and_can_be_switched_on():
+    assert FrameSpec(center_lat=50, center_lon=8).overture is False
+    assert FrameSpec(center_lat=50, center_lon=8, overture=True).overture is True
 
 
 def test_trees_are_on_by_default():

@@ -34,6 +34,22 @@ class Lod2Building:
 
 
 @dataclass
+class OvertureBuilding:
+    """One Overture Maps building record: a footprint plus scalar attributes, no surfaces —
+    Overture publishes a 2D footprint and height/roof fields, not the georeferenced faces an
+    LoD2 model does.
+
+    geom is in the CRS of the stage, like Lod2Building.surfaces: WGS84 lon/lat off the fetch,
+    local metres once projected alongside the rest of Features.
+    """
+
+    osm_id: str  # f"overture/{release}/{id}"
+    geom: BaseGeometry  # Polygon or MultiPolygon footprint
+    height_m: float | None = None  # None = not carried by this record
+    roof: RoofSpec | None = None  # None = flat, unsupported or untagged, same as OSM roof:shape
+
+
+@dataclass
 class Building:
     geom: BaseGeometry  # Polygon or MultiPolygon
 
@@ -68,6 +84,9 @@ class Building:
     # "tagged flat" and "untagged", and only the untagged house may get a default roof (spec 4a §2.4).
     roof_tagged: bool = False
 
+    # --- Overture ---
+    overture: bool = False  # footprint and height/roof come from Overture Maps, not from OSM tags
+
 
 @dataclass
 class Block:
@@ -100,3 +119,7 @@ class Features:
     lod2_source: str = ""  # provider name, "" when no LoD2 data is in play (spec §8)
     # natural=tree nodes and the sampled points of natural=tree_row ways (spec 6 §4.3).
     trees: list[OsmTree] = field(default_factory=list)
+    # Raw Overture Maps building records as they came off the provider, independent of lod2:
+    # a square can carry both, and prepare decides which one a footprint ends up taking.
+    overture: list[OvertureBuilding] = field(default_factory=list)
+    overture_source: str = ""  # "overture" once its data reaches the model, "" otherwise

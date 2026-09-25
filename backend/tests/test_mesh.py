@@ -237,9 +237,42 @@ def test_the_body_is_sunk_for_the_single_colour_union_only():
 def test_a_body_and_a_prism_live_side_by_side():
     scaled = Scaled(buildings=[lod2_prism(10.0, 4.0), Prism(box(20, 20, 30, 30), 6.0)])
     meshes = build_meshes(scaled, spec())
+    # The body and the prism now export as two separate parts: "buildings" is everything
+    # extruded from attributes, "buildings_verified" everything with a real LoD2 body.
     assert to_trimesh(meshes.buildings).is_watertight
-    assert meshes.buildings.volume() == pytest.approx(BODY_VOLUME + 10 * 10 * 6, rel=1e-6)
-    assert meshes.buildings.bounding_box()[5] == pytest.approx(BODY_BOX[5], abs=1e-6)
+    assert to_trimesh(meshes.buildings_verified).is_watertight
+    assert meshes.buildings.volume() == pytest.approx(10 * 10 * 6, rel=1e-6)
+    assert meshes.buildings_verified.volume() == pytest.approx(BODY_VOLUME, rel=1e-6)
+    assert meshes.buildings_verified.bounding_box()[5] == pytest.approx(BODY_BOX[5], abs=1e-6)
+
+
+def test_parts_gain_buildings_verified_only_when_a_body_and_a_prism_are_both_present():
+    mixed = Scaled(
+        buildings=[lod2_prism(10.0, 4.0), Prism(box(20, 20, 30, 30), 6.0)],
+        roads=[box(-50, 10, 50, 11)],
+        water=[box(-50, -50, -20, -20)],
+    )
+    assert set(build_meshes(mixed, spec()).parts()) == {"base", "buildings", "buildings_verified", "roads", "water"}
+
+    # Same scene minus the LoD2 body: no LoD2 or Overture data reached this model, so the part
+    # is absent rather than exported empty.
+    plain = Scaled(
+        buildings=[Prism(box(20, 20, 30, 30), 6.0)],
+        roads=[box(-50, 10, 50, 11)],
+        water=[box(-50, -50, -20, -20)],
+    )
+    ms = build_meshes(plain, spec())
+    assert set(ms.parts()) == {"base", "buildings", "roads", "water"}
+    assert ms.buildings_verified is None
+
+
+def test_parts_stay_at_one_buildings_part_when_everything_is_verified():
+    # Every printable body in the square is LoD2-verified and there is no sockel: nothing to
+    # contrast the split with, so it all prints as the one required "buildings" part.
+    ms = build_meshes(Scaled(buildings=[lod2_prism(10.0, 4.0)]), spec())
+    assert set(ms.parts()) == {"base", "buildings"}
+    assert ms.buildings_verified is None
+    assert ms.buildings.volume() == pytest.approx(BODY_VOLUME, rel=1e-6)
 
 
 def test_print_optimized_thickens_a_spiky_osm_roof():

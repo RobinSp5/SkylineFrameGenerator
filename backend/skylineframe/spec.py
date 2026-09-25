@@ -88,17 +88,26 @@ class FrameSpec(BaseModel):
     # Use an official LoD2 model where one is available; without a provider, without network or
     # with lod2=False the result is bit-identical to the OSM-only run (spec §8/§11).
     lod2: bool = True
-    # Terrain relief from the Copernicus DEM (spec 4b §2). Off by default, and off is the exact
-    # flat-plate code path of before. Its own exaggeration: a hill wants a different factor than a
-    # tower, and z_exaggeration already means "buildings" to every existing client.
-    terrain: bool = False
+    # Height and roof attributes from Overture Maps Buildings, worldwide, for footprints no LoD2
+    # model covers (spec §9's degrade-to-OSM contract applies here too). A new external dependency
+    # with no production track record yet, so — unlike lod2/terrain/trees above — it starts opt-in,
+    # the same lifecycle those had before their own first production run.
+    overture: bool = False
+    # Terrain relief from the Copernicus DEM (spec 4b §2). On by default: both the relief and the
+    # flat plate are shipped and tested, and relief is the intended default look now.
+    # --no-terrain still gives the flat-plate code path of before, bit-identical. Its own
+    # exaggeration: a hill wants a different factor than a tower, and z_exaggeration already means
+    # "buildings" to every existing client.
+    terrain: bool = True
     terrain_exaggeration: float = Field(default=1.0, gt=0, le=5)
     # Trees from ESA WorldCover and OpenStreetMap, as domes on the ground (spec 6 §2). Off is the
     # exact model of before, byte for byte.
     trees: bool = True
-    # A Bambu Studio project with every part on its own AMS filament: base, buildings and roads
-    # white, trees green, water blue. Off is the plain 3MF of before; the STL never changes.
-    multicolor: bool = False
+    # A Bambu Studio project with every part on its own AMS filament: base stone, buildings
+    # terracotta, roads charcoal, trees green, water blue, and LoD2 solid bodies rust. On by
+    # default, the intended default output now; --no-multicolor still gives the plain 3MF of
+    # before, bit-identical, and the STL never changes either way.
+    multicolor: bool = True
     # Thin parts get two nozzle lines instead of one. A footprint widened to a single 0.4 mm line
     # is a pin up to several mm tall, and Bambu Studio flags a model full of them as having
     # "floating regions"; at 0.8 mm the same Eppstein and Frankfurt models slice without a warning.

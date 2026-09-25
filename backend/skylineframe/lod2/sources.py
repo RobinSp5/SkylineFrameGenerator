@@ -65,13 +65,20 @@ WORLDCOVER = Attribution(
 def sources_text(
     date_iso: str,
     lod2: Attribution | None = None,
+    overture: Attribution | None = None,
     terrain: Attribution | None = None,
     trees: Attribution | None = None,
 ) -> str:
-    """The content of SOURCES.txt for one run, one block per source used (spec §7, 4b §4.8, 6 §2)."""
+    """The content of SOURCES.txt for one run, one block per source used (spec §7, 4b §4.8, 6 §2).
+
+    lod2 and overture are independent building sources and may both be present at once: a square
+    can carry an official model for one footprint and an Overture-attributed prism for another.
+    """
     blocks = [HEADER.format(date=date_iso)]
     if lod2 is not None:
         blocks.append(lod2.text)
+    if overture is not None:
+        blocks.append(overture.text)
     if terrain is not None:
         blocks.append(terrain.text)
     if trees is not None:

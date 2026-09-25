@@ -88,6 +88,17 @@ def test_worldcover_text_is_the_line_from_the_spec():
     assert "worldcover" not in ATTRIBUTIONS
 
 
+def test_overture_block_sits_between_lod2_and_terrain():
+    from skylineframe.overture.sources import OVERTURE
+
+    text = sources_text("2026-09-24", HESSEN, overture=OVERTURE, terrain=COPERNICUS)
+    assert text.index("LoD2 Hessen") < text.index("Overture Maps Foundation") < text.index("WorldDEM-30")
+    assert sources_text("2026-09-24", overture=OVERTURE) == (
+        "Geometrie erzeugt mit Skyline Frame Generator am 2026-09-24.\n" + OVERTURE.text + "\n" + OSM.text + "\n"
+    )
+    assert "Overture" not in sources_text("2026-09-24", HESSEN)
+
+
 def test_trees_block_sits_after_the_terrain_and_before_osm():
     text = sources_text("2026-09-24", HESSEN, terrain=COPERNICUS, trees=WORLDCOVER)
     assert text.index("LoD2 Hessen") < text.index("WorldDEM-30") < text.index("WorldCover") < text.index("OpenStreetMap")

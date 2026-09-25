@@ -112,4 +112,9 @@ def project_features(features: Features, spec: FrameSpec) -> Features:
         lod2=[project_lod2(b, tr, spec.rotation_deg) for b in features.lod2],
         lod2_source=features.lod2_source,
         trees=project_trees(features.trees, tr, spec.rotation_deg),
+        # One geom per record, like buildings/roads/water: the batched per-vertex transform
+        # project_lod2 and project_trees use only pays for itself on many-ringed or many-point
+        # features, neither of which an Overture record is.
+        overture=[replace(b, geom=to_local(b.geom, spec, tr)) for b in features.overture],
+        overture_source=features.overture_source,
     )

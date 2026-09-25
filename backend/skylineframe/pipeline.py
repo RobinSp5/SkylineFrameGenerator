@@ -12,6 +12,7 @@ from .features import Features
 from .fetch import fetch_features
 from .lod2.sources import ATTRIBUTIONS, COPERNICUS, WORLDCOVER, sources_text
 from .mesh import build_meshes
+from .overture.sources import OVERTURE
 from .prepare import prepare
 from .project import project_features
 from .scale import scale_features
@@ -114,6 +115,9 @@ def run(
     # all. In both cases the result is byte-identical to the OpenStreetMap-only run, and naming
     # Hessen next to it would be a false attribution in SOURCES.txt and in the status line.
     lod2_source = raw.lod2_source if spec.lod2 and prepared.lod2_footprints else ""
+    # Same rule as lod2_source above: the fetch may have answered and the flag may be on, but
+    # only footprints that actually reached the model earn the credit (spec §7).
+    overture_source = raw.overture_source if spec.overture and prepared.overture_footprints else ""
     paths = export_all(
         meshes,
         spec,
@@ -123,6 +127,7 @@ def run(
         sources=sources_text(
             date.today().isoformat(),
             ATTRIBUTIONS.get(lod2_source),
+            overture=OVERTURE if overture_source else None,
             terrain=COPERNICUS if heightfield is not None else None,
             trees=WORLDCOVER if trees_source == WORLDCOVER.name else None,
         ),
@@ -169,6 +174,10 @@ def run(
         "lod2_source": lod2_source,
         "lod2_rejected": prepared.lod2_rejected + bodies_dropped,
         "lod2_triangles": sum(p.solid_mm.num_tri() for p in scaled.buildings if p.solid_mm is not None),
+        # Overture (spec §9): footprints whose height/roof came from it and reached the model,
+        # gated the same way lod2_source is.
+        "overture_buildings": prepared.overture_footprints,
+        "overture_source": overture_source,
         "stl_bytes": paths.stl.stat().st_size,
         "threemf_bytes": paths.threemf.stat().st_size,
         # Terrain (spec 4b §5.6): the source is empty unless a relief is in the print. The note

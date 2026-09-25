@@ -44,7 +44,9 @@ After that http://localhost:8000 is all you need; no Vite server required. For d
 
 `--side` and `--plate` override the preset. For comparisons, `--no-roofs` keeps every roof flat and
 `--no-parts` renders one box per outline instead of the `building:part` setbacks (both are on by
-default). `--no-lod2` switches off the official LoD2 building models and falls back to OpenStreetMap
+default). Terrain relief and the multi-filament Bambu Studio 3MF are on by default too;
+`--no-terrain` and `--no-multicolor` fall back to the flat plate and the plain single-colour 3MF.
+`--no-lod2` switches off the official LoD2 building models and falls back to OpenStreetMap
 heights everywhere; `--no-roofs` does not touch the LoD2 buildings that carry a body, because their
 roof shape is part of the body rather than a separate solid — the ones that fell back to a prism are
 flattened like any other building. The output reports buildings, blocks, parts, roofs, roads (count

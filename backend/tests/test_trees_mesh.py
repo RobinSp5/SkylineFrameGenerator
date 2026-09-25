@@ -145,11 +145,11 @@ def test_on_terrain_the_trees_stand_on_the_relief():
 def test_export_writes_the_trees_part_in_green(tmp_path):
     ms = build_meshes(Scaled(buildings=[HOUSE], trees=[Tree(20.0, 20.0, 4.0, 1.5)]), spec())
     paths = export_all(ms, spec(), tmp_path)
-    assert PART_COLORS["trees"] == (84, 130, 53, 255)
+    assert PART_COLORS["trees"] == (78, 125, 58, 255)
     scene = trimesh.load(paths.threemf, file_type="3mf")
     assert set(scene.geometry) == {"base", "buildings", "trees"}
     glb = trimesh.load(paths.glb, file_type="glb")
-    assert tuple(glb.geometry["trees"].visual.face_colors[0]) == (84, 130, 53, 255)
+    assert tuple(glb.geometry["trees"].visual.face_colors[0]) == (78, 125, 58, 255)
     stl = trimesh.load(paths.stl, file_type="stl")
     assert stl.is_watertight
     assert stl.extents[2] == pytest.approx(13.0, abs=0.01)

@@ -7,8 +7,9 @@ import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 export const NEUTRAL_COLOR = 0xecebe6;
 
 export interface LoadOptions {
-  /** Show the parts in their print colours (GLB vertex colours: buildings white, trees green,
-   * water blue, roads grey). Off: everything in NEUTRAL_COLOR, as a single-colour print looks. */
+  /** Show the parts in their print colours (GLB vertex colours: base stone, buildings terracotta,
+   * roads charcoal, trees green, water blue, LoD2 bodies rust). Off: everything in NEUTRAL_COLOR,
+   * as a single-colour print looks. */
   multicolor?: boolean;
 }
 

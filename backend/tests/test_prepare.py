@@ -2,7 +2,7 @@ import pytest
 from shapely.geometry import LineString, MultiPolygon, Polygon, box
 from shapely.ops import unary_union
 
-from skylineframe.features import Block, Building, Features, Lod2Building, Road, RoofSpec, Water
+from skylineframe.features import Block, Building, Features, Lod2Building, OvertureBuilding, Road, RoofSpec, Water
 from skylineframe.prepare import (
     LOD2_DISPLACE_FRACTION,
     SIMPLIFY_TOLERANCE_MM,
@@ -14,6 +14,7 @@ from skylineframe.prepare import (
     drop_covered,
     lod2_buildings,
     minimum_rect,
+    overture_buildings,
     polygons_of,
     prepare,
     widen_to_line,
@@ -939,6 +940,112 @@ def test_without_lod2_data_nothing_changes():
     assert [b.osm_id for b in out.buildings] == ["way/1"]
     assert out.lod2_rejected == 0
     assert all(b.solid_m is None and b.surfaces == () for b in out.buildings)
+
+
+# --- Overture -------------------------------------------------------------
+
+
+def overture_bld(geom, height=None, roof=None, osm_id="overture/r/1") -> OvertureBuilding:
+    return OvertureBuilding(osm_id=osm_id, geom=geom, height_m=height, roof=roof)
+
+
+def test_overture_buildings_converts_each_record_to_a_building():
+    feats = Features(overture=[overture_bld(box(0, 0, 10, 10), height=9.0, roof=RoofSpec("hipped"), osm_id="overture/r/1")])
+    out = overture_buildings(feats)
+    assert len(out) == 1
+    b = out[0]
+    assert b.overture is True and b.lod2 is False and b.solid_m is None
+    assert b.osm_id == "overture/r/1"
+    assert b.height_m == 9.0 and b.height_is_top is True
+    assert b.roof == RoofSpec("hipped") and b.roof_tagged is True
+    assert b.kind == "yes"
+
+
+def test_overture_buildings_maps_a_missing_height_to_the_untagged_convention():
+    # height_m=None (Overture carries nothing) maps to 0.0/height_is_top=False, exactly the
+    # "no height information at all" convention parse_height uses for a bare OSM building.
+    out = overture_buildings(Features(overture=[overture_bld(box(0, 0, 10, 10))]))
+    assert out[0].height_m == 0.0 and out[0].height_is_top is False
+    assert out[0].roof is None and out[0].roof_tagged is False
+
+
+def test_overture_building_carries_its_own_height_through_prepare():
+    out = prepare(Features(overture=[overture_bld(box(0, 0, 20, 20), height=9.0)]), spec(overture=True))
+    assert len(out.buildings) == 1
+    got = out.buildings[0]
+    assert got.overture is True
+    assert got.height_m == 9.0
+    assert got.solid_m is None
+
+
+def test_overture_building_without_a_height_falls_back_to_the_area_estimate():
+    # No height on the record: kind="yes" puts it through the same area rule as an untagged OSM
+    # building. 20 x 20 = 400 m² lands in the "< 1500" row => 12 m (heights.py).
+    out = prepare(Features(overture=[overture_bld(box(0, 0, 20, 20))]), spec(overture=True))
+    assert out.buildings[0].height_m == 12.0
+
+
+def test_overture_building_without_a_roof_still_gets_the_default_gable():
+    # roof_tagged is False for a record with no roof of its own, so it is eligible for the same
+    # freestanding gable an untagged OSM house gets rather than staying flat forever.
+    out = prepare(Features(overture=[overture_bld(box(200, 200, 210, 208), height=7.0)]), spec(overture=True))
+    # Through the full pipeline the roof is already resolved, so only the shape is the default's;
+    # its height_m comes from the footprint (resolve_roof), not the 0.0 "untagged" marker.
+    assert out.buildings[0].roof is not None and out.buildings[0].roof.shape == "gabled"
+
+
+def test_overture_is_ignored_when_the_flag_is_off_even_with_data_handed_in():
+    feats = Features(overture=[overture_bld(box(0, 0, 20, 20), height=9.0)])
+    assert prepare(feats, spec(overture=False)).buildings == []
+
+
+def test_an_osm_building_under_an_overture_footprint_is_dropped():
+    feats = Features(
+        buildings=[Building(box(-10, -10, 10, 10), height_m=8.0, osm_id="way/1", kind="yes")],
+        overture=[overture_bld(box(-10, -10, 10, 10), height=20.0, osm_id="overture/r/A")],
+    )
+    out = prepare(feats, spec(overture=True))
+    assert [b.osm_id for b in out.buildings] == ["overture/r/A"]
+    assert out.buildings[0].height_m == 20.0 and out.buildings[0].overture is True
+
+
+def test_an_osm_building_that_only_touches_the_overture_footprint_survives():
+    # 40 % covered, below the LOD2_DISPLACE_FRACTION threshold drop_covered shares with LoD2.
+    feats = Features(
+        buildings=[Building(box(-10, -10, 40, 10), height_m=8.0, osm_id="way/1", kind="yes")],
+        overture=[overture_bld(box(-10, -10, 10, 10), height=20.0, osm_id="overture/r/A")],
+    )
+    out = prepare(feats, spec(overture=True))
+    assert {b.osm_id for b in out.buildings} == {"way/1", "overture/r/A"}
+
+
+def test_precedence_lod2_beats_overture_beats_plain_osm():
+    # Three footprints, three sources, none overlapping one another: an official model, an
+    # Overture-enriched building and a plain one side by side, exactly the mix phase 3 targets.
+    feats = Features(
+        buildings=[Building(box(100, 100, 120, 120), height_m=6.0, osm_id="way/plain", kind="yes")],
+        lod2=[lod2_box(-10, -10, 10, 10, 100.0, 130.0)],
+        overture=[overture_bld(box(50, 50, 70, 70), height=15.0, osm_id="overture/r/B")],
+    )
+    out = prepare(feats, spec(lod2=True, overture=True))
+    by_id = {b.osm_id: b for b in out.buildings}
+    assert set(by_id) == {"lod2/hessen/B1", "overture/r/B", "way/plain"}
+    assert by_id["lod2/hessen/B1"].lod2 is True and by_id["lod2/hessen/B1"].solid_m is not None
+    assert by_id["overture/r/B"].overture is True and by_id["overture/r/B"].solid_m is None
+    assert not by_id["way/plain"].lod2 and not by_id["way/plain"].overture
+    assert out.lod2_footprints == 1
+    assert out.overture_footprints == 1
+
+
+def test_an_overture_footprint_under_a_lod2_model_yields_to_it():
+    # Same spot, both sources: LoD2 wins outright and the Overture prism never doubles it up.
+    feats = Features(
+        overture=[overture_bld(box(-10, -10, 10, 10), height=99.0, osm_id="overture/r/dup")],
+        lod2=[lod2_box(-10, -10, 10, 10, 100.0, 130.0)],
+    )
+    out = prepare(feats, spec(lod2=True, overture=True))
+    assert [b.osm_id for b in out.buildings] == ["lod2/hessen/B1"]
+    assert out.overture_footprints == 0
 
 
 # --- default roofs (spec 4a §2.4) ---------------------------------------

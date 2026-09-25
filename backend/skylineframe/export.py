@@ -20,19 +20,22 @@ from .naming import slugify
 from .spec import FrameSpec
 
 PART_COLORS: dict[str, tuple[int, int, int, int]] = {
-    "base": (200, 200, 200, 255),
-    "buildings": (255, 255, 255, 255),
-    "water": (70, 130, 220, 255),
-    "roads": (90, 90, 90, 255),
-    "trees": (84, 130, 53, 255),
+    "base": (232, 228, 217, 255),
+    "buildings": (201, 124, 93, 255),
+    "buildings_verified": (139, 69, 19, 255),
+    "water": (63, 127, 191, 255),
+    "roads": (43, 43, 43, 255),
+    "trees": (78, 125, 58, 255),
 }
 # Multicolour 3MF (FrameSpec.multicolor): the AMS filament each part prints with, numbered the
-# way Bambu Studio numbers them, and the colour of each filament. White for the city, so the
-# default look of the frame stays; green trees, blue water.
-PART_ORDER = ("base", "buildings", "roads", "trees", "water")
-PART_FILAMENTS: dict[str, int] = {"base": 1, "buildings": 1, "roads": 1, "trees": 2, "water": 3}
-FILAMENT_COLORS = ("#F2F2F2", "#4E7D3A", "#3F7FBF")
-FILAMENT_NAMES = ("white", "green", "blue")
+# way Bambu Studio numbers them, and the colour of each filament. One filament per part, so a
+# slicer or a print shows the city's structure — buildings, roads, water, trees — at a glance.
+# buildings_verified keeps 6 last rather than slotting in after buildings: the five original
+# filament numbers stay exactly what they were before this part existed.
+PART_ORDER = ("base", "buildings", "roads", "trees", "water", "buildings_verified")
+PART_FILAMENTS: dict[str, int] = {"base": 1, "buildings": 2, "roads": 3, "trees": 4, "water": 5, "buildings_verified": 6}
+FILAMENT_COLORS = ("#E8E4D9", "#C97C5D", "#2B2B2B", "#4E7D3A", "#3F7FBF", "#8B4513")
+FILAMENT_NAMES = ("stone", "terracotta", "charcoal", "green", "blue", "rust")
 DEFAULT_OBJECT_NAME = "Skyline Frame"
 BAMBU_BED_MM = 256.0  # the X2D bed is square
 BAMBU_BACK_MARGIN_MM = 2.0
@@ -160,12 +163,13 @@ def model_settings(object_id: str, name: str, part_ids: dict[str, str]) -> bytes
 
 
 def project_settings() -> bytes:
-    """Bambu's Metadata/project_settings.config: the X2D, 0.20 mm Standard and three PLA spools.
+    """Bambu's Metadata/project_settings.config: the X2D, 0.20 mm Standard and five PLA spools.
 
     The template is a full Bambu Studio 02.08.02.61 project config: a partial one is filled with
     generic defaults instead of the X2D's, and every per-filament list must name the same number
-    of filaments, or the slicer fails. It was cut out of an X2D project with nine filaments by
-    keeping three of its "Bambu PLA Basic @BBL X2D 0.4 nozzle" entries.
+    of filaments, or the slicer fails. It was cut out of an X2D project with nine filaments down
+    to three "Bambu PLA Basic @BBL X2D 0.4 nozzle" entries, then each per-filament block extended
+    to five slots (backend/scripts/regen_bambu_filaments.py).
     """
     settings = json.loads(PROJECT_SETTINGS.read_text(encoding="utf-8"))
     settings["filament_colour"] = list(FILAMENT_COLORS)

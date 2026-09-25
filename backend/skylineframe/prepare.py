@@ -68,6 +68,10 @@ class Prepared:
     # response, say) never becomes a Building either. Naming the source then would be a false
     # attribution in SOURCES.txt, so the pipeline gates the source name on this count (spec §7/§8).
     lod2_footprints: int = 0
+    # Overture footprints that actually reached the model, the same "only count what is really
+    # there" rule lod2_footprints follows, so SOURCES.txt only credits Overture when it changed
+    # the output rather than whenever the fetch merely returned something.
+    overture_footprints: int = 0
 
 
 def polygons_of(geom: BaseGeometry | None) -> list[Polygon]:
@@ -237,6 +241,34 @@ def lod2_buildings(features: Features) -> list[Building]:
                 osm_id=raw.osm_id,
                 lod2=True,
                 surfaces=raw.surfaces,
+            )
+        )
+    return out
+
+
+def overture_buildings(features: Features) -> list[Building]:
+    """One Building per Overture record: its footprint plus whatever height and roof it carries.
+
+    Unlike lod2_buildings there is no separate solidify step — Overture gives no true 3D body, so
+    the result runs through the ordinary OSM pipeline (estimate_missing_heights,
+    assign_default_roofs, widening, resolve_roof) exactly like a plain building, just with better
+    starting attributes where Overture has them. kind="yes": the bucket the bare majority of
+    untagged OSM buildings already fall into (heights.py), so a record with no height or roof of
+    its own gets the same area-based estimate and freestanding gable as an untyped OSM house
+    instead of the flat box an unrecognised type would default to.
+    """
+    out: list[Building] = []
+    for raw in features.overture:
+        out.append(
+            Building(
+                geom=raw.geom,
+                height_m=raw.height_m or 0.0,
+                height_is_top=raw.height_m is not None,
+                roof=raw.roof,
+                roof_tagged=raw.roof is not None,
+                osm_id=raw.osm_id,
+                kind="yes",
+                overture=True,
             )
         )
     return out
@@ -648,7 +680,19 @@ def prepare(features: Features, spec: FrameSpec) -> Prepared:
         # area > 0, not "not empty": a displaced footprint that only touches the edge of the
         # square clips to a LineString, and that is not area — same guard polygons_of uses.
         displaced = [g for g in (d.intersection(square) for d in dropped) if g.area > 0]
-    clipped = _clip(buildings + lod2, square, tol_m)
+    overture = overture_buildings(features) if spec.overture else []
+    if overture:
+        estimate_missing_heights(overture)
+        assign_default_roofs(overture)
+        # An LoD2 body already models this footprint in full; an Overture prism on top of it
+        # would only be a redundant, lower-quality duplicate (precedence: LoD2 > Overture > OSM).
+        overture, _ = drop_covered(overture, lod2)
+    if overture:
+        buildings, dropped_ov = drop_covered(buildings, overture)
+        # Same accounting as the LoD2 pass above: an OSM footprint Overture took over is still
+        # building area that stood in the square (_coverage's contract).
+        displaced += [g for g in (d.intersection(square) for d in dropped_ov) if g.area > 0]
+    clipped = _clip(buildings + lod2 + overture, square, tol_m)
     if not spec.parts:
         clipped = [b for b in clipped if not b.is_part]
     if not spec.roofs:
@@ -658,6 +702,7 @@ def prepare(features: Features, spec: FrameSpec) -> Prepared:
     # Counted on footprints, not on `buildings` below: a LoD2 footprint that only feeds a block
     # still puts official geometry into the model, so the source is truthfully named for it.
     lod2_footprints = sum(1 for b in footprints if b.lod2)
+    overture_footprints = sum(1 for b in footprints if b.overture)
     # Every footprint but the tiniest is a body of its own; a 10 m house at 1:15 000 used to fail
     # the 0.8 mm erosion and vanish into a slab (spec 4a §2.1). Widened here, before
     # resolve_roof, so the roof rectangle is the rectangle of the footprint that is printed.
@@ -685,6 +730,7 @@ def prepare(features: Features, spec: FrameSpec) -> Prepared:
             footprint_coverage=coverage,
             lod2_rejected=lod2_rejected,
             lod2_footprints=lod2_footprints,
+            overture_footprints=overture_footprints,
         )
 
     recess_min_area_m2 = MIN_FEATURE_MM**2 / scale**2
@@ -704,4 +750,5 @@ def prepare(features: Features, spec: FrameSpec) -> Prepared:
         footprint_coverage=coverage,
         lod2_rejected=lod2_rejected,
         lod2_footprints=lod2_footprints,
+        overture_footprints=overture_footprints,
     )

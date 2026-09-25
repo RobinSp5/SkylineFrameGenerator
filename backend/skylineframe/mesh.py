@@ -35,9 +35,14 @@ class MeshSet:
     water: m3d.Manifold | None = None
     roads: m3d.Manifold | None = None
     trees: m3d.Manifold | None = None  # spec 6 §5.5
+    # Buildings with a real LoD2 body, split out of `buildings` so multicolor can give an
+    # officially modelled building its own filament; None when nothing in the square has one.
+    buildings_verified: m3d.Manifold | None = None
 
     def parts(self) -> dict[str, m3d.Manifold]:
         parts = {"base": self.base, "buildings": self.buildings}
+        if self.buildings_verified is not None:
+            parts["buildings_verified"] = self.buildings_verified
         if self.water is not None:
             parts["water"] = self.water
         if self.roads is not None:
@@ -167,6 +172,13 @@ def _bodies(prisms: list[Prism], sink: float) -> list[m3d.Manifold]:
     return out
 
 
+def _split_verified(prisms: list[Prism]) -> tuple[list[Prism], list[Prism]]:
+    """Prisms without a real body (extruded from height/roof attributes) and prisms with one."""
+    plain = [p for p in prisms if p.solid_mm is None]
+    verified = [p for p in prisms if p.solid_mm is not None]
+    return plain, verified
+
+
 def build_meshes(scaled: Scaled, spec: FrameSpec, terrain: Heightfield | None = None) -> MeshSet:
     if not scaled.buildings and not scaled.blocks:
         raise MeshError("No buildings in the selected area.")
@@ -175,20 +187,32 @@ def build_meshes(scaled: Scaled, spec: FrameSpec, terrain: Heightfield | None = 
     if terrain is not None:
         return _build_on_terrain(scaled, spec, terrain)
 
-    bodies = _bodies(scaled.buildings, 0.0) + _bodies(scaled.blocks, 0.0)
-    if not bodies:
+    plain, verified = _split_verified(scaled.buildings)
+    bodies = _bodies(plain, 0.0) + _bodies(scaled.blocks, 0.0)
+    verified_bodies = _bodies(verified, 0.0)
+    if not bodies and not verified_bodies:
         raise MeshError("No printable building footprints in the selected area.")
     # Roofs are hulls and boolean intersections — the two unions below share them instead of
-    # building every roof twice. Blocks never carry a roof.
-    roofs = _roof_bodies(scaled.buildings, _thicken_line(spec))
+    # building every roof twice. Blocks never carry a roof. _roof_bodies already skips a solid_mm
+    # body on its own, so filtering to `plain` first only saves it the trip, not the result.
+    roofs = _roof_bodies(plain, _thicken_line(spec))
 
     base = plate(spec)
-    # Exported part: flush on the plate top, so 3MF parts never overlap.
-    buildings = _check(union(bodies + roofs), "buildings")
+    # Exported parts: flush on the plate top, so 3MF parts never overlap each other or `base`.
+    buildings_verified = _check(union(verified_bodies), "buildings_verified") if verified_bodies else None
+    if bodies or roofs:
+        buildings = _check(union(bodies + roofs), "buildings")
+    else:
+        # Every printable body in this square is LoD2-verified and there is no sockel under any
+        # of them: the split has nothing to contrast, so it all prints as the one required
+        # "buildings" part instead of standing empty beside a duplicate of itself.
+        buildings, buildings_verified = buildings_verified, None
     # For the single-colour union we sink the buildings slightly so the boolean never relies on
-    # a pure face contact at z = 0. Parts that start in the air keep their bottom.
-    sunk_bodies = _bodies(scaled.buildings, BUILDING_SINK_MM) + _bodies(scaled.blocks, BUILDING_SINK_MM)
-    buildings_sunk = union(sunk_bodies + roofs)
+    # a pure face contact at z = 0. Parts that start in the air keep their bottom. Unsplit here:
+    # the STL never changes with this split, only which named part a body's volume counts under.
+    sunk_bodies = _bodies(plain, BUILDING_SINK_MM) + _bodies(scaled.blocks, BUILDING_SINK_MM)
+    verified_sunk = _bodies(verified, BUILDING_SINK_MM)
+    buildings_sunk = union(sunk_bodies + verified_sunk + roofs)
 
     water = roads = None
     cut = recess(scaled.water, spec.water_depth_mm) if scaled.water else None
@@ -211,7 +235,15 @@ def build_meshes(scaled: Scaled, spec: FrameSpec, terrain: Heightfield | None = 
         trees = _check(canopy_solid - plate(spec), "trees")
         single = single + canopy_solid
     single = _check(single, "single")
-    return MeshSet(base=base, buildings=buildings, single=single, water=water, roads=roads, trees=trees)
+    return MeshSet(
+        base=base,
+        buildings=buildings,
+        single=single,
+        water=water,
+        roads=roads,
+        trees=trees,
+        buildings_verified=buildings_verified,
+    )
 
 
 # --- trees (spec 6 §5) --------------------------------------------------------------------------
@@ -380,16 +412,16 @@ def _build_on_terrain(scaled: Scaled, spec: FrameSpec, hf: Heightfield) -> MeshS
     """build_meshes on a relief plate (spec 4b §5).
 
     On a slope a flush bottom does not exist — the uphill side of a house stands in the hill —
-    so the exported buildings part is its solids minus the relief plate. That is what keeps the
-    3MF parts from overlapping, as building them flush does on the flat plate. Prisms and the
+    so each exported buildings part is its own solids minus the relief plate. That is what keeps
+    the 3MF parts from overlapping, as building them flush does on the flat plate. Prisms and the
     sockel are therefore built sunk only once: sinking moves nothing but their bottom, and the
-    subtraction cuts that off again. A LoD2 body sinks as a whole, so the exported part gets it
-    unsunk, with its full ridge height, exactly as on the flat plate.
+    subtraction cuts that off again. A verified body sinks as a whole, so its exported part gets
+    it unsunk, with its full ridge height, exactly as on the flat plate.
     """
     ground = _check(terrain_solid(hf, spec.plate_thickness_mm), "base")
     prisms = scaled.buildings
     bases = _footprint_bases(prisms, hf)
-    lod2 = [k for k, p in enumerate(prisms) if p.solid_mm is not None]
+    verified = [k for k, p in enumerate(prisms) if p.solid_mm is not None]
     plain = [k for k, p in enumerate(prisms) if p.solid_mm is None]
 
     def lifted(idx: list[int], build: Callable[[list[Prism]], list[m3d.Manifold]]) -> list[m3d.Manifold]:
@@ -400,12 +432,20 @@ def _build_on_terrain(scaled: Scaled, spec: FrameSpec, hf: Heightfield) -> MeshS
     sockel = _sockel_on(scaled.blocks, hf, spec, BUILDING_SINK_MM)
     if sockel is not None:
         shared.append(sockel)
-    lod2_sunk = lifted(lod2, lambda ps: _bodies(ps, BUILDING_SINK_MM))
-    if not shared and not lod2_sunk:
+    verified_sunk = lifted(verified, lambda ps: _bodies(ps, BUILDING_SINK_MM))
+    if not shared and not verified_sunk:
         raise MeshError("No printable building footprints in the selected area.")
-    lod2_flush = lifted(lod2, lambda ps: _bodies(ps, 0.0))
-    buildings = _check(union(shared + lod2_flush) - ground, "buildings")
-    buildings_sunk = union(shared + lod2_sunk)
+    verified_flush = lifted(verified, lambda ps: _bodies(ps, 0.0))
+    # Split the same way the flat path is, and subtracted from `ground` per part rather than once
+    # on their union — set difference distributes over union, so this is the same shape either way.
+    buildings_verified = _check(union(verified_flush) - ground, "buildings_verified") if verified_flush else None
+    if shared:
+        buildings = _check(union(shared) - ground, "buildings")
+    else:
+        # Same fallback as the flat path: nothing here is unverified, so the one required part
+        # carries it all instead of standing empty beside a duplicate of itself.
+        buildings, buildings_verified = buildings_verified, None
+    buildings_sunk = union(shared + verified_sunk)
 
     base = ground
     water = roads = None
@@ -429,7 +469,15 @@ def _build_on_terrain(scaled: Scaled, spec: FrameSpec, hf: Heightfield) -> MeshS
         trees = _check(canopy_solid - ground, "trees")
         single = single + canopy_solid
     single = _check(single, "single")
-    return MeshSet(base=base, buildings=buildings, single=single, water=water, roads=roads, trees=trees)
+    return MeshSet(
+        base=base,
+        buildings=buildings,
+        single=single,
+        water=water,
+        roads=roads,
+        trees=trees,
+        buildings_verified=buildings_verified,
+    )
 
 
 # --- export precision ---------------------------------------------------------------------------

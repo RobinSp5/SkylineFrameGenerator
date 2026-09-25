@@ -10,12 +10,12 @@ export interface FrameSpecInput {
   mode: "simple" | "full";
   z_exaggeration: number;
   lod2: boolean;
+  overture: boolean;
   terrain: boolean;
   terrain_exaggeration: number;
   trees: boolean;
   print_optimized: boolean;
-  // Colour print (trees green, water blue in the 3MF). Optional on purpose: the API rejects
-  // unknown keys, so read() only sends it when it is true (see controls.ts).
+  // Colour print: one filament per part in the 3MF (base, buildings, roads, trees, water, LoD2 bodies).
   multicolor: boolean;
 }
 

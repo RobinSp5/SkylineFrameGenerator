@@ -19,7 +19,7 @@ afterEach(() => vi.restoreAllMocks());
 describe("createJob", () => {
   it("posts the spec and returns the id", async () => {
     const calls = mockFetch([{ status: 202, body: { id: "abc" } }]);
-    const res = await createJob({ center_lat: 50, center_lon: 8, side_m: 1000, rotation_deg: 0, plate_size_mm: 100, plate_thickness_mm: 3, mode: "simple", z_exaggeration: 1.5, lod2: true, terrain: false, terrain_exaggeration: 1, trees: true, print_optimized: true, multicolor: false });
+    const res = await createJob({ center_lat: 50, center_lon: 8, side_m: 1000, rotation_deg: 0, plate_size_mm: 100, plate_thickness_mm: 3, mode: "simple", z_exaggeration: 1.5, lod2: true, overture: false, terrain: false, terrain_exaggeration: 1, trees: true, print_optimized: true, multicolor: false });
     expect(res.id).toBe("abc");
     expect(calls[0].url).toBe("/api/jobs");
     expect(calls[0].init?.method).toBe("POST");
@@ -27,7 +27,7 @@ describe("createJob", () => {
   it("passes the abort signal to fetch", async () => {
     const calls = mockFetch([{ status: 202, body: { id: "abc" } }]);
     const controller = new AbortController();
-    await createJob({ center_lat: 50, center_lon: 8, side_m: 1000, rotation_deg: 0, plate_size_mm: 100, plate_thickness_mm: 3, mode: "simple", z_exaggeration: 1.5, lod2: true, terrain: false, terrain_exaggeration: 1, trees: true, print_optimized: true, multicolor: false }, controller.signal);
+    await createJob({ center_lat: 50, center_lon: 8, side_m: 1000, rotation_deg: 0, plate_size_mm: 100, plate_thickness_mm: 3, mode: "simple", z_exaggeration: 1.5, lod2: true, overture: false, terrain: false, terrain_exaggeration: 1, trees: true, print_optimized: true, multicolor: false }, controller.signal);
     expect(calls[0].init?.signal).toBe(controller.signal);
   });
   it("throws with the server detail on error", async () => {

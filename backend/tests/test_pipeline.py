@@ -1,7 +1,8 @@
 import pytest
+from shapely.geometry import box
 
 from skylineframe.errors import PipelineError
-from skylineframe.features import Features
+from skylineframe.features import Features, OvertureBuilding
 from skylineframe.fetch import parse_overpass
 from skylineframe.pipeline import run
 from skylineframe.spec import FrameSpec, Mode
@@ -70,7 +71,9 @@ def test_run_simple_mode_has_no_roads(tmp_path, frankfurt_spec, frankfurt_data):
 
 
 def test_run_without_buildings_raises_pipeline_error(tmp_path):
-    spec = FrameSpec(center_lat=0, center_lon=0)
+    # terrain=False: this only tests the empty-fetch path, and terrain on would reach for a real
+    # DEM before ever getting there since no `terrain` callable is injected.
+    spec = FrameSpec(center_lat=0, center_lon=0, terrain=False)
     with pytest.raises(PipelineError, match="No buildings"):
         run(spec, tmp_path / "out", tmp_path / "cache", fetch=lambda s, c: Features())
 
@@ -235,6 +238,111 @@ def test_lod2_off_gives_the_same_model_as_no_lod2_data(tmp_path, frankfurt_spec,
     # result, and naming Hessen next to a model that carries none of it is a false attribution.
     assert with_flag_off.stats["lod2_source"] == ""
     assert "Hessen" not in with_flag_off.paths.sources.read_text(encoding="utf-8")
+
+
+# --- Overture -------------------------------------------------------------------------------
+
+
+def overture_features(spec, data, buildings):
+    """The parsed OSM fixture plus hand-made Overture records, as fetch would deliver them."""
+    feats = parse_overpass(data, spec)
+    feats.overture = list(buildings)
+    feats.overture_source = "overture"
+    return feats
+
+
+def test_run_with_overture_reports_the_source_and_stays_watertight(tmp_path, frankfurt_spec, frankfurt_data):
+    # Well clear of every Römer fixture building, so this is purely additional geometry.
+    building = OvertureBuilding(osm_id="overture/x/A", geom=box(8.6810, 50.1102, 8.6814, 50.1106), height_m=15.0)
+    spec = frankfurt_spec.model_copy(update={"overture": True})
+    result = run(
+        spec,
+        tmp_path / "out",
+        tmp_path / "cache",
+        fetch=lambda s, c: overture_features(s, frankfurt_data, [building]),
+    )
+    assert result.stats["overture_source"] == "overture"
+    assert result.stats["overture_buildings"] == 1
+    assert result.paths.sources.read_text(encoding="utf-8").count("Overture Maps Foundation") == 1
+
+
+def test_run_without_overture_data_reports_an_empty_source(tmp_path, frankfurt_spec, frankfurt_data):
+    spec = frankfurt_spec.model_copy(update={"overture": True})
+    result = run(spec, tmp_path / "out", tmp_path / "cache", fetch=lambda s, c: parse_overpass(frankfurt_data, s))
+    assert result.stats["overture_source"] == ""
+    assert result.stats["overture_buildings"] == 0
+    assert "Overture" not in result.paths.sources.read_text(encoding="utf-8")
+
+
+def test_overture_data_that_never_reaches_the_model_does_not_name_the_source(tmp_path, frankfurt_spec, frankfurt_data):
+    # Outside the query box's own 100 m margin, so it clips away entirely (mirrors LoD2's OUTSIDE case).
+    outside = OvertureBuilding(osm_id="overture/x/OUTSIDE", geom=box(8.6820, 50.1200, 8.6825, 50.1205), height_m=15.0)
+    spec = frankfurt_spec.model_copy(update={"overture": True})
+    result = run(
+        spec,
+        tmp_path / "out",
+        tmp_path / "cache",
+        fetch=lambda s, c: overture_features(s, frankfurt_data, [outside]),
+    )
+    assert result.stats["overture_source"] == ""
+    assert "Overture" not in result.paths.sources.read_text(encoding="utf-8")
+    plain = run(
+        frankfurt_spec, tmp_path / "plain", tmp_path / "cache", fetch=lambda s, c: parse_overpass(frankfurt_data, s)
+    )
+    assert result.paths.stl.read_bytes() == plain.paths.stl.read_bytes()
+
+
+def test_overture_off_gives_the_same_model_as_no_overture_data(tmp_path, frankfurt_spec, frankfurt_data):
+    building = OvertureBuilding(osm_id="overture/x/A", geom=box(8.6810, 50.1102, 8.6814, 50.1106), height_m=15.0)
+    off = frankfurt_spec.model_copy(update={"overture": False})
+    with_flag_off = run(
+        off, tmp_path / "a", tmp_path / "cache", fetch=lambda s, c: overture_features(s, frankfurt_data, [building])
+    )
+    plain = run(
+        frankfurt_spec, tmp_path / "b", tmp_path / "cache", fetch=lambda s, c: parse_overpass(frankfurt_data, s)
+    )
+    assert with_flag_off.paths.stl.read_bytes() == plain.paths.stl.read_bytes()
+    assert with_flag_off.stats["overture_source"] == ""
+    assert "Overture" not in with_flag_off.paths.sources.read_text(encoding="utf-8")
+
+
+def test_multicolor_with_a_mix_of_lod2_and_other_buildings_yields_six_named_parts(
+    tmp_path, frankfurt_spec, frankfurt_data
+):
+    import trimesh
+
+    lod2_boxes = [wgs84_box(50.1090, 8.6820, 0.0005, 100.0, 140.0, "lod2/hessen/A")]
+    # Clear of the LoD2 tower above, so both reach the model as separate footprints.
+    overture_bldg = OvertureBuilding(osm_id="overture/x/1", geom=box(8.6810, 50.1102, 8.6814, 50.1106), height_m=15.0)
+
+    def fetch(s, c):
+        feats = parse_overpass(frankfurt_data, s)
+        feats.lod2, feats.lod2_source = list(lod2_boxes), "hessen"
+        feats.overture, feats.overture_source = [overture_bldg], "overture"
+        return feats
+
+    spec = frankfurt_spec.model_copy(update={"multicolor": True, "lod2": True, "overture": True, "trees": True})
+    layer, _ = tree_layer_fake(tree_grid())
+    result = run(spec, tmp_path / "out", tmp_path / "cache", fetch=fetch, trees=layer)
+    assert result.stats["lod2_buildings"] == 1
+    assert result.stats["overture_buildings"] == 1
+    scene = trimesh.load(result.paths.threemf, file_type="3mf")
+    assert set(scene.geometry) == {"base", "buildings", "buildings_verified", "roads", "water", "trees"}
+
+
+def test_multicolor_stays_at_five_parts_when_overture_and_lod2_find_nothing(tmp_path, frankfurt_spec, frankfurt_data):
+    # Same request (multicolor, lod2 and overture all on) but no official or Overture data
+    # actually reaches the model: graceful degradation, no empty buildings_verified part.
+    import trimesh
+
+    spec = frankfurt_spec.model_copy(update={"multicolor": True, "lod2": True, "overture": True, "trees": True})
+    layer, _ = tree_layer_fake(tree_grid())
+    result = run(
+        spec, tmp_path / "out", tmp_path / "cache", fetch=lambda s, c: parse_overpass(frankfurt_data, s), trees=layer
+    )
+    assert result.stats["lod2_buildings"] == 0 and result.stats["overture_buildings"] == 0
+    scene = trimesh.load(result.paths.threemf, file_type="3mf")
+    assert set(scene.geometry) == {"base", "buildings", "roads", "water", "trees"}
 
 
 # --- terrain (spec 4b §5.6) --------------------------------------------------------------------

@@ -124,6 +124,21 @@ def test_lod2_is_on_by_default_and_can_be_switched_off(monkeypatch, tmp_path):
     assert spec.lod2 is False
 
 
+def test_overture_is_off_by_default_and_can_be_switched_on(monkeypatch, tmp_path):
+    spec, _ = run_cli(monkeypatch, tmp_path, [])
+    assert spec.overture is False
+    spec, _ = run_cli(monkeypatch, tmp_path, ["--overture"])
+    assert spec.overture is True
+
+
+def test_generate_reports_overture_buildings_only_when_asked_for(monkeypatch, tmp_path):
+    stats = {"buildings": 3, "overture_buildings": 42, "overture_source": "overture"}
+    result = _run_with_stats(monkeypatch, tmp_path, stats, ["--overture"])
+    assert "Overture buildings: 42" in result.output
+    result = _run_with_stats(monkeypatch, tmp_path, {"buildings": 3, "overture_buildings": 0, "overture_source": ""}, [])
+    assert "Overture" not in result.output
+
+
 def test_generate_prints_the_lod2_source(monkeypatch, tmp_path):
     _, result = run_cli(monkeypatch, tmp_path, [])
     assert "LoD2 source: hessen" in result.output
@@ -144,11 +159,11 @@ def test_generate_says_so_when_no_lod2_source_was_used(monkeypatch, tmp_path):
     assert "LoD2 source: none (OpenStreetMap only)" in result.output
 
 
-def test_terrain_is_off_by_default_and_can_be_switched_on(monkeypatch, tmp_path):
+def test_terrain_is_on_by_default_and_can_be_switched_off(monkeypatch, tmp_path):
     spec, _ = run_cli(monkeypatch, tmp_path, [])
-    assert spec.terrain is False and spec.terrain_exaggeration == 1.0
-    spec, _ = run_cli(monkeypatch, tmp_path, ["--terrain", "--terrain-z", "2.5"])
-    assert spec.terrain is True and spec.terrain_exaggeration == 2.5
+    assert spec.terrain is True and spec.terrain_exaggeration == 1.0
+    spec, _ = run_cli(monkeypatch, tmp_path, ["--no-terrain", "--terrain-z", "2.5"])
+    assert spec.terrain is False and spec.terrain_exaggeration == 2.5
 
 
 def test_print_optimization_is_on_by_default_and_can_be_switched_off(monkeypatch, tmp_path):
@@ -208,14 +223,17 @@ def test_generate_is_silent_about_trees_when_they_were_switched_off(monkeypatch,
     assert "Trees" not in result.output
 
 
-def test_multicolor_is_off_by_default_and_can_be_switched_on(monkeypatch, tmp_path):
+def test_multicolor_is_on_by_default_and_can_be_switched_off(monkeypatch, tmp_path):
     spec, result = run_cli(monkeypatch, tmp_path, [])
-    assert spec.multicolor is False
-    assert "Filaments" not in result.output
-    spec, result = run_cli(monkeypatch, tmp_path, ["--multicolor"])
     assert spec.multicolor is True
     # Tells the user which spools to load, in the order Bambu Studio numbers them.
-    assert "Filaments: 1 white (base, buildings, roads), 2 green (trees), 3 blue (water)" in result.output
+    assert (
+        "Filaments: 1 stone (base), 2 terracotta (buildings), 3 charcoal (roads), 4 green (trees), "
+        "5 blue (water), 6 rust (buildings_verified)"
+    ) in result.output
+    spec, result = run_cli(monkeypatch, tmp_path, ["--no-multicolor"])
+    assert spec.multicolor is False
+    assert "Filaments" not in result.output
 
 
 def _captured_name(monkeypatch, tmp_path, args: list[str]):

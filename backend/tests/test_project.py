@@ -156,6 +156,32 @@ def test_project_features_keeps_the_lod2_fields_of_a_building():
     assert got.surfaces == surfaces
 
 
+def test_project_features_projects_overture_buildings_and_keeps_the_source():
+    from skylineframe.features import OvertureBuilding, RoofSpec
+
+    spec = FrameSpec(center_lat=50.0, center_lon=8.0, side_m=1000)
+    raw = OvertureBuilding(
+        osm_id="overture/2026-09-23.0/abc",
+        geom=Polygon([(8.0, 50.0), (8.001, 50.0), (8.001, 50.001)]),
+        height_m=12.5,
+        roof=RoofSpec(shape="hipped", height_m=2.0),
+    )
+    out = project_features(Features(overture=[raw], overture_source="overture"), spec)
+    assert out.overture_source == "overture"
+    got = out.overture[0]
+    assert got.osm_id == "overture/2026-09-23.0/abc"
+    assert got.height_m == 12.5
+    assert got.roof == RoofSpec(shape="hipped", height_m=2.0)
+    assert got.geom.geom_type == "Polygon"
+    assert got.geom is not raw.geom  # projected, not the original
+    assert got.geom.bounds[2] == pytest.approx(71.7, abs=1.0)
+
+
+def test_project_features_without_overture():
+    assert project_features(Features(), spec()).overture == []
+    assert project_features(Features(), spec()).overture_source == ""
+
+
 def test_project_features_projects_and_rotates_osm_trees():
     from skylineframe.trees.model import OsmTree
 

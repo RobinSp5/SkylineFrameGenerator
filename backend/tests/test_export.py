@@ -14,6 +14,7 @@ from skylineframe.errors import ExportError
 from skylineframe.export import (
     FILAMENT_COLORS,
     PART_FILAMENTS,
+    PROJECT_SETTINGS,
     export_all,
     mesh_diagnostics,
     verify_part,
@@ -24,7 +25,11 @@ from skylineframe.scale import Prism, Scaled
 from skylineframe.spec import FrameSpec, Mode
 
 NS = "{http://schemas.microsoft.com/3dmanufacturing/core/2015/02}"
-DEFAULTS = dict(center_lat=50, center_lon=8, side_m=1000, plate_size_mm=100, plate_thickness_mm=3.0, mode=Mode.full)
+# multicolor off: most tests here are about the plain 3MF shape, and the Bambu-project tests below
+# turn it on themselves.
+DEFAULTS = dict(
+    center_lat=50, center_lon=8, side_m=1000, plate_size_mm=100, plate_thickness_mm=3.0, mode=Mode.full, multicolor=False
+)
 
 
 def spec(**kw) -> FrameSpec:
@@ -305,9 +310,9 @@ def _project_settings(path) -> dict:
         return json.loads(z.read("Metadata/project_settings.config"))
 
 
-def test_multicolor_is_off_by_default_and_leaves_the_3mf_as_before(tmp_path, meshset):
+def test_multicolor_off_leaves_the_3mf_as_before(tmp_path, meshset):
     label = "Frankfurt am Main"
-    before = export_all(meshset, spec(), tmp_path / "a", name=label)
+    before = export_all(meshset, spec(multicolor=False), tmp_path / "a", name=label)
     off = export_all(meshset, spec(multicolor=False), tmp_path / "b", name=label)
     a, b = _zip_entries(before.threemf), _zip_entries(off.threemf)
     assert a.keys() == b.keys() == {"3D/3dmodel.model", "_rels/.rels", "[Content_Types].xml"}
@@ -343,25 +348,35 @@ def test_multicolor_3mf_is_one_bambu_object_with_parts_on_their_filaments(tmp_pa
         assert parts[pid].get("subtype") == "normal_part"
         assert pmeta["name"] == name
         extruder[name] = pmeta["extruder"]
-    assert extruder == {"base": "1", "buildings": "1", "roads": "1", "trees": "2", "water": "3"}
+    assert extruder == {"base": "1", "buildings": "2", "roads": "3", "trees": "4", "water": "5"}
 
 
-def test_multicolor_project_sets_the_x2d_and_three_coloured_pla_filaments(tmp_path, meshset_with_trees):
+def test_multicolor_project_sets_the_x2d_and_six_coloured_pla_filaments(tmp_path, meshset_with_trees):
     paths = export_all(meshset_with_trees, spec(multicolor=True), tmp_path, name="Frankfurt")
     project = _project_settings(paths.threemf)
     assert project["printer_settings_id"] == "Bambu Lab X2D 0.4 nozzle"
     assert project["printer_model"] == "Bambu Lab X2D"
     assert project["filament_colour"] == list(FILAMENT_COLORS)
     assert project["filament_multi_colour"] == list(FILAMENT_COLORS)
-    assert project["filament_type"] == ["PLA", "PLA", "PLA"]
-    assert len(project["filament_settings_id"]) == 3
-    # Every per-filament list must agree on three filaments, or Bambu Studio fails to slice. The
+    assert project["filament_type"] == ["PLA"] * len(FILAMENT_COLORS)
+    assert len(project["filament_settings_id"]) == len(FILAMENT_COLORS)
+    # Every per-filament list must agree on the filament count, or Bambu Studio fails to slice. The
     # filament_mixed_* lists hold one global entry in every Bambu project, whatever the count.
     per_filament = [k for k, v in project.items() if k.startswith("filament_") and isinstance(v, list) and len(v) > 1]
     assert len(per_filament) > 50
-    assert all(len(project[k]) % 3 == 0 for k in per_filament)
-    assert FILAMENT_COLORS == ("#F2F2F2", "#4E7D3A", "#3F7FBF")
-    assert PART_FILAMENTS == {"base": 1, "buildings": 1, "roads": 1, "trees": 2, "water": 3}
+    assert all(len(project[k]) % len(FILAMENT_COLORS) == 0 for k in per_filament)
+    assert FILAMENT_COLORS == ("#E8E4D9", "#C97C5D", "#2B2B2B", "#4E7D3A", "#3F7FBF", "#8B4513")
+    assert PART_FILAMENTS == {"base": 1, "buildings": 2, "roads": 3, "trees": 4, "water": 5, "buildings_verified": 6}
+
+
+def test_project_settings_filament_lists_all_match_the_filament_count():
+    # General invariant, not tied to today's count: every per-filament list in the Bambu template
+    # (one entry per filament, as opposed to the handful of single-entry global settings) must
+    # divide evenly by the filament count, or Bambu Studio refuses to open the project.
+    project = json.loads(PROJECT_SETTINGS.read_text(encoding="utf-8"))
+    per_filament = [v for k, v in project.items() if k.startswith("filament_") and isinstance(v, list) and len(v) > 1]
+    assert len(per_filament) > 50
+    assert all(len(v) % len(FILAMENT_COLORS) == 0 for v in per_filament)
 
 
 @pytest.mark.parametrize("plate_mm", [100, 200])
