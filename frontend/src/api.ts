@@ -10,7 +10,6 @@ export interface FrameSpecInput {
   mode: "simple" | "full";
   z_exaggeration: number;
   lod2: boolean;
-  overture: boolean;
   terrain: boolean;
   terrain_exaggeration: number;
   trees: boolean;

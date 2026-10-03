@@ -88,11 +88,6 @@ class FrameSpec(BaseModel):
     # Use an official LoD2 model where one is available; without a provider, without network or
     # with lod2=False the result is bit-identical to the OSM-only run (spec §8/§11).
     lod2: bool = True
-    # Height and roof attributes from Overture Maps Buildings, worldwide, for footprints no LoD2
-    # model covers (spec §9's degrade-to-OSM contract applies here too). A new external dependency
-    # with no production track record yet, so — unlike lod2/terrain/trees above — it starts opt-in,
-    # the same lifecycle those had before their own first production run.
-    overture: bool = False
     # Terrain relief from the Copernicus DEM (spec 4b §2). On by default: both the relief and the
     # flat plate are shipped and tested, and relief is the intended default look now.
     # --no-terrain still gives the flat-plate code path of before, bit-identical. Its own

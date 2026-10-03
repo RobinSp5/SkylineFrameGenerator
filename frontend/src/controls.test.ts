@@ -372,20 +372,6 @@ describe("setupControls lod2", () => {
   });
 });
 
-describe("setupControls overture", () => {
-  beforeEach(() => {
-    document.body.innerHTML = APP;
-  });
-
-  it("is off by default and sends the checkbox state", () => {
-    const controls = setupControls(document.getElementById("app")!);
-    expect(field<HTMLInputElement>("overture").checked).toBe(false);
-    expect(controls.read().overture).toBe(false);
-    field<HTMLInputElement>("overture").checked = true;
-    expect(controls.read().overture).toBe(true);
-  });
-});
-
 describe("setupControls multicolor", () => {
   beforeEach(() => {
     document.body.innerHTML = APP;

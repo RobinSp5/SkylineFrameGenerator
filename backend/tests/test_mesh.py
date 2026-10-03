@@ -254,7 +254,7 @@ def test_parts_gain_buildings_verified_only_when_a_body_and_a_prism_are_both_pre
     )
     assert set(build_meshes(mixed, spec()).parts()) == {"base", "buildings", "buildings_verified", "roads", "water"}
 
-    # Same scene minus the LoD2 body: no LoD2 or Overture data reached this model, so the part
+    # Same scene minus the LoD2 body: no LoD2 data reached this model, so the part
     # is absent rather than exported empty.
     plain = Scaled(
         buildings=[Prism(box(20, 20, 30, 30), 6.0)],

@@ -76,7 +76,6 @@ export function setupControls(root: HTMLElement): Controls {
   const mode = el<HTMLFieldSetElement>(root, "mode");
   const optimize = el<HTMLInputElement>(root, "optimize");
   const lod2 = el<HTMLInputElement>(root, "lod2");
-  const overture = el<HTMLInputElement>(root, "overture");
   const terrain = el<HTMLInputElement>(root, "terrain");
   const terrainz = el<HTMLInputElement>(root, "terrainz");
   const terrainzOut = el<HTMLOutputElement>(root, "terrainz-out");
@@ -216,7 +215,6 @@ export function setupControls(root: HTMLElement): Controls {
     mode: radioValue(mode) as "simple" | "full",
     z_exaggeration: Number(zfactor.value),
     lod2: lod2.checked,
-    overture: overture.checked,
     terrain: terrain.checked,
     terrain_exaggeration: Number(terrainz.value),
     trees: trees.checked,

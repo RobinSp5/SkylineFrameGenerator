@@ -116,11 +116,6 @@ def test_multicolor_is_on_by_default():
     assert FrameSpec(center_lat=50, center_lon=8, multicolor=False).multicolor is False
 
 
-def test_overture_is_off_by_default_and_can_be_switched_on():
-    assert FrameSpec(center_lat=50, center_lon=8).overture is False
-    assert FrameSpec(center_lat=50, center_lon=8, overture=True).overture is True
-
-
 def test_trees_are_on_by_default():
     # Spec 6 §2: trees belong in the model everywhere; trees=False is the model of before.
     assert FrameSpec(center_lat=50, center_lon=8).trees is True

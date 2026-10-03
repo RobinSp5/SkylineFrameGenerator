@@ -124,21 +124,6 @@ def test_lod2_is_on_by_default_and_can_be_switched_off(monkeypatch, tmp_path):
     assert spec.lod2 is False
 
 
-def test_overture_is_off_by_default_and_can_be_switched_on(monkeypatch, tmp_path):
-    spec, _ = run_cli(monkeypatch, tmp_path, [])
-    assert spec.overture is False
-    spec, _ = run_cli(monkeypatch, tmp_path, ["--overture"])
-    assert spec.overture is True
-
-
-def test_generate_reports_overture_buildings_only_when_asked_for(monkeypatch, tmp_path):
-    stats = {"buildings": 3, "overture_buildings": 42, "overture_source": "overture"}
-    result = _run_with_stats(monkeypatch, tmp_path, stats, ["--overture"])
-    assert "Overture buildings: 42" in result.output
-    result = _run_with_stats(monkeypatch, tmp_path, {"buildings": 3, "overture_buildings": 0, "overture_source": ""}, [])
-    assert "Overture" not in result.output
-
-
 def test_generate_prints_the_lod2_source(monkeypatch, tmp_path):
     _, result = run_cli(monkeypatch, tmp_path, [])
     assert "LoD2 source: hessen" in result.output
